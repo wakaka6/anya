@@ -9,6 +9,19 @@ publish.workspace = true
 [dependencies]
 anya-core.workspace = true
 anya-protocol.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "net"] }
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+uuid = { version = "1", default-features = false, features = ["std", "v4"] }
+# Not called directly: names ring as rustls' crypto provider, so `wss://`
+# connects without one being installed by the binary.
+rustls.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "net", "io-util", "test-util"] }
 
 [lints]
 workspace = true

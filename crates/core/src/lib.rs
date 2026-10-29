@@ -8,5 +8,6 @@
 
 pub mod audio;
 pub mod desktop;
+pub mod doctor;
 pub mod engine;
 pub mod hub;
