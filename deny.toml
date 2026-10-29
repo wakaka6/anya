@@ -1,0 +1,35 @@
+# cargo deny check: licences, advisories, sources. Layer rules are in xtask/src/arch.rs.
+
+[graph]
+# Linux and macOS only (docs/decisions/0001); Windows-only crates are not our graph.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Permissive licences only, so the choice in docs/decisions/0006 stays open.
+# Add one when a dependency first needs it.
+allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
+confidence-threshold = 0.9
+
+[licenses.private]
+# Workspace crates are unpublished and have no licence yet.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
