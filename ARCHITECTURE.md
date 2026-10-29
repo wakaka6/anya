@@ -27,7 +27,7 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 
 | Path | Package | Layer | Owns | State |
 |---|---|---|---|---|
-| `crates/protocol` | `anya-protocol` | protocol | subscriber `Frame`s, `Recognition`, engine `Manifest`, `PROTOCOL_VERSION` | types, JSON pinned by tests |
+| `crates/protocol` | `anya-protocol` | protocol | subscriber `Frame`s, `Recognition`, engine `Manifest`, `PROTOCOL_VERSION`, the ordering checker, fixtures | types, JSON pinned, fixtures checked |
 | `crates/core` | `anya-core` | core | `AudioSource` and `Engine` seams; the session controller | seams; controller next |
 | `crates/audio` | `anya-audio` | adapter | capture: cpal; ScreenCaptureKit for system audio on macOS | planned |
 | `crates/hotkey` | `anya-hotkey` | adapter | evdev (Wayland), x11rb (X11), CGEventTap (macOS) | planned |
@@ -36,10 +36,11 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, an OpenAI-compatible one | planned |
 | `crates/server` | `anya-server` | service | WebSocket subscription, control API, auth | planned |
 | `crates/plugin-host` | `anya-plugin-host` | service | the Bun process, plugin install, `plugins.json`, the plugin engine adapter | planned |
-| `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `plugin` | planned |
+| `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin` | planned |
 | `app/` | `anya-app` | app | Tauri v2 tray and settings window | planned |
 | `host/` | — | — | `host.js`, the Bun side of the plugin host, embedded in the binary | planned |
-| `sdk/js/` | `@anyahq/plugin` | — | the npm package plugin authors build on | planned |
+| `sdk/plugin/` | `@anyahq/plugin` | — | what plugin authors build on | planned |
+| `sdk/client/` | `@anyahq/client` | — | a thin subscriber for apps, tested against the fixtures | planned |
 | `xtask` | `xtask` | tooling | `cargo xtask check`, `cargo xtask ci` | in place |
 
 A crate directory appears with its first code. Its layer is already in `Layer::of`, so the rules apply from its first commit.
@@ -72,6 +73,10 @@ Triggers and sinks get a trait once two adapters need the same one. Until then t
 ## Plugins
 
 Built-in pieces are crates in the binary that the user switches on or off. Community plugins run out of process in one Bun host and talk to Anya in JSON lines over stdin/stdout (docs/decisions/0004). An engine plugin sends a `Manifest` and `Recognition`s, the shapes built-in engines use, so the plugin host's engine adapter is one more `Engine`.
+
+## Downstream apps
+
+Programs that subscribe to frames are the other half of the community (docs/decisions/0007). What they may rely on is [docs/protocol.md](docs/protocol.md): the frames, ten ordering promises, the compatibility rule and the fixtures. `anya_protocol::contract::check` is the promises as code; the fixtures pass it and so must everything that emits frames. Built-in sinks read the same frames, so a built-in feature that needs more than the frames give needs a protocol change first.
 
 ## Decisions
 

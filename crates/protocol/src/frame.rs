@@ -15,6 +15,9 @@ pub enum Source {
     Dictation,
     /// The switched-on transcription of a device, usually a loopback one.
     Continuous,
+    /// A source a newer Anya added; skip what it sends.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Whether a source is capturing.
@@ -25,6 +28,9 @@ pub enum SourceState {
     Listening,
     /// Switched off, or capture died.
     Idle,
+    /// A state a newer Anya added.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One sentence as the engine split it.
@@ -61,10 +67,14 @@ pub enum EndReason {
     Closed,
     /// The user cancelled; whatever was recognized is not output.
     Cancelled,
+    /// A reason a newer Anya added; the session is over all the same.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A message to subscribers. On the wire: a JSON object whose `type` is the
-/// variant name in snake case.
+/// variant name in snake case. Decoding never fails on a frame type, field or
+/// value a newer Anya added: they read as `Unknown` or are ignored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Frame {
@@ -113,4 +123,7 @@ pub enum Frame {
         /// Why.
         reason: EndReason,
     },
+    /// A frame type a newer Anya added; skip it.
+    #[serde(other)]
+    Unknown,
 }

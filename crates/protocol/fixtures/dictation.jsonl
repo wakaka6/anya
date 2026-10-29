@@ -1,0 +1,9 @@
+{"type":"hello","name":"anya","version":"0.1.0","protocol":0}
+{"type":"source","source":"dictation","state":"idle"}
+{"type":"source","source":"dictation","state":"listening","device":"MacBook Pro Microphone"}
+{"type":"session_start","session":"anya-20261030T101500-1","source":"dictation","engine":"example"}
+{"type":"result","session":"anya-20261030T101500-1","text":"帮我","utterances":[{"text":"帮我","definite":false}],"final":false}
+{"type":"result","session":"anya-20261030T101500-1","text":"帮我订明天","utterances":[{"text":"帮我订明天","definite":false}],"final":false}
+{"type":"result","session":"anya-20261030T101500-1","text":"帮我订明天上午的会议室。","utterances":[{"text":"帮我订明天上午的会议室。","definite":true}],"final":true}
+{"type":"session_end","session":"anya-20261030T101500-1","reason":"final"}
+{"type":"source","source":"dictation","state":"idle"}

@@ -2,7 +2,7 @@
 
 Anya is a local speech-to-text service for Linux and macOS. A small core captures audio and runs recognition; engines, triggers and sinks plug in around it, and other programs subscribe to the same frames the built-ins read.
 
-Read ARCHITECTURE.md before adding a crate, a dependency between crates, or a type that crosses a seam. Read the record in docs/decisions/ before changing what it decided.
+Read ARCHITECTURE.md before adding a crate, a dependency between crates, or a type that crosses a seam. Read docs/protocol.md before touching anything a subscriber receives. Read the record in docs/decisions/ before changing what it decided.
 
 ## Commands
 
@@ -27,7 +27,7 @@ Fix the code. A rule changes only together with ARCHITECTURE.md and a new decisi
 
 ## Rules review enforces
 
-- **Wire formats live in `anya-protocol` only.** While `PROTOCOL_VERSION` stays, a change only adds; removing or renaming bumps it. Each frame's JSON is pinned in `crates/protocol/tests/`: update the pin in the same change and note it in CHANGELOG.md.
+- **Downstream apps are users** (docs/decisions/0007). Wire formats live in `anya-protocol` only. While `PROTOCOL_VERSION` stays, a change only adds, and every wire enum keeps its `Unknown` variant; removing or renaming bumps the version. A frame change updates the types, the pins in `crates/protocol/tests/`, the fixtures, docs/protocol.md and CHANGELOG.md in one commit. Anything that emits frames is tested with `anya_protocol::contract::check`.
 - **Privacy** (docs/decisions/0005): audio goes only to the engine the user chose, and a failing engine is an error the user sees. Dictation frames reach an outside subscriber only with the user's grant for that app. Transcripts and secrets are logged at debug level at most.
 - **Hotkey callbacks return at once.** Stopping capture, waiting for the final result and pasting run on a task. Final text is dispatched once per session.
 - **Every `unsafe` block** carries a `// SAFETY:` comment saying why its invariant holds.

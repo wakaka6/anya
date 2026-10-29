@@ -8,7 +8,11 @@
 //! Compatibility: while [`PROTOCOL_VERSION`] stays the same, frame types and
 //! fields are only added. Consumers ignore types and fields they do not know.
 //! Removing or renaming anything bumps the version.
+//!
+//! docs/protocol.md is the subscriber's guide. [`contract::check`] holds the
+//! ordering promises it makes, and `fixtures/` has streams that keep them.
 
+pub mod contract;
 mod frame;
 mod manifest;
 
