@@ -8,9 +8,15 @@ publish.workspace = true
 
 [dependencies]
 anya-config.workspace = true
+anya-core.workspace = true
 anya-i18n.workspace = true
 anya-protocol.workspace = true
 anya-runtime.workspace = true
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache"] }
+thiserror.workspace = true
+tracing.workspace = true
+unicode-width = "0.2"
 
 [lints]
 workspace = true
