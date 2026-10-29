@@ -33,5 +33,19 @@
   "doctor.paste_keys.denied": "wtype is not installed and /dev/uinput is not writable: {error}",
   "doctor.paste_keys.denied.fix": "Install wtype, or give your user write access to /dev/uinput with a udev rule and group.",
   "doctor.paste_keys.kde_denied": "KDE Plasma needs /dev/uinput (wtype does not work there), and it is not writable: {error}",
-  "doctor.paste_keys.kde_denied.fix": "Run: sudo groupadd -f uinput; sudo usermod -aG uinput $USER; write /etc/udev/rules.d/70-uinput.rules containing KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"uinput\", OPTIONS+=\"static_node=uinput\"; then sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger /dev/uinput, and log in again."
+  "doctor.paste_keys.kde_denied.fix": "Run: sudo groupadd -f uinput; sudo usermod -aG uinput $USER; write /etc/udev/rules.d/70-uinput.rules containing KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"uinput\", OPTIONS+=\"static_node=uinput\"; then sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger /dev/uinput, and log in again.",
+  "doctor.audio_input.name": "Audio input",
+  "doctor.audio_input.available": "{device} is ready",
+  "doctor.audio_input.none": "No input device found",
+  "doctor.audio_input.none.fix": "Connect a microphone, or on Linux check that ALSA sees one (`arecord -l`).",
+  "doctor.audio_input.denied": "The system refused access to the input: {detail}",
+  "doctor.audio_input.denied.fix": "On Linux, add yourself to the audio group: `sudo usermod -aG audio $USER`, then log in again. On macOS, allow the microphone in System Settings › Privacy & Security › Microphone.",
+  "doctor.audio_input.failed": "The audio system failed: {detail}",
+  "doctor.audio_input.fix": "Check the input device in your sound settings and try again.",
+  "doctor.microphone_permission.name": "Microphone permission",
+  "doctor.microphone_permission.granted": "Allowed",
+  "doctor.microphone_permission.not_determined": "Not asked yet; macOS will ask when recording starts",
+  "doctor.microphone_permission.denied": "Turned off",
+  "doctor.microphone_permission.restricted": "Restricted on this Mac",
+  "doctor.microphone_permission.fix": "Turn on microphone access for {terminal} in System Settings › Privacy & Security › Microphone."
 }

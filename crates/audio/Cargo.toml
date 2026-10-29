@@ -8,6 +8,17 @@ publish.workspace = true
 
 [dependencies]
 anya-core.workspace = true
+cpal = "0.18"
+hound = "3.5"
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "AVCaptureDevice", "AVMediaFormat"] }
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString"] }
 
 [lints]
 workspace = true

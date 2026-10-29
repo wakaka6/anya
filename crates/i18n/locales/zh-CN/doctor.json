@@ -33,5 +33,19 @@
   "doctor.paste_keys.denied": "未安装 wtype，且当前用户不能写 /dev/uinput：{error}",
   "doctor.paste_keys.denied.fix": "安装 wtype，或通过 udev 规则和用户组授予当前用户写 /dev/uinput 的权限。",
   "doctor.paste_keys.kde_denied": "KDE Plasma 需要 /dev/uinput（wtype 在此不可用），但当前用户不能写入：{error}",
-  "doctor.paste_keys.kde_denied.fix": "执行：sudo groupadd -f uinput；sudo usermod -aG uinput $USER；写入 /etc/udev/rules.d/70-uinput.rules：KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"uinput\", OPTIONS+=\"static_node=uinput\"；然后 sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger /dev/uinput，最后重新登录。"
+  "doctor.paste_keys.kde_denied.fix": "执行：sudo groupadd -f uinput；sudo usermod -aG uinput $USER；写入 /etc/udev/rules.d/70-uinput.rules：KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"uinput\", OPTIONS+=\"static_node=uinput\"；然后 sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger /dev/uinput，最后重新登录。",
+  "doctor.audio_input.name": "录音设备",
+  "doctor.audio_input.available": "{device} 可用",
+  "doctor.audio_input.none": "没有找到音频输入设备",
+  "doctor.audio_input.none.fix": "连接麦克风；Linux 上用 `arecord -l` 确认 ALSA 能看到它。",
+  "doctor.audio_input.denied": "系统拒绝访问录音设备：{detail}",
+  "doctor.audio_input.denied.fix": "Linux：把当前用户加入 audio 组：`sudo usermod -aG audio $USER`，然后重新登录。macOS：在 系统设置 › 隐私与安全性 › 麦克风 中允许。",
+  "doctor.audio_input.failed": "音频系统出错：{detail}",
+  "doctor.audio_input.fix": "在声音设置中检查输入设备后重试。",
+  "doctor.microphone_permission.name": "麦克风权限",
+  "doctor.microphone_permission.granted": "已允许",
+  "doctor.microphone_permission.not_determined": "尚未询问；开始录音时 macOS 会请求权限",
+  "doctor.microphone_permission.denied": "已关闭",
+  "doctor.microphone_permission.restricted": "此 Mac 限制了麦克风使用",
+  "doctor.microphone_permission.fix": "在 系统设置 › 隐私与安全性 › 麦克风 中为 {terminal} 打开麦克风权限。"
 }
