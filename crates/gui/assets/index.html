@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title data-i18n="common.app_name"></title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top" id="header">
+    <img class="logo" src="icon.svg" alt="">
+    <div class="brand">
+      <strong data-i18n="common.app_name"></strong>
+      <span class="muted" data-i18n="gui.tagline"></span>
+    </div>
+    <div id="status" class="status" data-state="idle">
+      <span class="dot"></span>
+      <span id="statusLabel" class="pill-label"></span>
+      <span id="statusDetail" class="muted detail"></span>
+    </div>
+  </header>
+
+  <nav class="toolbar">
+    <div class="tabs" role="tablist" data-i18n-aria="gui.tabs.label">
+      <button type="button" role="tab" id="tab-general" aria-controls="pane-general" data-pane="general" data-i18n="gui.tabs.general"></button>
+      <button type="button" role="tab" id="tab-engine" aria-controls="pane-engine" data-pane="engine" data-i18n="gui.tabs.engine"></button>
+      <button type="button" role="tab" id="tab-activity" aria-controls="pane-activity" data-pane="activity" data-i18n="gui.tabs.activity"></button>
+    </div>
+  </nav>
+
+  <main>
+    <p id="loadError" class="banner error" hidden></p>
+
+    <form id="form" autocomplete="off" novalidate>
+      <section id="pane-general" class="pane" role="tabpanel" aria-labelledby="tab-general">
+        <div class="group">
+          <label class="row">
+            <span class="label"><span data-i18n="gui.dictation.enabled"></span><small data-i18n="gui.dictation.enabled_help"></small></span>
+            <input type="checkbox" class="switch" data-path="dictation.enabled">
+          </label>
+          <div class="row device-row">
+            <span class="label"><span data-i18n="gui.device.label"></span><small data-i18n="gui.device.help"></small></span>
+            <div class="stack">
+              <select id="device" data-path="dictation.device" data-i18n-aria="gui.device.label"></select>
+              <p class="field-error devices-error" role="alert" hidden></p>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title" data-i18n="gui.hotkey.group"></h2>
+        <div class="group">
+          <div class="row hotkey-row">
+            <span class="label"><span data-i18n="gui.hotkey.label"></span><small data-i18n="gui.hotkey.help"></small></span>
+            <div class="hotkeys">
+              <div id="slots" class="slots"></div>
+              <p class="field-error" data-error="dictation.hotkeys" role="alert" hidden></p>
+              <p id="hotkeyExtra" class="field-note" hidden></p>
+              <button type="button" id="manualToggle" class="link" data-i18n="gui.hotkey.manual"></button>
+              <input type="text" id="hotkeysManual" data-path="dictation.hotkeys" spellcheck="false" hidden
+                data-i18n-placeholder="gui.hotkey.manual_placeholder" data-i18n-aria="gui.hotkey.manual_aria">
+            </div>
+          </div>
+          <div class="row">
+            <span class="label"><span data-i18n="gui.mode.label"></span><small data-i18n="gui.mode.help"></small></span>
+            <div class="segmented" id="modes" role="radiogroup" data-i18n-aria="gui.mode.label"></div>
+          </div>
+          <label class="row">
+            <span class="label"><span data-i18n="gui.stop_delay.label"></span><small data-i18n="gui.stop_delay.help"></small></span>
+            <span class="unit"><input type="number" data-path="dictation.stop_delay_ms" min="0" step="50"><span class="muted" data-i18n="gui.stop_delay.unit"></span></span>
+          </label>
+        </div>
+
+        <h2 class="group-title" data-i18n="common.continuous"></h2>
+        <div class="group">
+          <label class="row">
+            <span class="label"><span data-i18n="common.continuous"></span><small data-i18n="gui.continuous.help"></small><small id="continuousRunning" class="state"></small></span>
+            <input type="checkbox" class="switch" data-path="continuous.enabled">
+          </label>
+          <div class="row device-row">
+            <span class="label"><span data-i18n="gui.continuous.device"></span><small data-i18n="gui.continuous.device_help"></small></span>
+            <div class="stack">
+              <select id="continuousDevice" data-path="continuous.device" data-i18n-aria="gui.continuous.device"></select>
+              <p id="loopbackNote" class="field-note" data-i18n="gui.device.no_loopback_macos" hidden></p>
+              <p class="field-error devices-error" role="alert" hidden></p>
+            </div>
+          </div>
+          <div class="row hotkey-row">
+            <span class="label"><span data-i18n="gui.continuous.hotkey"></span><small data-i18n="gui.continuous.hotkey_help"></small></span>
+            <div class="hotkeys">
+              <div id="continuousSlots" class="slots"></div>
+              <p class="field-error" data-error="continuous.hotkey" role="alert" hidden></p>
+            </div>
+          </div>
+          <div class="row device-row">
+            <span class="label"><span data-i18n="gui.subscription.label"></span><small data-i18n="gui.subscription.help"></small></span>
+            <div class="stack">
+              <input type="text" id="address" data-path="subscription.address" spellcheck="false" data-i18n-aria="gui.subscription.label">
+              <p id="streamState" class="field-note state"></p>
+              <p class="field-error" data-error="subscription.address" role="alert" hidden></p>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title" data-i18n="gui.recognition.group"></h2>
+        <div class="group">
+          <label class="row">
+            <span class="label"><span data-i18n="gui.language.label"></span><small data-i18n="gui.language.help"></small></span>
+            <select id="language" data-path="recognition.language"></select>
+          </label>
+          <div class="row hotword-row">
+            <span class="label"><span data-i18n="gui.hotwords.label"></span><small data-i18n="gui.hotwords.help"></small></span>
+            <div id="hotwords" class="chips">
+              <input type="text" id="hotwordInput" spellcheck="false" data-i18n-placeholder="gui.hotwords.placeholder" data-i18n-aria="gui.hotwords.add">
+            </div>
+          </div>
+          <div class="row">
+            <span class="label"><span data-i18n="gui.hotwords_file.label"></span><small data-i18n="gui.hotwords_file.help"></small></span>
+            <div class="file-pick">
+              <input type="text" id="hotwordsFile" data-path="recognition.hotwords_file" spellcheck="false" data-i18n-aria="gui.hotwords_file.label">
+              <button type="button" id="hotwordsFileClear" class="link" data-i18n="gui.hotwords_file.clear" hidden></button>
+              <button type="button" id="hotwordsFilePick" class="ghost" data-i18n="gui.hotwords_file.pick" hidden></button>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title" data-i18n="gui.output.group"></h2>
+        <div class="group">
+          <div class="row device-row">
+            <span class="label"><span data-i18n="gui.output.label"></span><small data-i18n="gui.output.help"></small></span>
+            <div class="stack">
+              <select id="output" data-path="dictation.output"></select>
+            </div>
+          </div>
+          <div class="row device-row">
+            <span class="label"><span data-i18n="gui.position.label"></span><small data-i18n="gui.position.help"></small></span>
+            <div class="stack">
+              <select id="position" data-path="overlay.position"></select>
+              <p class="field-error" data-error="overlay.position" role="alert" hidden></p>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title" data-i18n="gui.interface.group"></h2>
+        <div class="group">
+          <label class="row">
+            <span class="label"><span data-i18n="gui.ui_language.label"></span><small data-i18n="gui.ui_language.help"></small></span>
+            <select id="uiLanguage" data-path="ui.language"></select>
+          </label>
+        </div>
+      </section>
+
+      <section id="pane-engine" class="pane" role="tabpanel" aria-labelledby="tab-engine" hidden>
+        <p class="pane-intro" data-i18n="gui.engine.intro"></p>
+        <div id="engines" class="group engines" role="radiogroup" data-i18n-aria="gui.engine.label"></div>
+        <p id="enginesError" class="field-error" data-error="recognition.engine" role="alert" hidden></p>
+      </section>
+    </form>
+
+    <section id="pane-activity" class="pane" role="tabpanel" aria-labelledby="tab-activity" hidden>
+      <div class="stats" data-i18n-aria="gui.stats.label">
+        <div class="stat"><span class="muted" data-i18n="gui.stats.sessions"></span><b id="statSessions">0</b><span class="muted" data-i18n="gui.stats.sessions_unit"></span></div>
+        <div class="stat"><span class="muted" data-i18n="gui.stats.chars"></span><b id="statChars">0</b></div>
+        <div class="stat"><span class="muted" data-i18n="gui.stats.avg"></span><b id="statAvg">0</b><span class="muted" data-i18n="gui.stats.cpm"></span></div>
+        <div class="stat"><span class="muted" data-i18n="gui.stats.last"></span><b id="statLast">0</b><span class="muted" data-i18n="gui.stats.cpm"></span></div>
+      </div>
+      <h2 class="group-title" data-i18n="gui.activity.title"></h2>
+      <ol id="logs" class="group timeline" aria-live="polite"></ol>
+    </section>
+  </main>
+
+  <div id="sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+      <div class="sheet-head">
+        <h2 id="sheetTitle"></h2>
+        <p id="sheetBlurb" class="muted"></p>
+      </div>
+      <div id="sheetFields" class="group"></div>
+      <details id="sheetAdvanced" class="advanced">
+        <summary id="sheetAdvancedLabel"></summary>
+        <div id="sheetAdvancedFields" class="group"></div>
+      </details>
+      <div class="sheet-foot">
+        <button type="button" id="sheetDoc" class="link" data-i18n="gui.sheet.docs"></button>
+        <span class="spacer"></span>
+        <button type="button" id="sheetCancel" class="ghost" data-i18n="common.cancel"></button>
+        <button type="button" id="sheetDone" data-i18n="gui.sheet.done"></button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="savebar">
+    <span id="configPath" class="muted path"></span>
+    <span id="message" class="message" role="status"></span>
+    <button type="button" id="revert" class="ghost" data-i18n="gui.save.revert" disabled></button>
+    <button type="button" id="save" data-i18n="common.save" disabled></button>
+  </footer>
+
+  <script src="common.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

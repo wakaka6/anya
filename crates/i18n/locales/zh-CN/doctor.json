@@ -68,5 +68,9 @@
   "doctor.x11_display.missing": "未设置 DISPLAY",
   "doctor.x11_display.fix": "请在 X 会话中启动 Anya",
   "doctor.hotkeys.name": "全局热键",
-  "doctor.hotkeys.unsupported_desktop": "{desktop} 上不支持全局热键"
+  "doctor.hotkeys.unsupported_desktop": "{desktop} 上不支持全局热键",
+  "doctor.overlay_window_server.name": "窗口服务器会话",
+  "doctor.overlay_window_server.present": "提示浮层可以使用桌面会话。",
+  "doctor.overlay_window_server.missing": "没有桌面会话，无法显示录音提示浮层。",
+  "doctor.overlay_window_server.fix": "请在已登录的桌面会话中运行 Anya，不要通过 SSH 运行。"
 }

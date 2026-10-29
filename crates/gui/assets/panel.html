@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title data-i18n="common.app_name"></title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body class="panel">
+  <header class="panel-head">
+    <img class="logo" src="icon.svg" alt="">
+    <strong data-i18n="common.app_name"></strong>
+    <div id="status" class="status" data-state="idle">
+      <span class="dot"></span>
+      <span id="statusLabel" class="pill-label"></span>
+    </div>
+  </header>
+
+  <section class="panel-body">
+    <div id="last" class="last">
+      <span class="muted" data-i18n="gui.panel.last"></span>
+      <p id="lastText" class="last-text"></p>
+    </div>
+
+    <div class="stats panel-stats" data-i18n-aria="gui.stats.label">
+      <div class="stat"><span class="muted" data-i18n="gui.stats.sessions"></span><b id="statSessions">0</b><span class="muted" data-i18n="gui.stats.sessions_unit"></span></div>
+      <div class="stat"><span class="muted" data-i18n="gui.stats.chars"></span><b id="statChars">0</b></div>
+      <div class="stat"><span class="muted" data-i18n="gui.stats.avg"></span><b id="statAvg">0</b><span class="muted" data-i18n="gui.stats.cpm_short"></span></div>
+      <div class="stat"><span class="muted" data-i18n="gui.stats.last"></span><b id="statLast">0</b><span class="muted" data-i18n="gui.stats.cpm_short"></span></div>
+    </div>
+
+    <div id="summary" class="group summary"></div>
+  </section>
+
+  <footer id="panelFoot" class="panel-foot">
+    <button type="button" id="quit" class="ghost" data-i18n="gui.panel.quit"></button>
+    <button type="button" id="settings" data-i18n="gui.panel.open_settings"></button>
+  </footer>
+
+  <script src="common.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

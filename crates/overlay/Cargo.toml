@@ -8,6 +8,28 @@ publish.workspace = true
 
 [dependencies]
 anya-core.workspace = true
+thiserror.workspace = true
+
+# The macOS backend's dependencies (src/darwin*).
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-foundation = "0.3"
+objc2-quartz-core = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+# The Linux backends' dependencies (src/linux*).
+[target.'cfg(target_os = "linux")'.dependencies]
+ab_glyph = "0.2"
+fontconfig = "0.11"
+smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop"] }
+tracing.workspace = true
+x11rb = { version = "0.14", features = ["image", "randr", "shape"] }
 
 [lints]
 workspace = true

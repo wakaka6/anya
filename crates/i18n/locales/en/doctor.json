@@ -68,5 +68,9 @@
   "doctor.x11_display.missing": "DISPLAY is not set",
   "doctor.x11_display.fix": "Start Anya inside the X session",
   "doctor.hotkeys.name": "Global hotkeys",
-  "doctor.hotkeys.unsupported_desktop": "Global hotkeys are not available on {desktop}"
+  "doctor.hotkeys.unsupported_desktop": "Global hotkeys are not available on {desktop}",
+  "doctor.overlay_window_server.name": "Window server session",
+  "doctor.overlay_window_server.present": "A desktop session is available for the overlay.",
+  "doctor.overlay_window_server.missing": "No desktop session: the recording overlay cannot be shown.",
+  "doctor.overlay_window_server.fix": "Run Anya from a logged-in desktop session, not over SSH."
 }
