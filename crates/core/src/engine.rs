@@ -57,6 +57,10 @@ pub enum EngineError {
     /// A required setting is empty; carries the field's key.
     #[error("setting {0:?} is missing")]
     NotConfigured(String),
+    /// A setting holds a value the engine cannot use; carries the field's
+    /// key. On the wire it is still `not_configured`: the fix is the same.
+    #[error("setting {0:?} has an invalid value")]
+    Invalid(String),
     /// The engine could not be reached.
     #[error("cannot reach the engine: {0}")]
     Connect(String),
@@ -69,17 +73,20 @@ impl EngineError {
     /// The code a `session_end` carries.
     pub fn code(&self) -> ErrorCode {
         match self {
-            EngineError::NotConfigured(_) => ErrorCode::NotConfigured,
+            EngineError::NotConfigured(_) | EngineError::Invalid(_) => ErrorCode::NotConfigured,
             EngineError::Connect(_) => ErrorCode::Connect,
             EngineError::Upstream(_) => ErrorCode::Upstream,
         }
     }
 
-    /// The untranslated specifics: the missing setting's key, or the
-    /// engine's or the network's own message.
+    /// The untranslated specifics: the missing or invalid setting's key, or
+    /// the engine's or the network's own message.
     pub fn detail(&self) -> &str {
         match self {
-            EngineError::NotConfigured(s) | EngineError::Connect(s) | EngineError::Upstream(s) => s,
+            EngineError::NotConfigured(s)
+            | EngineError::Invalid(s)
+            | EngineError::Connect(s)
+            | EngineError::Upstream(s) => s,
         }
     }
 }

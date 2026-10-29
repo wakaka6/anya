@@ -1,1 +1,8 @@
-{}
+{
+  "tray.tooltip": "Anya",
+  "tray.window_title": "Anya",
+  "tray.show_panel": "显示面板",
+  "tray.open_settings": "打开设置",
+  "tray.quit": "退出",
+  "tray.pick_file": "选择文件"
+}

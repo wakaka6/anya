@@ -471,7 +471,7 @@ async fn a_missing_api_key_is_refused() {
     ]);
     assert_eq!(
         engine.check(&rate),
-        Err(EngineError::NotConfigured("sample_rate".into()))
+        Err(EngineError::Invalid("sample_rate".into()))
     );
     let ok = BTreeMap::from([("api_key".to_owned(), "sk-1".to_owned())]);
     assert_eq!(engine.check(&ok), Ok(()));

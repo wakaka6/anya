@@ -8,6 +8,20 @@ publish.workspace = true
 
 [dependencies]
 anya-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The macOS backend's dependencies (src/darwin.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGRemoteOperation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+
+# The Linux backends' dependencies (src/linux/).
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.13"
+x11rb = { version = "0.14", features = ["xtest"] }
 
 [lints]
 workspace = true

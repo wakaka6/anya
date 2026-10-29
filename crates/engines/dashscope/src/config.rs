@@ -40,7 +40,7 @@ impl Config {
             None => 16000,
             Some("8000") => 8000,
             Some("16000") => 16000,
-            Some(_) => return Err(EngineError::NotConfigured("sample_rate".to_owned())),
+            Some(_) => return Err(EngineError::Invalid("sample_rate".to_owned())),
         };
         let url = match value("base_url") {
             Some(url) => url.trim_end_matches('/').to_owned(),
@@ -129,7 +129,7 @@ mod tests {
         for rate in ["44100", "8k", "0"] {
             let bad =
                 Config::from_settings(&settings(&[("api_key", "sk-1"), ("sample_rate", rate)]));
-            assert_eq!(bad, Err(EngineError::NotConfigured("sample_rate".into())));
+            assert_eq!(bad, Err(EngineError::Invalid("sample_rate".into())));
         }
     }
 

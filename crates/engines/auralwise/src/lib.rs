@@ -104,7 +104,7 @@ impl Config {
             None | Some("auto") => None,
             Some("true") => Some(true),
             Some("false") => Some(false),
-            Some(_) => return Err(EngineError::NotConfigured("optimize".to_owned())),
+            Some(_) => return Err(EngineError::Invalid("optimize".to_owned())),
         };
         let language = params
             .language
@@ -502,7 +502,7 @@ mod tests {
         );
         assert_eq!(
             config(&[("api_key", "k"), ("optimize", "fast")], None),
-            Err(EngineError::NotConfigured("optimize".to_owned()))
+            Err(EngineError::Invalid("optimize".to_owned()))
         );
         let settings = BTreeMap::from([
             ("api_key".to_owned(), "k".to_owned()),
@@ -510,7 +510,7 @@ mod tests {
         ]);
         assert_eq!(
             engine().check(&settings),
-            Err(EngineError::NotConfigured("optimize".to_owned()))
+            Err(EngineError::Invalid("optimize".to_owned()))
         );
     }
 

@@ -320,10 +320,7 @@ async fn bad_settings_fail_before_ready() {
     )
     .await;
     assert_eq!(out.len(), 1);
-    assert_eq!(
-        the_error(&out),
-        EngineError::NotConfigured("optimize".to_owned())
-    );
+    assert_eq!(the_error(&out), EngineError::Invalid("optimize".to_owned()));
 }
 
 #[tokio::test]
