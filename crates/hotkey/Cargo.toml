@@ -1,0 +1,13 @@
+[package]
+name = "anya-hotkey"
+description = "Global hotkeys on macOS, Wayland and X11."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anya-core.workspace = true
+
+[lints]
+workspace = true

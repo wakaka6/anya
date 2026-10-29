@@ -1,6 +1,6 @@
 //! The manifest an engine plugin sends when it loads.
 
-use anya_protocol::{FieldKind, Manifest};
+use anya_protocol::{FieldKind, Manifest, Text};
 use serde_json::json;
 
 #[test]
@@ -30,7 +30,7 @@ fn a_plugin_manifest_reads_as_settings_fields() {
     );
     assert!(manifest.fields[0].advanced && !manifest.fields[0].required);
     assert!(manifest.fields[1].required);
-    assert_eq!(manifest.blurb, "");
+    assert!(manifest.blurb.is_empty());
     assert_eq!(manifest.docs, None);
 
     let again: Manifest =
@@ -47,4 +47,25 @@ fn an_unknown_field_kind_is_refused() {
         "fields": [{"key": "k", "label": "K", "kind": "slider"}]
     }));
     assert!(read.is_err());
+}
+
+// A plugin labels its settings in the languages it knows; every UI shows the
+// closest one to its own and never an empty label.
+#[test]
+fn a_label_falls_back_to_the_closest_language() {
+    let manifest: Manifest = serde_json::from_value(json!({
+        "id": "x", "title": "X", "streaming": true,
+        "fields": [{"key": "model", "kind": "text",
+                    "label": {"en": "Model", "zh-CN": "模型", "ja": "モデル"}}]
+    }))
+    .expect("decode");
+    let label = &manifest.fields[0].label;
+    assert_eq!(label.get("zh-CN"), "模型");
+    assert_eq!(label.get("zh-TW"), "模型");
+    assert_eq!(label.get("ja-JP"), "モデル");
+    assert_eq!(label.get("de"), "Model");
+    assert_eq!(manifest.title.get("de"), "X");
+
+    let only_french = Text::localized([("fr", "Modèle")]);
+    assert_eq!(only_french.get("en"), "Modèle");
 }

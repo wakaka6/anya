@@ -2,7 +2,8 @@
 //! change: additive while PROTOCOL_VERSION stays, a version bump otherwise.
 
 use anya_protocol::{
-    EndReason, Frame, PROTOCOL_VERSION, Recognition, SessionId, Source, SourceState, Utterance,
+    EndReason, ErrorCode, Frame, PROTOCOL_VERSION, Recognition, SessionId, Source, SourceState,
+    Utterance,
 };
 use serde_json::{Value, json};
 
@@ -103,10 +104,48 @@ fn session_end_reasons() {
             Frame::SessionEnd {
                 session: session(),
                 reason,
+                error: None,
+                detail: None,
             },
             json!({"type": "session_end", "session": "anya-20261030T101500-1", "reason": word}),
         );
     }
+    pinned(
+        Frame::SessionEnd {
+            session: session(),
+            reason: EndReason::Error,
+            error: Some(ErrorCode::Upstream),
+            detail: Some("quota exceeded".to_owned()),
+        },
+        json!({"type": "session_end", "session": "anya-20261030T101500-1", "reason": "error", "error": "upstream", "detail": "quota exceeded"}),
+    );
+    for (code, word) in [
+        (ErrorCode::NotConfigured, "not_configured"),
+        (ErrorCode::Connect, "connect"),
+        (ErrorCode::Timeout, "timeout"),
+        (ErrorCode::Audio, "audio"),
+    ] {
+        pinned(
+            Frame::SessionEnd {
+                session: session(),
+                reason: EndReason::Error,
+                error: Some(code),
+                detail: None,
+            },
+            json!({"type": "session_end", "session": "anya-20261030T101500-1", "reason": "error", "error": word}),
+        );
+    }
+}
+
+#[test]
+fn level() {
+    pinned(
+        Frame::Level {
+            session: session(),
+            level: 0.5,
+        },
+        json!({"type": "level", "session": "anya-20261030T101500-1", "level": 0.5}),
+    );
 }
 
 // An engine plugin and a subscriber learn one shape: what the engine sends is

@@ -33,6 +33,7 @@ Fix the code. A rule changes only together with ARCHITECTURE.md and a new decisi
 - **Every `unsafe` block** carries a `// SAFETY:` comment saying why its invariant holds.
 - **A seam gets a trait when a second adapter needs it.** Until then it is a role described in ARCHITECTURE.md.
 - **Tests cover what a consumer sees**: frames, ordering, errors, state transitions. Wiring and a dependency's own behaviour stay untested.
+- **Every string a user sees comes from `anya-i18n`** (docs/decisions/0008), in every locale it ships. Libraries below the app return codes and typed errors with English Display text for logs; frames carry codes, manifests carry `Text`. Add a key to the area file you own, in every locale, in the same change.
 - **User-facing text is product text**: errors shown in a UI and the docs read as finished.
 
 ## Licence

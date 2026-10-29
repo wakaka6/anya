@@ -78,7 +78,14 @@ pub fn check(frames: &[Frame]) -> Result<(), Breach> {
                 s.last.clone_from(&recognition.utterances);
                 s.finished = recognition.is_final;
             }
-            Frame::SessionEnd { session, reason } => {
+            Frame::Level { session, .. } => match sessions.get(session) {
+                None => return breach(START_FIRST),
+                Some(s) if s.ended => return breach(NOTHING_AFTER_END),
+                Some(_) => {}
+            },
+            Frame::SessionEnd {
+                session, reason, ..
+            } => {
                 let Some(s) = sessions.get_mut(session) else {
                     return breach(START_FIRST);
                 };
@@ -144,6 +151,8 @@ mod tests {
         Frame::SessionEnd {
             session: id(n),
             reason,
+            error: None,
+            detail: None,
         }
     }
 
@@ -196,6 +205,13 @@ mod tests {
 
     #[test]
     fn nothing_follows_the_end_or_the_final_result() {
+        let level = |n| Frame::Level {
+            session: id(n),
+            level: 0.5,
+        };
+        assert_eq!(broken(vec![hello(), level(1)]), Some((1, START_FIRST)));
+        let late_level = vec![hello(), start(1), end(1, EndReason::Closed), level(1)];
+        assert_eq!(broken(late_level), Some((3, NOTHING_AFTER_END)));
         let ended = vec![
             hello(),
             start(1),

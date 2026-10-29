@@ -1,7 +1,27 @@
 [workspace]
 resolver = "3"
 # Every member needs a layer in xtask/src/arch.rs; `cargo test` fails otherwise.
-members = ["crates/protocol", "crates/core", "xtask"]
+members = [
+    "crates/protocol",
+    "crates/core",
+    "crates/dictation",
+    "crates/continuous",
+    "crates/audio",
+    "crates/hotkey",
+    "crates/output",
+    "crates/overlay",
+    "crates/engines/doubao",
+    "crates/engines/dashscope",
+    "crates/engines/openai",
+    "crates/engines/auralwise",
+    "crates/engines/mimo",
+    "crates/server",
+    "crates/config",
+    "crates/i18n",
+    "crates/tui",
+    "crates/gui",
+    "xtask",
+]
 
 [workspace.package]
 version = "0.0.0"
@@ -13,11 +33,32 @@ publish = false
 [workspace.dependencies]
 anya-protocol = { path = "crates/protocol" }
 anya-core = { path = "crates/core" }
+anya-dictation = { path = "crates/dictation" }
+anya-continuous = { path = "crates/continuous" }
+anya-audio = { path = "crates/audio" }
+anya-hotkey = { path = "crates/hotkey" }
+anya-output = { path = "crates/output" }
+anya-overlay = { path = "crates/overlay" }
+anya-engine-doubao = { path = "crates/engines/doubao" }
+anya-engine-dashscope = { path = "crates/engines/dashscope" }
+anya-engine-openai = { path = "crates/engines/openai" }
+anya-engine-auralwise = { path = "crates/engines/auralwise" }
+anya-engine-mimo = { path = "crates/engines/mimo" }
+anya-server = { path = "crates/server" }
+anya-config = { path = "crates/config" }
+anya-i18n = { path = "crates/i18n" }
+anya-tui = { path = "crates/tui" }
+anya-gui = { path = "crates/gui" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", default-features = false }
+tracing = "0.1"
+# One TLS stack for every network client: rustls with ring, system roots.
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "multipart"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

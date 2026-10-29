@@ -1,0 +1,15 @@
+[package]
+name = "anya-continuous"
+description = "Continuous transcription: a device kept open, cut into sessions by a silence gate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anya-core.workspace = true
+anya-protocol.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+
+[lints]
+workspace = true

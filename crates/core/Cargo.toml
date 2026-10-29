@@ -1,6 +1,6 @@
 [package]
 name = "anya-core"
-description = "The seams Anya is built around: audio capture and recognition engines."
+description = "The seams Anya is built around, and the session hub that publishes frames."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,10 @@ publish.workspace = true
 [dependencies]
 anya-protocol.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros", "test-util"] }
 
 [lints]
 workspace = true

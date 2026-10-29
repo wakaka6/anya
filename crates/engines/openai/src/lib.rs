@@ -1,0 +1,1 @@
+//! OpenAI-compatible transcription.

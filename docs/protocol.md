@@ -24,7 +24,8 @@ Every frame is a JSON object with a `type`.
 | `source` | after `hello` once per source you receive, then on every change | `source` (`dictation`, `continuous`), `state` (`listening`, `idle`), `device` when known |
 | `session_start` | the engine connected | `session`, `source`, `engine` |
 | `result` | per recognition | `session`, `text`, `utterances` (`text`, `definite`), `final` |
-| `session_end` | the session is over | `session`, `reason` (`final`, `error`, `closed`, `cancelled`) |
+| `level` | per audio chunk while the session is open, about 25 a second | `session`, `level` (0.0 silence to 1.0 full scale) |
+| `session_end` | the session is over | `session`, `reason` (`final`, `error`, `closed`, `cancelled`), `detail` with `error`: what went wrong, in words to show |
 
 Exact JSON for each is pinned in [`crates/protocol/tests/wire.rs`](../crates/protocol/tests/wire.rs).
 
@@ -63,5 +64,5 @@ Within a protocol version Anya only adds: new frame types, new fields, new value
 |---|---|
 | `dictation.jsonl` | one dictated sentence, partials to final |
 | `continuous.jsonl` | a meeting through a loopback device: two sessions, utterances turning definite, the source switched off |
-| `errors.jsonl` | a session that failed, one cancelled, one closed at shutdown |
+| `errors.jsonl` | a session that failed (with its `detail` and a `level`), one cancelled, one closed at shutdown |
 | `future.jsonl` | what a newer Anya may send within version 0; your program must read it without failing |

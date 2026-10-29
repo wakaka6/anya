@@ -15,9 +15,13 @@
 pub mod contract;
 mod frame;
 mod manifest;
+mod text;
 
-pub use frame::{EndReason, Frame, Recognition, SessionId, Source, SourceState, Utterance};
+pub use frame::{
+    EndReason, ErrorCode, Frame, Recognition, SessionId, Source, SourceState, Utterance,
+};
 pub use manifest::{Field, FieldKind, Manifest};
+pub use text::Text;
 
 /// Version of the formats in this crate, announced in [`Frame::Hello`].
 /// It stays 0 until the first release; until then any change may break consumers.

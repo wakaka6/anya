@@ -7,18 +7,19 @@ Anya turns speech into text and hands it to whatever wants it. A small core capt
 ```mermaid
 flowchart TB
   App["App: anya binary, desktop app"]
+  Trigger["Triggers: dictation · continuous"]
   Adapter["Adapters: audio · hotkey · output · overlay"]
   Engine["Engines: anya-engine-&lt;id&gt;"]
   Service["Services: server · plugin-host"]
   Core["anya-core: seams, session controller"]
   Protocol["anya-protocol: wire formats"]
-  App --> Adapter & Engine & Service
-  Adapter & Engine & Service --> Core --> Protocol
+  App --> Trigger & Adapter & Engine & Service
+  Trigger & Adapter & Engine & Service --> Core --> Protocol
 ```
 
 An arrow is an allowed dependency (the app may also use core and protocol directly). A crate depends only on layers below it, never on a sibling: the hotkey adapter does not call the output adapter; both meet in core and the app wires them. `xtask/src/arch.rs` is this rule as code, and `cargo test` runs it on the workspace. It also holds:
 
-- `anya-protocol` uses `serde` only; `anya-core` uses `serde`, `thiserror`, `tokio` only. Heavier dependencies belong in an adapter or a service.
+- `anya-protocol` uses `serde` only; `anya-core` and the triggers use `serde`, `thiserror`, `tokio`, `tracing` only. Heavier dependencies belong in an adapter or a service.
 - Platform bindings (cpal, evdev, x11rb, Wayland, objc2, core-graphics, Tauri…) and `allow(unsafe_code)` appear only in adapters and the app.
 - Only an engine's own crate and the app name an engine id. Core, services and UIs read engines through their `Manifest`.
 - No Windows crates (docs/decisions/0001).
@@ -28,16 +29,21 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | Path | Package | Layer | Owns | State |
 |---|---|---|---|---|
 | `crates/protocol` | `anya-protocol` | protocol | subscriber `Frame`s, `Recognition`, engine `Manifest`, `PROTOCOL_VERSION`, the ordering checker, fixtures | types, JSON pinned, fixtures checked |
-| `crates/core` | `anya-core` | core | `AudioSource` and `Engine` seams; the session controller | seams; controller next |
+| `crates/core` | `anya-core` | core | `AudioSource` and `Engine` seams, the session `Hub`, `Desktop` detection | in place |
+| `crates/dictation` | `anya-dictation` | trigger | toggle and hold, stop delay, cancel and retry, dispatching final text once | planned |
+| `crates/continuous` | `anya-continuous` | trigger | one device kept open, the silence gate, reconnecting | planned |
 | `crates/audio` | `anya-audio` | adapter | capture: cpal; ScreenCaptureKit for system audio on macOS | planned |
 | `crates/hotkey` | `anya-hotkey` | adapter | evdev (Wayland), x11rb (X11), CGEventTap (macOS) | planned |
 | `crates/output` | `anya-output` | adapter | paste and clipboard sinks | planned |
 | `crates/overlay` | `anya-overlay` | adapter | recording overlay: layer-shell, X11, NSPanel with the notch | planned |
-| `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, an OpenAI-compatible one | planned |
+| `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, auralwise, mimo | planned |
 | `crates/server` | `anya-server` | service | WebSocket subscription, control API, auth | planned |
 | `crates/plugin-host` | `anya-plugin-host` | service | the Bun process, plugin install, `plugins.json`, the plugin engine adapter | planned |
+| `crates/config` | `anya-config` | app | the config file: shape, defaults, validation, atomic save | planned |
+| `crates/i18n` | `anya-i18n` | app | every user-facing string, locale detection (docs/decisions/0008) | in place |
+| `crates/tui` | `anya-tui` | app | the terminal UI | planned |
+| `crates/gui` | `anya-gui` | app | the settings page, the desktop window and tray (tao, wry, tray-icon), `--web` | planned |
 | `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin` | planned |
-| `app/` | `anya-app` | app | Tauri v2 tray and settings window | planned |
 | `host/` | — | — | `host.js`, the Bun side of the plugin host, embedded in the binary | planned |
 | `sdk/plugin/` | `@anyahq/plugin` | — | what plugin authors build on | planned |
 | `sdk/client/` | `@anyahq/client` | — | a thin subscriber for apps, tested against the fixtures | planned |

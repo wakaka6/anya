@@ -1,0 +1,13 @@
+[package]
+name = "anya-output"
+description = "Paste into the focused field and write the clipboard."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anya-core.workspace = true
+
+[lints]
+workspace = true

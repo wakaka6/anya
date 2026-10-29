@@ -3,6 +3,29 @@
 version = 4
 
 [[package]]
+name = "anya-audio"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+]
+
+[[package]]
+name = "anya-config"
+version = "0.0.0"
+dependencies = [
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-continuous"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+ "tokio",
+]
+
+[[package]]
 name = "anya-core"
 version = "0.0.0"
 dependencies = [
@@ -12,11 +35,115 @@ dependencies = [
 ]
 
 [[package]]
+name = "anya-dictation"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+ "tokio",
+]
+
+[[package]]
+name = "anya-engine-auralwise"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-engine-dashscope"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-engine-doubao"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-engine-mimo"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-engine-openai"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-gui"
+version = "0.0.0"
+dependencies = [
+ "anya-config",
+ "anya-i18n",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-hotkey"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+]
+
+[[package]]
+name = "anya-i18n"
+version = "0.0.0"
+dependencies = [
+ "anya-protocol",
+ "serde_json",
+]
+
+[[package]]
+name = "anya-output"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+]
+
+[[package]]
+name = "anya-overlay"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+]
+
+[[package]]
 name = "anya-protocol"
 version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "anya-server"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+]
+
+[[package]]
+name = "anya-tui"
+version = "0.0.0"
+dependencies = [
+ "anya-config",
+ "anya-i18n",
+ "anya-protocol",
 ]
 
 [[package]]
@@ -136,6 +263,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "pin-project-lite",
+ "tokio-macros",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

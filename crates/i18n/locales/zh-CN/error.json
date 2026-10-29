@@ -1,0 +1,9 @@
+{
+  "error.not_configured": "识别引擎还没配置好",
+  "error.connect": "连接识别服务失败",
+  "error.upstream": "识别服务出错",
+  "error.timeout": "等待识别结果超时",
+  "error.audio": "录音失败",
+  "error.unknown": "识别失败",
+  "error.with_detail": "{error}：{detail}"
+}

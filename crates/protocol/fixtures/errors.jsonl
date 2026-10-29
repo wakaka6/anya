@@ -1,8 +1,9 @@
 {"type":"hello","name":"anya","version":"0.1.0","protocol":0}
 {"type":"source","source":"continuous","state":"listening","device":"BlackHole 2ch"}
 {"type":"session_start","session":"anya-20261030T101500-4","source":"continuous","engine":"example"}
+{"type":"level","session":"anya-20261030T101500-4","level":0.25}
 {"type":"result","session":"anya-20261030T101500-4","text":"The budget for","utterances":[{"text":"The budget for","definite":false}],"final":false}
-{"type":"session_end","session":"anya-20261030T101500-4","reason":"error"}
+{"type":"session_end","session":"anya-20261030T101500-4","reason":"error","error":"connect","detail":"connection reset by peer"}
 {"type":"session_start","session":"anya-20261030T101500-5","source":"dictation","engine":"example"}
 {"type":"result","session":"anya-20261030T101500-5","text":"算了","utterances":[{"text":"算了","definite":false}],"final":false}
 {"type":"session_end","session":"anya-20261030T101500-5","reason":"cancelled"}

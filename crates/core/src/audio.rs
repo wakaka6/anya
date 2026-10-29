@@ -5,12 +5,56 @@ use tokio::sync::mpsc;
 /// Sample rate of every [`Chunk`].
 pub const SAMPLE_RATE: u32 = 16_000;
 
+/// How much audio an adapter puts in one chunk: 40 ms, so a level meter
+/// moves about 25 times a second.
+pub const CHUNK_MS: u32 = 40;
+
+/// Bytes in a [`CHUNK_MS`] chunk.
+pub const CHUNK_BYTES: usize = (SAMPLE_RATE * CHUNK_MS / 1000 * 2) as usize;
+
 /// Captured audio: signed 16-bit little-endian mono PCM at [`SAMPLE_RATE`].
 ///
 /// This is the only audio format that crosses a seam. Adapters convert before
 /// sending; an engine that needs less resamples itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk(pub Vec<u8>);
+
+impl Chunk {
+    /// Loudness for a level meter: RMS from -60 dBFS (0.0) to full scale (1.0).
+    pub fn level(&self) -> f32 {
+        let samples = self
+            .0
+            .chunks_exact(2)
+            .map(|b| f64::from(i16::from_le_bytes([b[0], b[1]])));
+        let (sum, n) = samples.fold((0.0, 0u32), |(s, n), x| (s + x * x, n + 1));
+        if n == 0 || sum == 0.0 {
+            return 0.0;
+        }
+        let rms = (sum / f64::from(n)).sqrt() / 32768.0;
+        let db = 20.0 * rms.log10();
+        ((db + 60.0) / 60.0).clamp(0.0, 1.0) as f32
+    }
+}
+
+/// Wraps PCM in a WAV header, for engines that take a file.
+pub fn wav(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
+    let len = u32::try_from(pcm.len()).unwrap_or(u32::MAX - 36);
+    let mut out = Vec::with_capacity(44 + pcm.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(pcm);
+    out
+}
 
 /// What a device records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +76,8 @@ pub struct Device {
     pub kind: DeviceKind,
 }
 
-/// Why capture could not start, or stopped.
+/// Why capture could not start, or stopped. UIs translate the variant; the
+/// Display text is for logs.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
     /// The requested device is not connected. Answered with this error, never

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs cargo inside the Linux build image, against this checkout:
+#   scripts/linux-cargo clippy -p anya-audio --all-targets -- -D warnings
+# ANYA_LINUX_TARGET names the target-dir volume (default anya-linux-target);
+# give parallel runs different names so they do not wait on each other.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+image=anya-linux-dev
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+    docker build -t "$image" -f "$root/scripts/linux.Dockerfile" "$root/scripts"
+fi
+exec docker run --rm \
+    -v "$root":/work \
+    -v "${ANYA_LINUX_TARGET:-anya-linux-target}":/target \
+    -v anya-linux-cargo-registry:/usr/local/cargo/registry \
+    -e CARGO_TARGET_DIR=/target \
+    -w /work "$image" cargo "$@"

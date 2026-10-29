@@ -72,6 +72,26 @@ pub enum EndReason {
     Unknown,
 }
 
+/// What went wrong in a session that ended with reason `error`. A code, not
+/// text: every UI and app shows it in its own language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// A required engine setting is empty.
+    NotConfigured,
+    /// The engine could not be reached.
+    Connect,
+    /// The engine answered with an error.
+    Upstream,
+    /// The engine did not send its final result in time.
+    Timeout,
+    /// Capture failed during the session.
+    Audio,
+    /// A code a newer Anya added.
+    #[serde(other)]
+    Unknown,
+}
+
 /// A message to subscribers. On the wire: a JSON object whose `type` is the
 /// variant name in snake case. Decoding never fails on a frame type, field or
 /// value a newer Anya added: they read as `Unknown` or are ignored.
@@ -116,12 +136,28 @@ pub enum Frame {
         #[serde(flatten)]
         recognition: Recognition,
     },
+    /// How loud the session's latest audio chunk was, for a level meter. One
+    /// per chunk while the session is open (about 25 a second); never replayed
+    /// to a late subscriber.
+    Level {
+        /// The session the audio belongs to.
+        session: SessionId,
+        /// 0.0 is silence, 1.0 is full scale; perceptually spread.
+        level: f32,
+    },
     /// The session is over; no more frames name it.
     SessionEnd {
         /// The session that ended.
         session: SessionId,
         /// Why.
         reason: EndReason,
+        /// What went wrong, with reason `error`. Apps translate the code.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<ErrorCode>,
+        /// The engine's or the system's own words, untranslated, for logs
+        /// and for showing beside the translated code.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     /// A frame type a newer Anya added; skip it.
     #[serde(other)]

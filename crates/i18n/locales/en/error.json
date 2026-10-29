@@ -1,0 +1,9 @@
+{
+  "error.not_configured": "The engine is not set up yet",
+  "error.connect": "Cannot reach the recognition service",
+  "error.upstream": "The recognition service returned an error",
+  "error.timeout": "Timed out waiting for the result",
+  "error.audio": "Recording failed",
+  "error.unknown": "Recognition failed",
+  "error.with_detail": "{error}: {detail}"
+}

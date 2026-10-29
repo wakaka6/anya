@@ -15,6 +15,9 @@ pub enum Layer {
     Protocol,
     /// `anya-core`: the seams and the session controller.
     Core,
+    /// When sessions open and end: dictation, continuous transcription.
+    /// Pure logic over core's seams; the app feeds them input events.
+    Trigger,
     /// Platform adapters: audio, hotkey, output, overlay.
     Adapter,
     /// One speech engine per crate, `anya-engine-<id>`.
@@ -33,9 +36,10 @@ impl Layer {
         Some(match package {
             "anya-protocol" => Layer::Protocol,
             "anya-core" => Layer::Core,
+            "anya-dictation" | "anya-continuous" => Layer::Trigger,
             "anya-audio" | "anya-hotkey" | "anya-output" | "anya-overlay" => Layer::Adapter,
             "anya-server" | "anya-plugin-host" => Layer::Service,
-            "anya" | "anya-app" => Layer::App,
+            "anya" | "anya-config" | "anya-i18n" | "anya-tui" | "anya-gui" => Layer::App,
             "xtask" => Layer::Tooling,
             p if p.starts_with(ENGINE_PREFIX) => Layer::Engine,
             _ => return None,
@@ -47,7 +51,7 @@ impl Layer {
         match self {
             Layer::Protocol | Layer::Tooling => false,
             Layer::Core => dep == Layer::Protocol,
-            Layer::Adapter | Layer::Engine | Layer::Service => {
+            Layer::Trigger | Layer::Adapter | Layer::Engine | Layer::Service => {
                 matches!(dep, Layer::Protocol | Layer::Core)
             }
             Layer::App => dep != Layer::Tooling,
@@ -63,7 +67,7 @@ impl Layer {
     fn external_allowlist(self) -> Option<&'static [&'static str]> {
         match self {
             Layer::Protocol => Some(&["serde"]),
-            Layer::Core => Some(&["serde", "thiserror", "tokio"]),
+            Layer::Core | Layer::Trigger => Some(&["serde", "thiserror", "tokio", "tracing"]),
             _ => None,
         }
     }
@@ -88,6 +92,29 @@ const PLATFORM_CRATES: &[&str] = &[
     "libc",
     "nix",
     "tauri",
+    "tao",
+    "wry",
+    "tray-icon",
+    "muda",
+    "gtk",
+    "glib",
+    "webkit2gtk",
+    "alsa",
+    "coreaudio-rs",
+    "coreaudio-sys",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-core-audio",
+    "objc2-core-graphics",
+    "objc2-application-services",
+    "wayland-protocols",
+    "wayland-protocols-wlr",
+    "xkbcommon",
+    "input-linux",
+    "uinput",
+    "arboard",
+    "enigo",
+    "rdev",
 ];
 
 /// Anya runs on Linux and macOS only (docs/decisions/0001).
@@ -403,7 +430,25 @@ mod tests {
     }
 
     #[test]
-    fn every_crate_needs_a_layer() {
+    fn triggers_stay_pure_and_meet_adapters_through_the_app() {
+        let mut ws = base();
+        ws.push(pkg("anya-hotkey", &["anya-core"]));
+        ws.push(pkg("anya-dictation", &["anya-core", "tokio"]));
+        assert_eq!(check(&ws), []);
+        ws.push(pkg("anya-continuous", &["anya-core", "anya-hotkey"]));
+        ws.push(pkg("anya-server", &["anya-dictation"]));
+        ws[3].dependencies.push(Dependency {
+            name: "reqwest".to_owned(),
+            kind: DepKind::Normal,
+        });
+        assert_eq!(
+            broken(&ws),
+            ["anya-dictation", "anya-continuous", "anya-server"]
+        );
+    }
+
+    #[test]
+    fn a_crate_without_a_layer_is_refused() {
         let mut ws = base();
         ws.push(pkg("anya-cache", &[]));
         assert_eq!(broken(&ws), ["anya-cache"]);
