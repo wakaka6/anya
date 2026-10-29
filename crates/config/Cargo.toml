@@ -7,7 +7,13 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-anya-protocol.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time"] }
+toml = "0.9"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros", "test-util"] }
 
 [lints]
 workspace = true

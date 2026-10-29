@@ -10,6 +10,7 @@ publish.workspace = true
 anya-config.workspace = true
 anya-i18n.workspace = true
 anya-protocol.workspace = true
+anya-runtime.workspace = true
 
 [lints]
 workspace = true

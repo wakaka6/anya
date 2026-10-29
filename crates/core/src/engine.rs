@@ -1,6 +1,7 @@
 //! Recognition: the seam every speech engine plugs into, built-in or plugin.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anya_protocol::{ErrorCode, Manifest, Recognition, Utterance};
 use tokio::sync::mpsc;
@@ -119,6 +120,12 @@ pub trait Engine: Send + Sync {
     /// from inside one; a failure arrives as [`Output::Error`].
     fn open(&self, params: SessionParams) -> Session;
 }
+
+/// What a trigger opens its next session with: the engine the user chose and
+/// its params, read fresh at every call so an edited setting or hotword file
+/// applies to the next session. The app builds it from the config.
+pub type Choice =
+    Arc<dyn Fn() -> Result<(Arc<dyn Engine>, SessionParams), EngineError> + Send + Sync>;
 
 /// Buffered audio a session holds before it is sent; about two minutes.
 const INPUT_CAPACITY: usize = 4096;

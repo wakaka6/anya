@@ -1,0 +1,20 @@
+[package]
+name = "anya-runtime"
+description = "What the UIs may ask of a running Anya: the Control trait and its data."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anya-config.workspace = true
+anya-core.workspace = true
+anya-protocol.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+anya-i18n.workspace = true

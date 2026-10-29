@@ -5,5 +5,13 @@
   "error.timeout": "Timed out waiting for the result",
   "error.audio": "Recording failed",
   "error.unknown": "Recognition failed",
-  "error.with_detail": "{error}: {detail}"
+  "error.with_detail": "{error}: {detail}",
+  "error.invalid.hotkey_unparsable": "Cannot read the hotkey \"{value}\"",
+  "error.invalid.hotkey_text_key": "{combo} types text; use a combination such as Alt+Super, F9, Alt+F8 or Ctrl+Alt+Tab",
+  "error.invalid.hotkey_fn_function_key": "Fn cannot be combined with F1–F24: {combo}",
+  "error.invalid.hotkey_taken": "{combo} is already a dictation hotkey and cannot also switch continuous transcription",
+  "error.invalid.position": "Unknown overlay position: {value}",
+  "error.invalid.scale": "The overlay scale must be a positive number",
+  "error.invalid.engine": "Unknown recognition engine: {id}",
+  "error.invalid.address": "Cannot listen on {address}: {detail}"
 }

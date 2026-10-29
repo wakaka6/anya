@@ -18,6 +18,7 @@ members = [
     "crates/server",
     "crates/config",
     "crates/i18n",
+    "crates/runtime",
     "crates/tui",
     "crates/gui",
     "xtask",
@@ -47,6 +48,7 @@ anya-engine-mimo = { path = "crates/engines/mimo" }
 anya-server = { path = "crates/server" }
 anya-config = { path = "crates/config" }
 anya-i18n = { path = "crates/i18n" }
+anya-runtime = { path = "crates/runtime" }
 anya-tui = { path = "crates/tui" }
 anya-gui = { path = "crates/gui" }
 

@@ -223,6 +223,21 @@ enum Control {
     Timeout,
 }
 
+/// Cancels a session from elsewhere, also while [`LiveSession::finish`] waits
+/// for its final result: the user threw it away after releasing the key.
+#[derive(Clone)]
+pub struct Canceller {
+    control: mpsc::Sender<Control>,
+}
+
+impl Canceller {
+    /// Ends the session with reason `cancelled`, unless it already ended.
+    /// Never blocks.
+    pub fn cancel(&self) {
+        let _ = self.control.try_send(Control::Cancel);
+    }
+}
+
 /// One open session, held by the trigger that opened it. Dropping it
 /// abandons the session: it ends with reason `closed`.
 pub struct LiveSession {
@@ -237,6 +252,14 @@ impl LiveSession {
     /// The session's id.
     pub fn id(&self) -> &SessionId {
         &self.id
+    }
+
+    /// A handle that cancels this session, valid after it moved into
+    /// [`LiveSession::finish`].
+    pub fn canceller(&self) -> Canceller {
+        Canceller {
+            control: self.control.clone(),
+        }
     }
 
     /// Sends audio, and its `level` once the session has started. Waits while

@@ -39,7 +39,7 @@ impl Layer {
             "anya-dictation" | "anya-continuous" => Layer::Trigger,
             "anya-audio" | "anya-hotkey" | "anya-output" | "anya-overlay" => Layer::Adapter,
             "anya-server" | "anya-plugin-host" => Layer::Service,
-            "anya" | "anya-config" | "anya-i18n" | "anya-tui" | "anya-gui" => Layer::App,
+            "anya" | "anya-config" | "anya-i18n" | "anya-runtime" | "anya-tui" | "anya-gui" => Layer::App,
             "xtask" => Layer::Tooling,
             p if p.starts_with(ENGINE_PREFIX) => Layer::Engine,
             _ => return None,

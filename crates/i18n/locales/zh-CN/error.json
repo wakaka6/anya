@@ -5,5 +5,13 @@
   "error.timeout": "等待识别结果超时",
   "error.audio": "录音失败",
   "error.unknown": "识别失败",
-  "error.with_detail": "{error}：{detail}"
+  "error.with_detail": "{error}：{detail}",
+  "error.invalid.hotkey_unparsable": "无法识别的热键：{value}",
+  "error.invalid.hotkey_text_key": "热键不支持普通字符键：{combo}，请使用 Alt+Super、F9、Alt+F8、Ctrl+Alt+Tab 等全局快捷键",
+  "error.invalid.hotkey_fn_function_key": "Fn 不能与 F1-F24 等功能键组合：{combo}",
+  "error.invalid.hotkey_taken": "{combo} 已经是听写热键，不能再用来开关持续转写",
+  "error.invalid.position": "未知提示位置：{value}",
+  "error.invalid.scale": "提示大小必须是正数",
+  "error.invalid.engine": "未知识别引擎：{id}",
+  "error.invalid.address": "无法在 {address} 上监听：{detail}"
 }
