@@ -10,6 +10,10 @@ publish.workspace = true
 anya-core.workspace = true
 anya-protocol.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros", "test-util"] }
 
 [lints]
 workspace = true
