@@ -1,1 +1,23 @@
-{}
+{
+  "cli.about": "本地语音转文字：听写到任意输入框，转写任意设备，把结果推给别的程序",
+  "cli.help.config": "使用指定的配置文件",
+  "cli.help.backend": "强制指定桌面后端",
+  "cli.help.debug": "记录调试热键并显示调试详情",
+  "cli.help.verbose": "输出调试级别日志",
+  "cli.help.tui": "用终端界面代替桌面窗口",
+  "cli.help.web": "在 127.0.0.1 上用浏览器打开设置页",
+  "cli.help.daemon": "不带界面运行，日志输出到 stderr",
+  "cli.help.doctor": "检查运行环境后退出",
+  "cli.help.install": "为当前用户安装 anya 后退出",
+  "cli.subscribe.about": "以 NDJSON 输出正在运行的 Anya 的识别帧",
+  "cli.replay.about": "把录好的识别帧流回放给订阅者",
+  "cli.help.addr": "订阅地址（默认取配置里的）",
+  "cli.help.timeout": "到时退出，如 30s、10m；0 表示不限",
+  "cli.help.max_events": "收到这么多帧后退出；0 表示不限",
+  "cli.help.replay_file": "每行一个帧的 JSON 文件",
+  "cli.help.fast": "尽快发送，不按原节奏",
+  "cli.install.done": "已安装 anya 到 {path}",
+  "cli.install.already": "anya 已安装在 {path}",
+  "cli.install.not_on_path": "提示：{dir} 不在 PATH 中，把它加入 shell 配置后可直接运行 anya。",
+  "cli.install.failed": "安装失败：{detail}"
+}

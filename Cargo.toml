@@ -21,6 +21,7 @@ members = [
     "crates/runtime",
     "crates/tui",
     "crates/gui",
+    "crates/anya",
     "xtask",
 ]
 
@@ -61,6 +62,9 @@ tracing = "0.1"
 tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "multipart"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# The one crypto provider: crates that open wss:// depend on it so rustls
+# has a process default.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

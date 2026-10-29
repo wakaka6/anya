@@ -1,1 +1,23 @@
-{}
+{
+  "cli.about": "Local speech-to-text: dictate into any field, transcribe any device, publish to other programs",
+  "cli.help.config": "Use this config file",
+  "cli.help.backend": "Force a desktop backend",
+  "cli.help.debug": "Log debug hotkeys and show debug details",
+  "cli.help.verbose": "Debug-level logs",
+  "cli.help.tui": "Run the terminal UI instead of the desktop window",
+  "cli.help.web": "Serve the settings page to a browser on 127.0.0.1",
+  "cli.help.daemon": "Run without any UI; logs go to stderr",
+  "cli.help.doctor": "Check the environment and exit",
+  "cli.help.install": "Install anya for the current user and exit",
+  "cli.subscribe.about": "Print a running Anya's frames as NDJSON",
+  "cli.replay.about": "Serve a recorded frame stream to subscribers",
+  "cli.help.addr": "Subscription address (default: the config's)",
+  "cli.help.timeout": "Exit after this long, e.g. 30s or 10m; 0 is unlimited",
+  "cli.help.max_events": "Exit after this many frames; 0 is unlimited",
+  "cli.help.replay_file": "A JSON-lines file of frames",
+  "cli.help.fast": "Send frames as fast as possible instead of paced",
+  "cli.install.done": "Installed anya to {path}",
+  "cli.install.already": "anya is already installed at {path}",
+  "cli.install.not_on_path": "Note: {dir} is not in PATH; add it to your shell profile to run anya directly.",
+  "cli.install.failed": "Install failed: {detail}"
+}

@@ -1,0 +1,22 @@
+[package]
+name = "anya"
+description = "The anya binary: wires every crate into the running service."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anya-config.workspace = true
+anya-core.workspace = true
+anya-i18n.workspace = true
+anya-protocol.workspace = true
+anya-runtime.workspace = true
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
