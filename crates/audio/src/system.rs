@@ -3,12 +3,17 @@
 //! Each capture owns one thread: it opens the device, keeps the stream, and
 //! ends it when the consumer drops the receiver or the stream fails. The
 //! audio callback only converts and `try_send`s; it never blocks.
+//!
+//! System sound needs no virtual device: on macOS a process tap on the
+//! default output (macOS 14.6 or later, the "System Audio Recording"
+//! permission), on Linux the default output's PulseAudio monitor source,
+//! which PipeWire serves as well.
 
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
 
-use anya_core::audio::{AudioError, AudioSource, Capture, Chunk, Device};
+use anya_core::audio::{AudioError, AudioSource, Capture, Chunk, Device, DeviceKind};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{ErrorKind, FromSample, SampleFormat, SizedSample};
 use tokio::sync::mpsc;
@@ -25,6 +30,14 @@ const QUEUE: usize = 512;
 const POLL: Duration = Duration::from_millis(50);
 
 type Sender = mpsc::Sender<Result<Chunk, AudioError>>;
+
+/// What [`AudioSource::open`] was asked for.
+enum Wanted {
+    /// A device by id or name.
+    Named(String),
+    /// The system's default of a kind.
+    Default(DeviceKind),
+}
 
 /// The machine's input devices: ALSA on Linux, CoreAudio on macOS.
 ///
@@ -44,15 +57,21 @@ impl System {
 
 impl AudioSource for System {
     fn devices(&self) -> Result<Vec<Device>, AudioError> {
-        list(&cpal::default_host()).map(|(devices, _)| devices)
+        list(&input_host()?).map(|(devices, _)| devices)
     }
 
-    fn open(&self, device: Option<&str>) -> Result<Capture, AudioError> {
+    fn open(&self, device: Option<&str>, default: DeviceKind) -> Result<Capture, AudioError> {
+        let wanted = match device {
+            Some(name) => Wanted::Named(name.to_owned()),
+            None => Wanted::Default(default),
+        };
+        // A process tap asks for its own permission when it starts.
         #[cfg(target_os = "macos")]
-        crate::macos::authorize()?;
+        if !matches!(wanted, Wanted::Default(DeviceKind::Loopback)) {
+            crate::macos::authorize()?;
+        }
         let (tx, rx) = mpsc::channel(QUEUE);
         let (ready_tx, ready_rx) = std_mpsc::sync_channel(1);
-        let wanted = device.map(str::to_owned);
         let gain = self.gain;
         thread::Builder::new()
             .name("anya-capture".into())
@@ -78,15 +97,16 @@ enum Event {
     Closed,
 }
 
-fn run(
-    wanted: Option<String>,
-    gain: i32,
-    tx: Sender,
-    ready: std_mpsc::SyncSender<Result<(), AudioError>>,
-) {
-    let host = cpal::default_host();
+fn run(wanted: Wanted, gain: i32, tx: Sender, ready: std_mpsc::SyncSender<Result<(), AudioError>>) {
+    let host = match host_for(&wanted) {
+        Ok(host) => host,
+        Err(e) => {
+            let _ = ready.send(Err(e));
+            return;
+        }
+    };
     let (events_tx, events) = std_mpsc::channel();
-    let (stream, label) = match start(&host, wanted.as_deref(), gain, tx.clone(), events_tx) {
+    let (stream, label) = match start(&host, &wanted, gain, tx.clone(), events_tx) {
         Ok(started) => started,
         Err(e) => {
             let _ = ready.send(Err(e));
@@ -131,13 +151,13 @@ fn run(
 /// errors name the device by.
 fn start(
     host: &cpal::Host,
-    wanted: Option<&str>,
+    wanted: &Wanted,
     gain: i32,
     tx: Sender,
     events: std_mpsc::Sender<Event>,
 ) -> Result<(cpal::Stream, String), AudioError> {
-    let (device, label) = match wanted {
-        None => {
+    let (device, label, config) = match wanted {
+        Wanted::Default(DeviceKind::Microphone) => {
             let device = host
                 .default_input_device()
                 .ok_or_else(|| select::not_found("default", &listed(host)))?;
@@ -145,18 +165,24 @@ fn start(
                 .description()
                 .map(|d| d.name().to_owned())
                 .unwrap_or_else(|_| "default".into());
-            (device, label)
+            let config = device
+                .default_input_config()
+                .map_err(|e| audio_error(host, &label, e))?;
+            (device, label, config)
         }
-        Some(wanted) => {
+        Wanted::Default(DeviceKind::Loopback) => system_sound(host)?,
+        Wanted::Named(wanted) => {
             let (devices, mut handles) = list(host)?;
             let i = select::find(&devices, wanted)?;
             tracing::debug!(id = %devices[i].id, name = %devices[i].name, kind = ?devices[i].kind, "audio input device selected");
-            (handles.swap_remove(i), wanted.trim().to_owned())
+            let device = handles.swap_remove(i);
+            let label = wanted.trim().to_owned();
+            let config = device
+                .default_input_config()
+                .map_err(|e| audio_error(host, &label, e))?;
+            (device, label, config)
         }
     };
-    let config = device
-        .default_input_config()
-        .map_err(|e| audio_error(host, &label, e))?;
     let converter = Converter::new(config.sample_rate(), config.channels(), gain);
     let stream_config = config.config();
     let device_ref = &device;
@@ -266,6 +292,90 @@ fn backend(err: cpal::Error) -> AudioError {
     }
 }
 
+/// The host input devices are listed and opened through: ALSA on Linux,
+/// whichever sound server runs on top of it; CoreAudio on macOS.
+pub(crate) fn input_host() -> Result<cpal::Host, AudioError> {
+    #[cfg(target_os = "linux")]
+    let host = host_by_id(cpal::HostId::Alsa);
+    #[cfg(target_os = "macos")]
+    let host = Ok(cpal::default_host());
+    host
+}
+
+/// The host `wanted` is opened through. On Linux system sound is a
+/// PulseAudio monitor source, which ALSA does not list.
+fn host_for(wanted: &Wanted) -> Result<cpal::Host, AudioError> {
+    #[cfg(target_os = "linux")]
+    if matches!(wanted, Wanted::Default(DeviceKind::Loopback)) {
+        return host_by_id(cpal::HostId::PulseAudio);
+    }
+    let _ = wanted;
+    input_host()
+}
+
+#[cfg(target_os = "linux")]
+fn host_by_id(id: cpal::HostId) -> Result<cpal::Host, AudioError> {
+    cpal::host_from_id(id).map_err(|e| AudioError::Backend(format!("{id}: {e}")))
+}
+
+/// What the computer plays through its default output, with the format to
+/// capture it in and the label errors name it by.
+#[cfg(target_os = "macos")]
+fn system_sound(
+    host: &cpal::Host,
+) -> Result<(cpal::Device, String, cpal::SupportedStreamConfig), AudioError> {
+    let output = host
+        .default_output_device()
+        .ok_or_else(|| AudioError::Backend("no default output device to record".into()))?;
+    let label = output_label(&output);
+    // cpal taps an output only when it has no input of its own; on one that
+    // also records (a USB interface, a headset) it would open the
+    // microphone instead.
+    if output
+        .supported_input_configs()
+        .is_ok_and(|mut configs| configs.next().is_some())
+    {
+        return Err(AudioError::Backend(format!(
+            "{label}: the default output also records, so tapping it would record its microphone"
+        )));
+    }
+    let config = output
+        .default_output_config()
+        .map_err(|e| audio_error(host, &label, e))?;
+    Ok((output, label, config))
+}
+
+/// What the computer plays through its default output: that sink's monitor
+/// source, with the format to capture it in and the label errors name it by.
+#[cfg(target_os = "linux")]
+fn system_sound(
+    host: &cpal::Host,
+) -> Result<(cpal::Device, String, cpal::SupportedStreamConfig), AudioError> {
+    let output = host
+        .default_output_device()
+        .ok_or_else(|| AudioError::Backend("no default output device to record".into()))?;
+    let label = output_label(&output);
+    let sink = output.id().map_err(backend)?;
+    let monitor = format!("{}.monitor", sink.id());
+    let device = host
+        .input_devices()
+        .map_err(backend)?
+        .find(|d| d.id().is_ok_and(|id| id.id() == monitor))
+        .ok_or_else(|| AudioError::Backend(format!("{label}: no monitor source {monitor}")))?;
+    let config = device
+        .default_input_config()
+        .map_err(|e| audio_error(host, &label, e))?;
+    Ok((device, label, config))
+}
+
+fn output_label(output: &cpal::Device) -> String {
+    let name = output
+        .description()
+        .map(|d| d.name().to_owned())
+        .unwrap_or_else(|_| "default output".into());
+    format!("system sound ({name})")
+}
+
 /// The input devices worth listing, with their cpal handles in the same order.
 #[cfg(target_os = "linux")]
 fn list(host: &cpal::Host) -> Result<(Vec<Device>, Vec<cpal::Device>), AudioError> {
@@ -362,7 +472,9 @@ mod tests {
     #[test]
     #[ignore]
     fn records_a_second_from_the_default_input() {
-        let capture = System::new(1).open(None).expect("open default input");
+        let capture = System::new(1)
+            .open(None, DeviceKind::Microphone)
+            .expect("open default input");
         let mut chunks = capture.chunks;
         for _ in 0..25 {
             let chunk = chunks.blocking_recv().expect("stream open").expect("chunk");

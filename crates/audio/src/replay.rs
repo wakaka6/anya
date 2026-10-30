@@ -21,7 +21,9 @@ const FRAMES: usize = 1024;
 /// 16 kHz mono chunks, then ends the capture. For demos and smoke tests
 /// without a microphone.
 ///
-/// It lists one device, the file: id is the path, name the file name.
+/// It lists one device, the file: id is the path, name the file name. The
+/// file is the default of either kind, so it stands in for a microphone and
+/// for system sound alike.
 #[derive(Debug, Clone)]
 pub struct Replay {
     path: PathBuf,
@@ -65,7 +67,7 @@ impl AudioSource for Replay {
         })
     }
 
-    fn open(&self, device: Option<&str>) -> Result<Capture, AudioError> {
+    fn open(&self, device: Option<&str>, _default: DeviceKind) -> Result<Capture, AudioError> {
         if let Some(wanted) = device {
             select::find(&self.devices()?, wanted)?;
         }
@@ -251,7 +253,10 @@ mod tests {
     }
 
     fn collect(path: &Path, realtime: bool) -> Vec<Chunk> {
-        let mut chunks = Replay::new(path, realtime).open(None).unwrap().chunks;
+        let mut chunks = Replay::new(path, realtime)
+            .open(None, DeviceKind::Microphone)
+            .unwrap()
+            .chunks;
         let mut out = Vec::new();
         while let Some(chunk) = chunks.blocking_recv() {
             out.push(chunk.unwrap());
@@ -363,9 +368,11 @@ mod tests {
         assert_eq!(devices.len(), 1);
         let name = devices[0].name.clone();
         assert!(name.ends_with("-listed.wav"));
-        assert!(replay.open(Some(&devices[0].id)).is_ok());
-        assert!(replay.open(Some(&name.to_uppercase())).is_ok());
-        match replay.open(Some("microphone")) {
+        let mic = DeviceKind::Microphone;
+        assert!(replay.open(Some(&devices[0].id), mic).is_ok());
+        assert!(replay.open(Some(&name.to_uppercase()), mic).is_ok());
+        assert!(replay.open(None, DeviceKind::Loopback).is_ok());
+        match replay.open(Some("microphone"), mic) {
             Err(AudioError::NotFound { wanted, available }) => {
                 assert_eq!(wanted, "microphone");
                 assert_eq!(available, [name]);
@@ -379,11 +386,11 @@ mod tests {
         let replay = Replay::new("/nonexistent/anya.wav", false);
         assert!(replay.devices().unwrap().is_empty());
         assert!(matches!(
-            replay.open(None),
+            replay.open(None, DeviceKind::Microphone),
             Err(AudioError::NotFound { .. })
         ));
         assert!(matches!(
-            replay.open(Some("anya.wav")),
+            replay.open(Some("anya.wav"), DeviceKind::Microphone),
             Err(AudioError::NotFound { available, .. }) if available.is_empty()
         ));
     }

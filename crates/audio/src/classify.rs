@@ -12,8 +12,9 @@ const TRANSPORT_VIRTUAL: u32 = u32::from_be_bytes(*b"virt");
 const TRANSPORT_AGGREGATE: u32 = u32::from_be_bytes(*b"grup");
 
 /// A CoreAudio input is a loopback when it is virtual or aggregate and also
-/// plays (BlackHole, Loopback, an aggregate with a speaker); every other
-/// input, or one whose transport cannot be read, records the room.
+/// plays (a virtual output, a loopback driver, or an aggregate with a
+/// speaker); every other input, or one whose transport cannot be read, records
+/// the room.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn coreaudio_kind(transport: Option<u32>, has_output: bool) -> DeviceKind {
     match transport {

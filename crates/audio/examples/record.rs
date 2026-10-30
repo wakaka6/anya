@@ -1,15 +1,16 @@
 //! Lists input devices, runs the audio doctor checks, then records 3 s from
-//! the default input (or the device named by the first argument) and prints
-//! the chunk count and peak level.
+//! the default input (the device named by the first argument, or with
+//! `--system` what the computer plays) and prints the chunk count and peak
+//! level.
 //!
-//! `cargo run -p anya-audio --example record [device]`
+//! `cargo run -p anya-audio --example record [device | --system]`
 
 #![allow(clippy::print_stdout)]
 
 use std::time::Instant;
 
 use anya_audio::System;
-use anya_core::audio::{AudioSource, CHUNK_BYTES, CHUNK_MS};
+use anya_core::audio::{AudioSource, CHUNK_BYTES, CHUNK_MS, DeviceKind};
 use anya_core::desktop::Desktop;
 
 fn main() {
@@ -30,8 +31,11 @@ fn main() {
         );
     }
 
-    let wanted = std::env::args().nth(1);
-    let capture = match source.open(wanted.as_deref()) {
+    let (wanted, default) = match std::env::args().nth(1) {
+        Some(arg) if arg == "--system" => (None, DeviceKind::Loopback),
+        other => (other, DeviceKind::Microphone),
+    };
+    let capture = match source.open(wanted.as_deref(), default) {
         Ok(capture) => capture,
         Err(e) => {
             println!("open failed: {e}");

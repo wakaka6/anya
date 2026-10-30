@@ -43,7 +43,10 @@ enum Probe {
 }
 
 fn probe() -> Probe {
-    let host = cpal::default_host();
+    let host = match crate::system::input_host() {
+        Ok(host) => host,
+        Err(e) => return Probe::Failed(e.to_string()),
+    };
     let Some(device) = host.default_input_device() else {
         return Probe::None;
     };

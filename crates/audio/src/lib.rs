@@ -1,7 +1,8 @@
 //! Capture on Linux and macOS behind anya-core's AudioSource.
 //!
-//! [`System`] records from the machine's input devices through cpal: ALSA on
-//! Linux, CoreAudio on macOS. [`Replay`] plays a WAV file as if it were a
+//! [`System`] records microphones through cpal's native host and records
+//! system sound through the default output's monitor: PulseAudio/PipeWire on
+//! Linux, CoreAudio process taps on macOS. [`Replay`] plays a WAV file as if it were a
 //! device, for demos and smoke tests without a microphone. Both deliver
 //! [`anya_core::audio::Chunk`]s of exactly
 //! [`anya_core::audio::CHUNK_BYTES`], whatever the source's format.
