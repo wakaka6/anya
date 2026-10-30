@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anya_config::Config;
+use anya_config::{Config, EngineRole};
 use anya_core::audio::Device;
-use anya_protocol::{ErrorCode, Manifest, Source};
+use anya_protocol::{ErrorCode, Manifest, PairingOffer, Scope, Source, Text};
 use serde::{Deserialize, Serialize};
 
 /// Facts about this instance that do not change while it runs.
@@ -25,8 +25,6 @@ pub struct Info {
     pub version: String,
     /// The file saves go to.
     pub config_path: PathBuf,
-    /// Started with `--debug`.
-    pub debug: bool,
 }
 
 /// One engine as the settings show it.
@@ -36,6 +34,9 @@ pub struct EngineInfo {
     pub manifest: Manifest,
     /// The saved settings are enough to open a session.
     pub ready: bool,
+    /// Whether a built-in engine is switched on; `None` for an engine with no
+    /// switch (a community plugin's, which has its own on the Plugins page).
+    pub enabled: Option<bool>,
 }
 
 /// What dictation is doing.
@@ -91,8 +92,109 @@ pub enum Subscription {
     },
 }
 
-/// A running Anya's state, polled by the UIs a few times a second.
+/// The LAN listener now: the gateway paired apps reach over TLS.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Lan {
+    /// LAN sharing is off; only this computer can connect.
+    Off,
+    /// Listening on the local network.
+    Listening {
+        /// What apps connect to: `wss://<lan address>:<port>/asr`.
+        url: String,
+        /// The certificate's SHA-256, as shown beside a pairing code.
+        fingerprint: String,
+    },
+    /// LAN sharing is on but the listener is not up; why, untranslated.
+    Down {
+        /// The reason, for the log and beside a translated label.
+        detail: String,
+    },
+}
+
+/// A paired app, as the settings list it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PairedClient {
+    /// Stable id, what the other methods take.
+    pub id: String,
+    /// The name the app gave when pairing.
+    pub name: String,
+    /// What it may do.
+    pub scopes: Vec<Scope>,
+    /// When it paired, unix ms.
+    pub paired_at: u64,
+    /// When it last connected or sent something, unix ms.
+    pub last_seen: Option<u64>,
+    /// Connections open now.
+    pub connections: usize,
+}
+
+/// A pairing code just issued, with what the QR code shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Pairing {
+    /// The six digits to type into the app.
+    pub code: String,
+    /// When the code stops working, unix ms.
+    pub expires_at: u64,
+    /// The same code with the gateway's address and certificate, for a QR code.
+    pub offer: PairingOffer,
+}
+
+/// Where an installed plugin is on its way to being usable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PluginLoad {
+    /// Installed and not enabled: it is not loaded and hears nothing.
+    Off,
+    /// Enabled; the plugin host is loading it.
+    Loading,
+    /// Loaded; its engine can open sessions.
+    Ready,
+    /// Enabled, but the plugin host process is not running.
+    HostDown,
+    /// Enabled but not loaded; why, in the plugin's own words.
+    Failed {
+        /// The reason, for the log and beside a translated label.
+        detail: String,
+    },
+}
+
+/// An installed engine plugin, as the settings list it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InstalledPlugin {
+    /// The plugin id; also its engine's id.
+    pub id: String,
+    /// The pinned version.
+    pub version: String,
+    /// The user turned it on; only then it loads and receives audio.
+    pub enabled: bool,
+    /// Whether it loaded.
+    pub load: PluginLoad,
+    /// The engine's title once it has loaded.
+    pub title: Option<Text>,
+    /// The engine's one-line description once it has loaded.
+    pub description: Option<Text>,
+}
+
+/// A plugin the registry offers, at its newest release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MarketPlugin {
+    /// The plugin id.
+    pub id: String,
+    /// Name to show.
+    pub name: Text,
+    /// One line under the name.
+    pub description: Text,
+    /// The newest release.
+    pub version: String,
+    /// The engine streams partial results.
+    pub streaming: bool,
+    /// What it asks for, as the registry declares it (`network:host`, …).
+    pub permissions: Vec<String>,
+}
+
+/// A running Anya's state, polled by the UIs a few times a second.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     /// Dictation's state.
     pub dictation: Dictation,
@@ -100,12 +202,47 @@ pub struct Status {
     pub finishing: usize,
     /// The text of the dictation session being recorded or finished.
     pub live_text: Option<String>,
+    /// The input level (0.0 to 1.0) of the dictation session being recorded;
+    /// `None` when none is.
+    pub level: Option<f32>,
     /// Continuous transcription runs (the hotkey and tray switch included).
     pub continuous_on: bool,
     /// The subscriber server.
     pub subscription: Subscription,
+    /// The LAN listener.
+    pub lan: Lan,
     /// Usage totals.
     pub stats: Stats,
+}
+
+/// What the overlay preview shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewView {
+    /// Recording, with sample text.
+    Listening,
+    /// A finished session.
+    Done,
+    /// A failed session.
+    Error,
+}
+
+/// Why the overlay preview did not show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(tag = "issue", rename_all = "snake_case")]
+pub enum PreviewIssue {
+    /// The overlay is off or could not start.
+    #[error("the overlay is not running")]
+    NotRunning,
+}
+
+impl PreviewIssue {
+    /// The catalog key of this issue's message.
+    pub fn message(&self) -> &'static str {
+        match self {
+            PreviewIssue::NotRunning => "error.preview.not_running",
+        }
+    }
 }
 
 /// Where a session's final text went.
@@ -140,6 +277,40 @@ pub enum Notice {
     HotwordsUnreadable,
     /// Delivering the text failed; it may still be on the clipboard.
     DeliveryFailed,
+    /// Plugins are enabled but there is no Bun to run them; the detail says
+    /// what was missing.
+    PluginsUnavailable,
+    /// The recording overlay could not start; the detail says why.
+    OverlayUnavailable,
+}
+
+/// What debug mode records. Never a transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum DebugEvent {
+    /// A watched hotkey combo went down.
+    KeyDown {
+        /// The combo, in canonical names.
+        combo: String,
+    },
+    /// A watched hotkey combo went up.
+    KeyUp {
+        /// The combo, in canonical names.
+        combo: String,
+    },
+    /// How long the stages of a dictation session took, in ms; a stage that
+    /// never happened is `None`.
+    Timing {
+        /// From the start of recording to the engine being connected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connect_ms: Option<u64>,
+        /// From the start of recording to the first words.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_text_ms: Option<u64>,
+        /// From stopping to the final result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        final_ms: Option<u64>,
+    },
 }
 
 /// One line of the activity list, kept on disk across restarts.
@@ -168,6 +339,14 @@ pub enum Entry {
         /// Untranslated specifics.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+    },
+    /// Debug mode saw something; shown only while debug mode is on.
+    Debug {
+        /// Unix ms.
+        at: u64,
+        /// What.
+        #[serde(flatten)]
+        event: DebugEvent,
     },
     /// Anya said something about itself.
     Notice {
@@ -222,8 +401,10 @@ pub enum Invalid {
     },
     /// An overlay scale that is not a positive number.
     BadScale,
-    /// An engine Anya does not have.
+    /// An engine Anya does not have, chosen for `role`.
     UnknownEngine {
+        /// What it was chosen for.
+        role: EngineRole,
         /// The id.
         id: String,
     },
@@ -259,7 +440,7 @@ impl Invalid {
                 ("error.invalid.position", vec![("value", value.clone())])
             }
             Invalid::BadScale => ("error.invalid.scale", Vec::new()),
-            Invalid::UnknownEngine { id } => ("error.invalid.engine", vec![("id", id.clone())]),
+            Invalid::UnknownEngine { id, .. } => ("error.invalid.engine", vec![("id", id.clone())]),
             Invalid::BadAddress { address, detail } => (
                 "error.invalid.address",
                 vec![("address", address.clone()), ("detail", detail.clone())],
@@ -286,6 +467,227 @@ pub enum SaveError {
 pub struct Saved {
     /// Why applying fell short, untranslated; `None` when all applied.
     pub hotkeys_failed: Option<String>,
+}
+
+/// Why a plugin operation did not happen, as a code with its specifics. The
+/// UIs translate it with [`PluginIssue::message`]; the specifics (a URL, a
+/// system error) stay as the system or the registry worded them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(tag = "issue", rename_all = "snake_case")]
+pub enum PluginIssue {
+    /// The registry index or an artifact could not be fetched.
+    #[error("cannot fetch {url}: {reason}")]
+    Fetch {
+        /// What was asked for.
+        url: String,
+        /// The network's or the server's words.
+        reason: String,
+    },
+    /// The registry index is not valid.
+    #[error("the registry index is invalid: {reason}")]
+    Index {
+        /// What is wrong with it.
+        reason: String,
+    },
+    /// The registry index has a format version this Anya does not read.
+    #[error("the registry index has format version {found}, this Anya reads {supported}")]
+    IndexVersion {
+        /// The index's version.
+        found: u32,
+        /// The version Anya reads.
+        supported: u32,
+    },
+    /// The registry has no such release.
+    #[error("the registry has no plugin {id} version {version}")]
+    NotInIndex {
+        /// The plugin id.
+        id: String,
+        /// The version asked for.
+        version: String,
+    },
+    /// The release cannot run here.
+    #[error("plugin {id} {version} cannot run here: {reason}")]
+    Incompatible {
+        /// The plugin id.
+        id: String,
+        /// The release.
+        version: String,
+        /// What does not fit.
+        reason: String,
+    },
+    /// A download does not match its hash.
+    #[error("integrity check failed for {what}")]
+    Integrity {
+        /// The artifact checked.
+        what: String,
+    },
+    /// An integrity string in an unsupported format.
+    #[error("unsupported integrity string {value:?}")]
+    IntegrityFormat {
+        /// The string.
+        value: String,
+    },
+    /// A plugin id or version that is not valid.
+    #[error("invalid plugin id or version {value:?}")]
+    Invalid {
+        /// The offending text.
+        value: String,
+    },
+    /// No installed plugin has this id.
+    #[error("plugin {id} is not installed")]
+    NotInstalled {
+        /// The plugin id.
+        id: String,
+    },
+    /// An archive that cannot be unpacked safely.
+    #[error("cannot unpack {what}: {reason}")]
+    Archive {
+        /// The artifact.
+        what: String,
+        /// What is wrong with it.
+        reason: String,
+    },
+    /// Reading or writing a file failed.
+    #[error("{path}: {reason}")]
+    Io {
+        /// The file or directory.
+        path: String,
+        /// The system's words.
+        reason: String,
+    },
+    /// No Bun can be downloaded for this platform.
+    #[error("no Bun runtime for this platform: {reason}")]
+    Bun {
+        /// The asset or reason.
+        reason: String,
+    },
+    /// Plugins need a Bun of at least this version and none was found.
+    #[error("Bun {version} or newer was not found")]
+    BunMissing {
+        /// The oldest Bun that works.
+        version: String,
+    },
+}
+
+impl PluginIssue {
+    /// The catalog key of this issue's message and its placeholders.
+    pub fn message(&self) -> (&'static str, Vec<(&'static str, String)>) {
+        match self {
+            PluginIssue::Fetch { url, reason } => (
+                "error.plugin.fetch",
+                vec![("url", url.clone()), ("reason", reason.clone())],
+            ),
+            PluginIssue::Index { reason } => {
+                ("error.plugin.index", vec![("reason", reason.clone())])
+            }
+            PluginIssue::IndexVersion { found, supported } => (
+                "error.plugin.index_version",
+                vec![
+                    ("found", found.to_string()),
+                    ("supported", supported.to_string()),
+                ],
+            ),
+            PluginIssue::NotInIndex { id, version } => (
+                "error.plugin.not_in_index",
+                vec![("id", id.clone()), ("version", version.clone())],
+            ),
+            PluginIssue::Incompatible {
+                id,
+                version,
+                reason,
+            } => (
+                "error.plugin.incompatible",
+                vec![
+                    ("id", id.clone()),
+                    ("version", version.clone()),
+                    ("reason", reason.clone()),
+                ],
+            ),
+            PluginIssue::Integrity { what } => {
+                ("error.plugin.integrity", vec![("what", what.clone())])
+            }
+            PluginIssue::IntegrityFormat { value } => (
+                "error.plugin.integrity_format",
+                vec![("value", value.clone())],
+            ),
+            PluginIssue::Invalid { value } => {
+                ("error.plugin.invalid", vec![("value", value.clone())])
+            }
+            PluginIssue::NotInstalled { id } => {
+                ("error.plugin.not_installed", vec![("id", id.clone())])
+            }
+            PluginIssue::Archive { what, reason } => (
+                "error.plugin.archive",
+                vec![("what", what.clone()), ("reason", reason.clone())],
+            ),
+            PluginIssue::Io { path, reason } => (
+                "error.plugin.io",
+                vec![("path", path.clone()), ("reason", reason.clone())],
+            ),
+            PluginIssue::Bun { reason } => ("error.plugin.bun", vec![("reason", reason.clone())]),
+            PluginIssue::BunMissing { version } => (
+                "error.plugin.bun_missing",
+                vec![("version", version.clone())],
+            ),
+        }
+    }
+}
+
+/// Why a change to a paired client did not happen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(tag = "issue", rename_all = "snake_case")]
+pub enum ClientIssue {
+    /// No paired client has this id.
+    #[error("no paired client {id:?}")]
+    UnknownClient {
+        /// The id asked for.
+        id: String,
+    },
+    /// The clients file could not be written; nothing changed.
+    #[error("saving the paired clients failed: {detail}")]
+    Write {
+        /// The system's words.
+        detail: String,
+    },
+}
+
+impl ClientIssue {
+    /// The catalog key of this issue's message and its placeholders.
+    pub fn message(&self) -> (&'static str, Vec<(&'static str, String)>) {
+        match self {
+            ClientIssue::UnknownClient { id } => ("error.client.unknown", vec![("id", id.clone())]),
+            ClientIssue::Write { detail } => {
+                ("error.client.write", vec![("detail", detail.clone())])
+            }
+        }
+    }
+}
+
+/// Why no pairing code was issued.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(tag = "refused", rename_all = "snake_case")]
+pub enum PairError {
+    /// LAN sharing is off.
+    #[error("LAN sharing is off")]
+    LanOff,
+    /// LAN sharing is on but its listener is not up.
+    #[error("the LAN listener is down: {detail}")]
+    LanDown {
+        /// Why, untranslated (address taken, certificate unreadable).
+        detail: String,
+    },
+}
+
+impl PairError {
+    /// The catalog key of this refusal's message and its placeholders.
+    pub fn message(&self) -> (&'static str, Vec<(&'static str, String)>) {
+        match self {
+            PairError::LanOff => ("error.pairing.lan_off", Vec::new()),
+            PairError::LanDown { detail } => {
+                ("error.pairing.lan_down", vec![("detail", detail.clone())])
+            }
+        }
+    }
 }
 
 /// A running Anya, as its UIs see it. Every method returns promptly: slow
@@ -319,6 +721,39 @@ pub trait Control: Send + Sync {
     /// The activity list, oldest first.
     fn activity(&self) -> Vec<Entry>;
 
+    /// Paired apps, oldest pairing first.
+    fn clients(&self) -> Vec<PairedClient>;
+
+    /// Issues a fresh pairing code (replacing any open one); refused while
+    /// LAN sharing is off or its listener is down.
+    fn start_pairing(&self) -> Result<Pairing, PairError>;
+
+    /// Sets what client `id` may do; open connections follow at once. The
+    /// error is untranslated.
+    fn set_client_scopes(&self, id: &str, scopes: Vec<Scope>) -> Result<(), ClientIssue>;
+
+    /// Unpairs client `id` and closes its connections. The error is untranslated.
+    fn remove_client(&self, id: &str) -> Result<(), ClientIssue>;
+
+    /// Installed plugins with their load state, in install order.
+    fn plugins(&self) -> Vec<InstalledPlugin>;
+
+    /// The registry's plugins at their newest release. Fetches the index,
+    /// so it blocks on the network: call it off the UI thread. The error is
+    /// translated by the UI.
+    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue>;
+
+    /// Installs the newest release of plugin `id` from the registry,
+    /// disabled. Blocks while downloading (the Bun runtime too, the first
+    /// time).
+    fn install_plugin(&self, id: &str) -> Result<(), PluginIssue>;
+
+    /// Turns plugin `id` on or off and reloads the plugin host.
+    fn set_plugin_enabled(&self, id: &str, on: bool) -> Result<(), PluginIssue>;
+
+    /// Deletes plugin `id`.
+    fn remove_plugin(&self, id: &str) -> Result<(), PluginIssue>;
+
     /// Turns dictation hotkeys on or off: saves `[dictation] enabled` and applies it.
     fn set_dictation(&self, on: bool) -> Result<Saved, SaveError>;
 
@@ -336,6 +771,16 @@ pub trait Control: Send + Sync {
     /// calling thread up to `timeout`; `Ok(None)` when Esc was pressed or time
     /// ran out. The combo is canonical; the error is untranslated.
     fn record_hotkey(&self, timeout: Duration) -> Result<Option<String>, String>;
+
+    /// Shows `view` on the running overlay for a moment, then returns it to
+    /// the real state. Nothing is recorded or recognized.
+    fn preview_overlay(&self, view: PreviewView) -> Result<(), PreviewIssue>;
+
+    /// Starts a new recording while a failure is shown (R on the overlay).
+    fn retry_dictation(&self);
+
+    /// Dismisses the failure being shown (Esc on the overlay).
+    fn dismiss_dictation(&self);
 
     /// Puts `text` on the clipboard; the error is untranslated.
     fn copy(&self, text: &str) -> Result<(), String>;
