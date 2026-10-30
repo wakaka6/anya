@@ -13,6 +13,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # proc-macro-error is unmaintained; only gtk 0.18 (Linux tray and webview) builds with it, at compile time.
+    { id = "RUSTSEC-2024-0370", reason = "build-time only, via gtk 0.18; goes when gtk does" },
+    # ttf-parser is unmaintained; ab_glyph reads the system's installed fonts with it for the Linux overlay.
+    { id = "RUSTSEC-2026-0192", reason = "parses only installed system fonts, via ab_glyph in the Linux overlay" },
+]
 
 [licenses]
 version = 2
@@ -32,6 +38,11 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
+# Allowed by the owner for this crate only (MPL-2.0 is file-level copyleft;
+# option-ext is used unmodified, via tray-icon -> dirs).
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
 
 [licenses.private]
 # Workspace crates are unpublished and have no licence yet.
