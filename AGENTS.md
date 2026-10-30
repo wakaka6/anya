@@ -40,10 +40,14 @@ Fix the code. A rule changes only together with ARCHITECTURE.md and a new decisi
 
 Anya has no licence yet (docs/decisions/0006). Code is written for Anya; code from another project comes in only when its authors agreed or its licence leaves the choice open. Comments and docs describe Anya alone.
 
-## Brand
-
-The name is about reading minds. Brand assets are drawn for Anya; the Spy×Family character's likeness, colours and catchphrases stay out of the repo.
-
 ## Docs and commits
 
-README.md (中文) and README.en.md change together. User-visible changes go in CHANGELOG.md. Commit subjects are `<scope>: <what changed>`, the scope a crate or area (`protocol`, `core`, `xtask`, `docs`).
+README.md (中文) and README.en.md change together. User-visible changes go in CHANGELOG.md.
+
+Every commit follows [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/), with no exceptions:
+
+- The subject is `<type>(<scope>): <what changed>`, imperative and lower case, no trailing period, at most 72 characters.
+- The type is one of `feat`, `fix`, `docs`, `build`, `chore`, `refactor`, `test`, `perf` or `ci`.
+- The scope is a crate or area (`protocol`, `core`, `gui`, `xtask`, `docs`); several are joined with a comma (`config,runtime`), and a change across the whole repo has none.
+- A breaking change, such as a `PROTOCOL_VERSION` bump, adds `!` after the scope and a `BREAKING CHANGE:` footer.
+- The body, after a blank line, says why.

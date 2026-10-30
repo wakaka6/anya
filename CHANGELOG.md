@@ -4,6 +4,13 @@ User-visible changes, newest first.
 
 ## Unreleased
 
+- A failed dictation no longer tells you to press R in the overlay, its preview and the terminal UI: no key did anything there. Retrying is the tray panel's Retry button.
+- New agent skill `skills/anya-hotwords`: run on a loop (`/loop 10m /anya-hotwords ~/.config/anya/config.toml`), it compares what Anya typed with the message you then sent to your coding agent, learns the words you fix by hand and the terms of your current work, and keeps `[recognition] hotwords_file` up to date, so recognition fits you better the more you use it.
+- Several recognition engines can be set up at once, and each use picks its own: `[recognition] dictation`, `continuous` and `remote` (dictation from paired apps) replace `[recognition] engine`. A session goes only to its use's engine; a failure is still shown, never retried elsewhere. The Engine page lists every engine with its settings inline and has a "who uses which" section; the terminal UI and `--doctor` follow.
+- The settings window and tray panel use push buttons, icon buttons and rows with a chevron instead of blue text links.
+- The tray panel looks like a macOS menu bar extra: the system's menu material with rounded corners, as tall as what it shows, Control Center style toggles for dictation and continuous transcription, and a toolbar of icon buttons for All Activity, Settings and Quit. The last sentence is no longer listed twice, and a recent sentence copies when clicked.
+- Built-in engines can be turned off, with a switch on the settings window's Engine page or with `anya plugin builtin` (`off <id>` / `on <id>`; `[plugins.builtin]` in the config file, picked up by a running Anya). An engine any use has chosen stays on. Built-in and community engines now start and stop on one plugin runtime (docs/decisions/0012).
+- A damaged `plugins.json` is reported instead of being read as an empty list, so installing or enabling a plugin can no longer overwrite the list of what is installed. The previous list is kept as `plugins.json.bak`, and `anya plugin` and the running Anya no longer write it at the same time.
 - Starting Anya while its tray app is already running opens the running app's settings instead of starting a second copy that answered every hotkey twice.
 - The recording time in the statistics counts each dictation's audio; it stayed at zero.
 - The overlay preview also works from the settings page in a browser (`--web`).

@@ -1,6 +1,6 @@
 # Architecture
 
-Anya turns speech into text and hands it to whatever wants it. A small core captures audio, runs a session through an engine and publishes frames. What decides *when* to listen (triggers) and *what to do* with the text (sinks) sits around it. Pasting into the focused field is one sink among others, reading the same frames an outside app reads.
+Anya turns speech into text and hands it to whatever wants it. A small core accepts local or authorized remote audio, runs a recognition session through an engine and publishes frames. What decides *when* to listen (triggers) and *what to do* with the text (sinks) sits around it. Pasting into the focused field is one sink among others, and a remote client can receive the same session results through the ASR gateway.
 
 ## Layers
 
@@ -8,7 +8,7 @@ Anya turns speech into text and hands it to whatever wants it. A small core capt
 flowchart TB
   App["App: anya binary, desktop app"]
   Trigger["Triggers: dictation · continuous"]
-  Adapter["Adapters: audio · hotkey · output · overlay"]
+  Adapter["Adapters: audio (microphone and built-in system sound) · hotkey · output · overlay"]
   Engine["Engines: anya-engine-&lt;id&gt;"]
   Service["Services: server · plugin-host"]
   Core["anya-core: seams, session controller"]
@@ -30,22 +30,24 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 |---|---|---|---|---|
 | `crates/protocol` | `anya-protocol` | protocol | subscriber `Frame`s, `Recognition`, engine `Manifest`, `PROTOCOL_VERSION`, the ordering checker, fixtures | types, JSON pinned, fixtures checked |
 | `crates/core` | `anya-core` | core | `AudioSource` and `Engine` seams, the session `Hub`, `Desktop` detection | in place |
-| `crates/dictation` | `anya-dictation` | trigger | toggle and hold, stop delay, cancel and retry, dispatching final text once | planned |
-| `crates/continuous` | `anya-continuous` | trigger | one device kept open, the silence gate, reconnecting | planned |
-| `crates/audio` | `anya-audio` | adapter | capture: cpal; ScreenCaptureKit for system audio on macOS | planned |
-| `crates/hotkey` | `anya-hotkey` | adapter | evdev (Wayland), x11rb (X11), CGEventTap (macOS) | planned |
-| `crates/output` | `anya-output` | adapter | paste and clipboard sinks | planned |
-| `crates/overlay` | `anya-overlay` | adapter | recording overlay: layer-shell, X11, NSPanel with the notch | planned |
-| `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, auralwise, mimo | planned |
-| `crates/server` | `anya-server` | service | WebSocket subscription, control API, auth | planned |
-| `crates/plugin-host` | `anya-plugin-host` | service | the Bun process, plugin install, `plugins.json`, the plugin engine adapter | planned |
-| `crates/config` | `anya-config` | app | the config file: shape, defaults, validation, atomic save | planned |
+| `crates/plugin-rt` | `anya-plugin-rt` | core | the plugin runtime: `Plugin`, `Point`, `Runtime::reconcile`, `compose`; it names no seam of Anya's (docs/decisions/0012) | in place |
+| `crates/dictation` | `anya-dictation` | trigger | toggle and hold, stop delay, cancel and retry, dispatching final text once | in place |
+| `crates/continuous` | `anya-continuous` | trigger | one device kept open, the silence gate, reconnecting | in place |
+| `crates/audio` | `anya-audio` | adapter | capture: cpal; CoreAudio process tap on macOS and the PulseAudio/PipeWire monitor on Linux | in place |
+| `crates/hotkey` | `anya-hotkey` | adapter | evdev (Wayland), x11rb (X11), CGEventTap (macOS) | in place |
+| `crates/output` | `anya-output` | adapter | paste and clipboard sinks | in place |
+| `crates/overlay` | `anya-overlay` | adapter | recording overlay: layer-shell, X11, NSPanel with the notch | in place |
+| `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, auralwise, mimo | in place |
+| `crates/server` | `anya-server` | service | WebSocket subscription, authenticated remote dictation, pairing and paired clients, the TLS LAN listener | in place |
+| `crates/plugin-host` | `anya-plugin-host` | service | engine plugins in one Bun process restarted with backoff, each an `Engine`; the anyahq-plugins index, installs checked against their sha512 integrity, `plugins.json`; finding or downloading a pinned Bun | in place |
+| `crates/config` | `anya-config` | app | the config file: shape, defaults, validation, atomic save | in place |
 | `crates/i18n` | `anya-i18n` | app | every user-facing string, locale detection (docs/decisions/0008) | in place |
-| `crates/tui` | `anya-tui` | app | the terminal UI | planned |
-| `crates/gui` | `anya-gui` | app | the settings page, the desktop window and tray (tao, wry, tray-icon), `--web` | planned |
-| `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin` | planned |
-| `host/` | — | — | `host.js`, the Bun side of the plugin host, embedded in the binary | planned |
-| `sdk/plugin/` | `@anyahq/plugin` | — | what plugin authors build on | planned |
+| `crates/runtime` | `anya-runtime` | app | `Control`, what the UIs may ask of a running Anya, and its data | in place |
+| `crates/tui` | `anya-tui` | app | the terminal UI | in place |
+| `crates/gui` | `anya-gui` | app | the settings page, the desktop window and tray (tao, wry, tray-icon), `--web` | in place |
+| `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin` | in place |
+| `host/` | — | — | `host.js`, the Bun side of the plugin host, embedded in the binary | in place |
+| `sdk/plugin/` | `@anyahq/plugin` | — | what plugin authors build on (docs/plugins.md) | in place |
 | `sdk/client/` | `@anyahq/client` | — | a thin subscriber for apps, tested against the fixtures | planned |
 | `xtask` | `xtask` | tooling | `cargo xtask check`, `cargo xtask ci` | in place |
 
@@ -53,10 +55,10 @@ A crate directory appears with its first code. Its layer is already in `Layer::o
 
 ## Session flow
 
-1. A trigger asks core for a session of a source (`dictation`, `continuous`): the hotkey adapter on a key press, the continuous switch, later an app through the control API.
-2. Core opens the source's device through `AudioSource` and the chosen engine through `Engine::open`, and pumps `Chunk`s into the session.
-3. Core turns the engine's `Output`s into frames: `session_start` on `Ready`, `result` per `Recognition`, `session_end` with a reason.
-4. Sinks read frames. Output pastes a dictation session's final text once; the overlay shows partials; the server forwards to each subscriber the sources it was granted.
+1. A trigger or an authorized remote client asks core for a session of a source (`dictation`, `continuous`). The hotkey adapter starts local dictation; the continuous switch opens system sound; the gateway accepts a client's microphone stream.
+2. Core opens the engine chosen for that use (`[recognition] dictation`, `continuous` or `remote`, read at each session open) through `Engine::open` and pumps `Chunk`s into the session. Local capture uses `AudioSource`; remote capture is pushed by the gateway. A batch engine buffers inside its session until `Finish`.
+3. Core turns the engine's `Output`s into frames: `session_start` on `Ready`, `result` per `Recognition`, `level` per audio chunk, and `session_end` with a reason. Streaming engines produce partial results; batch engines produce only the final result after stop.
+4. Sinks read frames. Local output pastes a local dictation session's final text once; a remote dictation session returns frames to its requesting client; the server forwards granted sources to subscribers.
 
 Ending is asked for, not done in place: the trigger sends `Finish`, core waits for the engine's final result, and stopping capture and dispatching happen on a task.
 
@@ -78,7 +80,9 @@ Triggers and sinks get a trait once two adapters need the same one. Until then t
 
 ## Plugins
 
-Built-in pieces are crates in the binary that the user switches on or off. Community plugins run out of process in one Bun host and talk to Anya in JSON lines over stdin/stdout (docs/decisions/0004). An engine plugin sends a `Manifest` and `Recognition`s, the shapes built-in engines use, so the plugin host's engine adapter is one more `Engine`.
+Built-in pieces are crates in the binary that the user switches on or off. Community plugins run out of process in one Bun host and talk to Anya in JSON lines over stdin/stdout (docs/decisions/0004). The `anyahq-plugins` registry discovers and distributes reviewed packages; a tag or release updates the registry index, while installation and enabling remain explicit user actions (docs/decisions/0010). An engine plugin sends a `Manifest` and `Recognition`s, the shapes built-in engines use, so the plugin host's engine adapter is one more `Engine`.
+
+Built-in pieces run on `anya-plugin-rt` (docs/decisions/0012): the app lists them, the runtime applies the ones the user has not turned off, and each serves what it provides into a `Point` such as `engines`. The Bun host serves its engines into the same point.
 
 ## Downstream apps
 
