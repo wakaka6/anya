@@ -14,8 +14,8 @@ AGENTS.md and `xtask`, and is not repeated.
 | A change does only what its goal needs. | Every change in behavior has a reason. Unrelated refactors, features and policy changes go in a commit of their own. |
 | A fix covers exactly the cases it means to. | Which cases change, and which neighboring ones stay the same. Different errors are not handled as one. |
 | A change holds on the whole path. | Follow it from the user's input (a hotkey, a paired app's audio) through the session, the frames and the sink to what the user sees. One correct function does not make the operation correct. |
-| A signal needs a test that makes it fire. | A value that tells a task to act is wired only when something sends it on the path the user takes. Drive the trigger; reading that the receiver exists proves nothing. The continuous session reconnected on a `params` bump sent only when the dictation `finished` channel closed, which happens at shutdown, so a changed hotwords file never reached a long session (190033b). |
-| A literal where a measured value belongs is a bug that compiles. | When a function takes a number, grep its callers for literals. `stats.record(&text, 0)` passed 0 while `Finished.audio_ms` was in hand, and the TUI, the settings page and the tray panel all showed speed and minutes as 0 with no error anywhere (190033b). |
+| A signal needs a test that makes it fire. | A value that tells a task to act is wired only when something sends it on the path the user takes. Drive the trigger; reading that the receiver exists proves nothing. The continuous session reconnected on a `params` bump sent only when the dictation `finished` channel closed, which happens at shutdown, so a changed hotwords file never reached a long session (6cb648a). |
+| A literal where a measured value belongs is a bug that compiles. | When a function takes a number, grep its callers for literals. `stats.record(&text, 0)` passed 0 while `Finished.audio_ms` was in hand, and the TUI, the settings page and the tray panel all showed speed and minutes as 0 with no error anywhere (6cb648a). |
 | A fix reaches every sibling of the bug. | Grep for the same pattern: every engine, every backend (evdev, X11, CGEventTap), every UI (TUI, settings page, tray panel) that reads the changed value. The audio time above was read in three UIs; a fix in one would have left two wrong. |
 | A change re-derives everything built on what it changes. | When a change alters a default, a list, a frame field or the timing of an async step, find every caller, saved copy, fixture and test that assumed the old meaning, and run it. |
 | A failed read, parse or hash means "unknown". | It never means "empty" or "equal". An unreadable hotwords file keeps the config's own words and says so (`HotwordsFile::Unreadable`); it must not read as "no hotwords" and trigger a reconnect with a smaller list. A config that does not parse keeps the old config (`Reloaded::Broken`). |
@@ -102,9 +102,10 @@ A reviewer checks each pattern that applies:
 
 ## Commits
 
-A commit subject is `<scope>: <what changed>`, the scope a crate or area, and
-says what the user now sees in plain behavior: `anya: reconnect continuous
-sessions when hotwords change, count audio in usage stats`. Give the issue or
+A commit follows Conventional Commits as AGENTS.md sets out: the subject is
+`<type>(<scope>): <what changed>`, the scope a crate or area, and says what
+the user now sees in plain behavior: `feat(anya): reconnect continuous
+sessions when hotwords change`. Give the issue or
 reporter when there is one. The body says how it was verified and which test
 fails without the change.
 
@@ -120,7 +121,7 @@ own.
 A checkout and its working tree belong to the session that made them. In a
 shared tree, read `git status` and `git diff --stat` for the files before
 committing, name what else comes with them, and never stage another session's
-work. 190033b committed `crates/anya/src/main.rs` while it was still untracked,
+work. 6cb648a committed `crates/anya/src/main.rs` while it was still untracked,
 which took the whole 1355-line file and 26 lines of another session's
 CHANGELOG entries, and it does not build without `indicator.rs`, `plugins.rs`
 and `timing.rs`, which were not in it.

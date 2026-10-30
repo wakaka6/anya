@@ -1,4 +1,4 @@
-<!-- reviewed-through: 190033b (2026-10-30) -->
+<!-- reviewed-through: 6cb648a (2026-10-30) -->
 # Lessons from merged work
 
 Anya's code is written and reviewed largely by agents. A review of recent
@@ -16,7 +16,7 @@ days a review found it. A lesson seen on 3 or more days moves into
 act is only wired when something sends it on the path the user takes.
 - Continuous transcription reconnected on a `params` bump that was sent only
   after the dictation `finished` channel closed, which happens at shutdown.
-  Changing a hotwords file never reached a long session (190033b).
+  Changing a hotwords file never reached a long session (6cb648a).
 - Prove it by driving the trigger, not by reading that the receiver exists.
 - Seen 1× (2026-10-30).
 
@@ -24,7 +24,7 @@ act is only wired when something sends it on the path the user takes.
 - `stats.record(&done.text, 0)` passed 0 for the audio time while
   `Finished.audio_ms` was available. The TUI, the settings page and the tray
   panel all rendered the totals, so every speed and minute count read 0
-  without an error anywhere (190033b).
+  without an error anywhere (6cb648a).
 - When a function takes a number, grep its callers for literals.
 - Seen 1× (2026-10-30).
 
@@ -34,7 +34,7 @@ act is only wired when something sends it on the path the user takes.
 - `crates/anya/src/main.rs` was untracked, so committing it took the whole
   1355-line file, and `CHANGELOG.md` carried 26 lines another session had
   written. The commit does not build alone: it needs `indicator.rs`,
-  `plugins.rs` and `timing.rs` (190033b).
+  `plugins.rs` and `timing.rs` (6cb648a).
 - Run `git status` and `git diff --stat` for the files, name what else comes
   with them, and say so in the report.
 - Seen 1× (2026-10-30).
