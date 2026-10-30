@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anya_core::audio::{AudioError, AudioSource, Capture, Chunk};
+use anya_core::audio::{AudioError, AudioSource, Capture, Chunk, DeviceKind, SAMPLE_RATE};
 use anya_core::engine::{Choice, EngineError};
 use anya_core::hub::{Canceller, Hub, LiveSession, Outcome};
 use anya_protocol::{EndReason, ErrorCode, SessionId, Source, SourceState};
@@ -38,6 +38,8 @@ enum Feed {
 struct Ended {
     session: SessionId,
     outcome: Outcome,
+    /// Audio the engine was sent, in milliseconds.
+    audio_ms: u64,
 }
 
 /// A session's pump, as the controller holds it.
@@ -226,7 +228,7 @@ impl Controller {
             return;
         }
         let device = self.settings.device.clone();
-        let capture = match self.audio.open(device.as_deref()) {
+        let capture = match self.audio.open(device.as_deref(), DeviceKind::Microphone) {
             Ok(capture) => capture,
             Err(e) => {
                 self.fail(ErrorCode::Audio, Some(e.to_string()));
@@ -321,9 +323,16 @@ impl Controller {
         self.fail(ErrorCode::Audio, Some(detail));
     }
 
-    fn ended(&mut self, Ended { session, outcome }: Ended) {
+    fn ended(
+        &mut self,
+        Ended {
+            session,
+            outcome,
+            audio_ms,
+        }: Ended,
+    ) {
         if self.finishing.remove(&session).is_some() {
-            self.deliver(session, &outcome.text);
+            self.deliver(session, &outcome.text, audio_ms);
             if outcome.reason == EndReason::Error {
                 self.fail(outcome.error.unwrap_or(ErrorCode::Unknown), outcome.detail);
             }
@@ -340,7 +349,7 @@ impl Controller {
         self.release();
         match outcome.reason {
             // The engine closed the session with its final text itself.
-            EndReason::Final => self.deliver(session, &outcome.text),
+            EndReason::Final => self.deliver(session, &outcome.text, audio_ms),
             EndReason::Error => {
                 self.fail(outcome.error.unwrap_or(ErrorCode::Unknown), outcome.detail)
             }
@@ -349,13 +358,14 @@ impl Controller {
         }
     }
 
-    fn deliver(&self, session: SessionId, text: &str) {
+    fn deliver(&self, session: SessionId, text: &str, audio_ms: u64) {
         if text.trim().is_empty() {
             return;
         }
         let _ = self.finished.send(Finished {
             session,
             text: text.to_owned(),
+            audio_ms,
         });
     }
 
@@ -382,9 +392,13 @@ impl Controller {
             },
             (None, None) => State::Idle,
         };
+        let mut waiting: Vec<SessionId> = self.finishing.keys().cloned().collect();
+        waiting.sort_by(|a, b| a.0.cmp(&b.0));
         let status = Status {
             state,
-            finishing: self.finishing.len(),
+            finishing: waiting.len(),
+            recording: self.recording.as_ref().map(|r| r.run.session.clone()),
+            waiting,
         };
         self.status.send_if_modified(|current| {
             if *current == status {
@@ -418,12 +432,14 @@ async fn pump(
     ended: mpsc::UnboundedSender<Ended>,
 ) {
     let session = live.id().clone();
+    let mut bytes: u64 = 0;
     let outcome = loop {
         tokio::select! {
             biased;
             outcome = live.ended() => break outcome,
             item = feed.recv() => match item {
                 Some(Feed::Audio(chunk)) => {
+                    bytes += chunk.0.len() as u64;
                     live.send(chunk).await;
                 }
                 Some(Feed::Finish(timeout)) => break live.finish(timeout).await,
@@ -431,5 +447,11 @@ async fn pump(
             },
         }
     };
-    let _ = ended.send(Ended { session, outcome });
+    // 16-bit mono: two bytes a sample.
+    let audio_ms = bytes / 2 * 1000 / u64::from(SAMPLE_RATE);
+    let _ = ended.send(Ended {
+        session,
+        outcome,
+        audio_ms,
+    });
 }

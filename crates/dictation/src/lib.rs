@@ -124,6 +124,12 @@ pub struct Status {
     pub state: State,
     /// Stopped sessions waiting for their final result in the background.
     pub finishing: usize,
+    /// The session being recorded, if any. Sessions of other sources and of
+    /// gateway clients are never named here, so a UI can tell the user's own
+    /// dictation from theirs.
+    pub recording: Option<SessionId>,
+    /// The stopped sessions behind `finishing`, in id order.
+    pub waiting: Vec<SessionId>,
 }
 
 /// The text of a session the user stopped, for the output sink. Sent once
@@ -134,6 +140,8 @@ pub struct Finished {
     pub session: SessionId,
     /// The session's whole text.
     pub text: String,
+    /// How much audio the engine was sent, in milliseconds.
+    pub audio_ms: u64,
 }
 
 /// Hands inputs and settings to the running dictation. Cheap to clone; when

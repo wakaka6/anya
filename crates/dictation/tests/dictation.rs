@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anya_core::audio::{AudioError, AudioSource, Capture, Chunk, Device};
+use anya_core::audio::{AudioError, AudioSource, Capture, Chunk, Device, DeviceKind};
 use anya_core::engine::{
     Choice, Engine, EngineError, Input as EngineInput, Output, Session, SessionParams,
 };
@@ -142,7 +142,7 @@ struct Mic {
 
 #[derive(Default)]
 struct MicState {
-    opened: Vec<Option<String>>,
+    opened: Vec<(Option<String>, DeviceKind)>,
     live: Option<mpsc::Sender<Result<Chunk, AudioError>>>,
     deny: bool,
 }
@@ -152,12 +152,12 @@ impl AudioSource for Mic {
         Ok(Vec::new())
     }
 
-    fn open(&self, device: Option<&str>) -> Result<Capture, AudioError> {
+    fn open(&self, device: Option<&str>, default: DeviceKind) -> Result<Capture, AudioError> {
         let mut state = self.state.lock().expect("mic");
         if state.deny {
             return Err(AudioError::Denied("not allowed".into()));
         }
-        state.opened.push(device.map(str::to_owned));
+        state.opened.push((device.map(str::to_owned), default));
         let (tx, chunks) = mpsc::channel(64);
         state.live = Some(tx);
         Ok(Capture { chunks })
@@ -170,7 +170,7 @@ impl Mic {
         live.is_some_and(|tx| tx.try_send(item).is_ok())
     }
 
-    fn opened(&self) -> Vec<Option<String>> {
+    fn opened(&self) -> Vec<(Option<String>, DeviceKind)> {
         self.state.lock().expect("mic").opened.clone()
     }
 
@@ -399,6 +399,7 @@ async fn toggle_starts_on_a_press_and_stops_on_the_next() {
         [Finished {
             session: session[0].clone(),
             text: "aa.".to_owned(),
+            audio_ms: 40,
         }]
     );
     assert_eq!(ends(&frames), [(EndReason::Final, None)]);
@@ -507,10 +508,12 @@ async fn a_toggle_press_in_the_stop_delay_starts_a_new_recording() {
             Finished {
                 session: sessions[0].clone(),
                 text: "a.".to_owned(),
+                audio_ms: 20,
             },
             Finished {
                 session: sessions[1].clone(),
                 text: "aa.".to_owned(),
+                audio_ms: 40,
             },
         ]
     );
@@ -528,13 +531,13 @@ async fn rapid_toggles_finish_every_session_once() {
         }
         rig.tap(1).await;
     }
-    assert_eq!(
-        *rig.status.borrow(),
-        Status {
-            state: State::Idle,
-            finishing: 3,
-        }
-    );
+    {
+        let status = rig.status.borrow();
+        assert_eq!(status.state, State::Idle);
+        assert_eq!(status.finishing, 3);
+        assert_eq!(status.waiting.len(), 3, "each waiting session is named");
+        assert_eq!(status.recording, None);
+    }
 
     // Presses faster than anything can run are handled in order.
     for input in [
@@ -577,13 +580,7 @@ async fn cancel_throws_the_recording_away() {
     rig.tap(1).await;
     rig.speak().await;
     rig.input(Input::Cancel).await;
-    assert_eq!(
-        *rig.status.borrow(),
-        Status {
-            state: State::Idle,
-            finishing: 0,
-        }
-    );
+    assert_eq!(*rig.status.borrow(), Status::default());
     assert!(rig.mic.released());
     assert_eq!(
         rig.hub.sources(),
@@ -630,6 +627,7 @@ async fn cancel_while_finishing_suppresses_the_text() {
         [Finished {
             session: sessions[1].clone(),
             text: "a.".to_owned(),
+            audio_ms: 20,
         }]
     );
     assert_eq!(
@@ -832,7 +830,8 @@ async fn settings_apply_to_the_next_recording() {
     });
     rig.speak().await;
     // The recording that is running keeps its device.
-    assert_eq!(rig.mic.opened(), [None]);
+    // Without a device, dictation asks for the microphone, never system sound.
+    assert_eq!(rig.mic.opened(), [(None, DeviceKind::Microphone)]);
     // The mode changed: the press before it is forgotten, and this release
     // stops nothing.
     rig.input(Input::Release(1)).await;
@@ -842,7 +841,13 @@ async fn settings_apply_to_the_next_recording() {
     rig.idle().await;
 
     rig.input(Input::Press(2)).await;
-    assert_eq!(rig.mic.opened(), [None, Some("usb".to_owned())]);
+    assert_eq!(
+        rig.mic.opened(),
+        [
+            (None, DeviceKind::Microphone),
+            (Some("usb".to_owned()), DeviceKind::Microphone)
+        ]
+    );
     assert_eq!(
         rig.hub.sources(),
         [(
