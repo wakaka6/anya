@@ -196,14 +196,18 @@ impl Hub {
         let n = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let id = SessionId(format!("{}-{n}", self.inner.info.session_prefix));
         let engine_id = engine.manifest().id.clone();
+        let streaming = engine.manifest().streaming;
         let session = engine.open(params);
         let (control, controls) = mpsc::channel(2);
         let (outcome_tx, outcome) = watch::channel(None);
         tokio::spawn(drive(
             Arc::clone(&self.inner),
-            id.clone(),
-            source,
-            engine_id,
+            Start {
+                id: id.clone(),
+                source,
+                engine: engine_id,
+                streaming,
+            },
             session.output,
             controls,
             outcome_tx,
@@ -328,11 +332,22 @@ fn closed_outcome() -> Outcome {
     }
 }
 
-async fn drive(
-    inner: Arc<Inner>,
+/// What `session_start` says about a session.
+struct Start {
     id: SessionId,
     source: Source,
     engine: String,
+    streaming: bool,
+}
+
+async fn drive(
+    inner: Arc<Inner>,
+    Start {
+        id,
+        source,
+        engine,
+        streaming,
+    }: Start,
     mut output: mpsc::Receiver<Output>,
     mut controls: mpsc::Receiver<Control>,
     outcome: watch::Sender<Option<Outcome>>,
@@ -346,6 +361,7 @@ async fn drive(
                 session: id.clone(),
                 source,
                 engine: engine.clone(),
+                streaming,
             });
         }
     };

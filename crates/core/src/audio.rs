@@ -110,7 +110,10 @@ pub trait AudioSource: Send + Sync {
     /// The devices connected now.
     fn devices(&self) -> Result<Vec<Device>, AudioError>;
 
-    /// Starts capturing `device` (an id from [`AudioSource::devices`], or
-    /// `None` for the system default). Returns once the device is open.
-    fn open(&self, device: Option<&str>) -> Result<Capture, AudioError>;
+    /// Starts capturing `device` (an id from [`AudioSource::devices`]), or
+    /// with `None` the system's default of kind `default`: the default
+    /// microphone, or what the computer plays through its default output.
+    /// Returns once the device is open. A default that cannot be opened is an
+    /// error, never a device of the other kind.
+    fn open(&self, device: Option<&str>, default: DeviceKind) -> Result<Capture, AudioError>;
 }
