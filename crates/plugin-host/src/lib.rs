@@ -2,8 +2,8 @@
 //! each shows up in Anya as one more [`anya_core::engine::Engine`]
 //! (docs/decisions/0004-plugins-in-bun.md).
 //!
-//! - [`Registry`] reads the anyahq-plugins index
-//!   (docs/decisions/0010-anyahq-plugins-registry.md).
+//! - [`Registry`] reads the anya-plugins index
+//!   (docs/decisions/0010-anya-plugins-registry.md).
 //! - [`Store`] installs a release into the plugins directory after checking
 //!   its integrity hash, and records which plugins the user enabled.
 //! - [`BunPath`] finds or downloads the runtime.

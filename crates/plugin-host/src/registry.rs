@@ -1,6 +1,6 @@
-//! The anyahq-plugins registry: fetching its index, downloading a release
+//! The anya-plugins registry: fetching its index, downloading a release
 //! and checking that the bytes are the ones the index promised
-//! (docs/decisions/0010-anyahq-plugins-registry.md).
+//! (docs/decisions/0010-anya-plugins-registry.md).
 
 use std::io::Read as _;
 use std::path::{Component, Path};
@@ -16,7 +16,7 @@ use crate::PluginError;
 /// Where the registry publishes its index. Callers may pass another URL to
 /// [`Registry::fetch`]: a mirror, a local file for plugin development.
 pub const DEFAULT_INDEX_URL: &str =
-    "https://raw.githubusercontent.com/anyahq/anyahq-plugins/dist/index.json";
+    "https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json";
 
 /// The largest index Anya reads.
 const MAX_INDEX_BYTES: usize = 4 << 20;

@@ -1,4 +1,4 @@
-# Copy to .github/workflows/release.yml in the anyahq-plugins repository.
+# Copy to .github/workflows/release.yml in the anya-plugins repository.
 # A tag `<plugin-id>-v<version>` (for example `echo-v1.2.0`) releases
 # plugins/<plugin-id>: CI packs it, validates it, and commits the tarball
 # (tgz/) and the updated index.json to the `dist` branch of this repository.
@@ -42,7 +42,7 @@ jobs:
           mv "$RUNNER_TEMP"/pack/*.tgz "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz"
           tar -xzf "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" -C "$RUNNER_TEMP/unpacked" --strip-components=1
       - name: Fetch the SDK
-        run: curl -fsSL https://raw.githubusercontent.com/anyahq/anya/main/sdk/plugin/index.js -o "$RUNNER_TEMP/sdk.js"
+        run: curl -fsSL https://raw.githubusercontent.com/wakaka6/anya/main/sdk/plugin/index.js -o "$RUNNER_TEMP/sdk.js"
       - name: Validate and add the index entry
         run: |
           bun scripts/validate.mjs "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" \

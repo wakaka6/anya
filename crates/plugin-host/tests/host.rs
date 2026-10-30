@@ -182,7 +182,7 @@ async fn a_plugin_that_fails_to_open_ends_the_session_with_its_error() {
 }
 
 const NOISY: &str = r#"
-import { defineEngine } from "@anyahq/plugin";
+import { defineEngine } from "@wakaka6/anya-plugin";
 console.log("loading noisy");
 process.stdout.write("raw text on stdout\n");
 export default defineEngine({
@@ -196,7 +196,7 @@ export default defineEngine({
 "#;
 
 const CRASHY: &str = r#"
-import { defineEngine } from "@anyahq/plugin";
+import { defineEngine } from "@wakaka6/anya-plugin";
 export default defineEngine({
   manifest: { id: "crashy", title: "Crashy", streaming: false },
   open(_, session) {
@@ -206,7 +206,7 @@ export default defineEngine({
 "#;
 
 const STUCK: &str = r#"
-import { defineEngine } from "@anyahq/plugin";
+import { defineEngine } from "@wakaka6/anya-plugin";
 await new Promise(() => {});
 export default defineEngine({ manifest: { id: "stuck", title: "Stuck", streaming: false }, open() {} });
 "#;

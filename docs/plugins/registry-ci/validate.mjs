@@ -1,7 +1,7 @@
 // Registry CI: validates a plugin release and merges its entry into index.json.
 //   bun validate.mjs <package-dir> <tarball.tgz> <artifact-url> <index.json> <sdk/index.js>
 // <package-dir> is the unpacked tarball (its package.json at the root);
-// <sdk/index.js> is the @anyahq/plugin SDK of the Anya release the plugin targets.
+// <sdk/index.js> is the @wakaka6/anya-plugin SDK of the Anya release the plugin targets.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -31,7 +31,7 @@ let manifest;
 if (problems.length === 0) {
   Bun.plugin({
     name: "anya-sdk",
-    setup: (b) => b.module("@anyahq/plugin", async () => ({ exports: { ...(await import(pathToFileURL(path.resolve(sdkFile)).href)) }, loader: "object" })),
+    setup: (b) => b.module("@wakaka6/anya-plugin", async () => ({ exports: { ...(await import(pathToFileURL(path.resolve(sdkFile)).href)) }, loader: "object" })),
   });
   try {
     const mod = await import(pathToFileURL(path.resolve(dir, pkg.anya.engine)).href);

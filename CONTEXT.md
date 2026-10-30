@@ -32,4 +32,4 @@ An Engine plugin that connects Anya to an ASR provider. It exposes a Manifest, r
 
 ## Plugin registry
 
-The reviewed catalog from which users discover and install plugins. `anyahq-plugins` publishes indexed releases; a registry update does not install or enable a plugin by itself.
+The reviewed catalog from which users discover and install plugins. `anya-plugins` publishes indexed releases; a registry update does not install or enable a plugin by itself.

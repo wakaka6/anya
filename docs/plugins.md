@@ -25,7 +25,7 @@ my-engine/
     "protocol": 1,
     "permissions": ["network:api.example.com"]
   },
-  "devDependencies": { "@anyahq/plugin": "^1.0.0" }
+  "devDependencies": { "@wakaka6/anya-plugin": "^1.0.0" }
 }
 ```
 
@@ -38,10 +38,10 @@ Dependencies a plugin needs at run time must be bundled into the package (`bun b
 
 ## The SDK
 
-`import { defineEngine } from "@anyahq/plugin"` works in every plugin; the host serves its own copy of the SDK, so the package does not ship one. Install `@anyahq/plugin` as a dev dependency for the types (`sdk/plugin/index.d.ts`).
+`import { defineEngine } from "@wakaka6/anya-plugin"` works in every plugin; the host serves its own copy of the SDK, so the package does not ship one. Install `@wakaka6/anya-plugin` as a dev dependency for the types (`sdk/plugin/index.d.ts`).
 
 ```js
-import { defineEngine } from "@anyahq/plugin";
+import { defineEngine } from "@wakaka6/anya-plugin";
 
 export default defineEngine({
   manifest: {
@@ -85,7 +85,7 @@ export default defineEngine({
 Unit-test an engine without Anya by driving a session yourself:
 
 ```js
-import { createSession, start, deliver } from "@anyahq/plugin";
+import { createSession, start, deliver } from "@wakaka6/anya-plugin";
 import engine from "./engine.js";
 
 const results = [];
@@ -126,7 +126,7 @@ bun validate.mjs <unpacked-dir> my-engine-1.0.0.tgz <artifact-url> index.json <p
 
 ## Registry index format (version 1)
 
-`https://raw.githubusercontent.com/anyahq/anyahq-plugins/dist/index.json`, the `dist` branch of the registry repository, written by the registry's CI and read by Anya when the user opens the marketplace or checks for updates. Tarballs sit beside it in `dist/tgz/`. Types: `anya_protocol::Index`.
+`https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json`, the `dist` branch of the registry repository, written by the registry's CI and read by Anya when the user opens the marketplace or checks for updates. Tarballs sit beside it in `dist/tgz/`. Types: `anya_protocol::Index`.
 
 | Field | Meaning |
 | --- | --- |
@@ -152,9 +152,9 @@ Unknown fields are ignored. Anya installs a release only when `kind` is `engine`
 
 Bun comes from `PATH` if it is version 1.2.0 or newer; otherwise Anya downloads its pinned Bun release (SHA-256 checked) when the first plugin is installed. Without plugins nothing is downloaded.
 
-## The anyahq-plugins release flow
+## The anya-plugins release flow
 
-The registry repository `anyahq-plugins` holds one directory per plugin under `plugins/<id>/` and the CI below. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. Releasing:
+The registry repository `anya-plugins` holds one directory per plugin under `plugins/<id>/` and the CI below. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. Releasing:
 
 1. A maintainer tags the merged commit `<plugin-id>-v<version>` (for example `echo-v1.2.0`). The tag version must equal `package.json`'s.
 2. The workflow packs the plugin (`npm pack`) and runs `scripts/validate.mjs` against the Anya SDK, which checks: id and version format; `anya.engine`, `anya.compat` (not unbounded), `anya.protocol` and `anya.permissions` are present and well formed; the entry loads and exports `defineEngine(...)`; `manifest.id` equals the plugin id and `streaming` is a boolean; the version is not already in the index.

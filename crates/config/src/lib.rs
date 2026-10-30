@@ -317,7 +317,7 @@ impl Subscription {
 #[serde(default, deny_unknown_fields)]
 pub struct Plugins {
     /// URL (`https://` or `file://`) of the registry index; empty is the
-    /// anyahq-plugins registry.
+    /// anya-plugins registry.
     pub index: String,
     /// The user's choice per built-in plugin id: `false` turns it off. A
     /// plugin with no row is on, and one in use stays on whatever its row says

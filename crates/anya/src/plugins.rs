@@ -101,7 +101,7 @@ pub fn bun_missing() -> PluginIssue {
     }
 }
 
-/// The registry index to read: the config's, else the anyahq-plugins one.
+/// The registry index to read: the config's, else the anya-plugins one.
 pub fn index_url(config: &Config) -> String {
     config
         .plugins

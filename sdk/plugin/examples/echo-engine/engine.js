@@ -1,4 +1,4 @@
-import { defineEngine } from "@anyahq/plugin";
+import { defineEngine } from "@wakaka6/anya-plugin";
 
 // Streaming: a partial result with the byte count for every chunk of audio,
 // the final result when the audio ends. Settings: `prefix` goes before the

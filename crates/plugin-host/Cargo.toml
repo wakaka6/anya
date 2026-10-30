@@ -1,6 +1,6 @@
 [package]
 name = "anya-plugin-host"
-description = "Runs engine plugins in one Bun process, and installs them from the anyahq-plugins registry."
+description = "Runs engine plugins in one Bun process, and installs them from the anya-plugins registry."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,5 +1,5 @@
 {
-  "name": "@anyahq/plugin",
+  "name": "@wakaka6/anya-plugin",
   "version": "1.0.0",
   "description": "SDK for Anya engine plugins.",
   "type": "module",

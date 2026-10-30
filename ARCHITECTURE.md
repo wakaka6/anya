@@ -39,7 +39,7 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | `crates/overlay` | `anya-overlay` | adapter | recording overlay: layer-shell, X11, NSPanel with the notch | in place |
 | `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, auralwise, mimo | in place |
 | `crates/server` | `anya-server` | service | WebSocket subscription, authenticated remote dictation, pairing and paired clients, the TLS LAN listener | in place |
-| `crates/plugin-host` | `anya-plugin-host` | service | engine plugins in one Bun process restarted with backoff, each an `Engine`; the anyahq-plugins index, installs checked against their sha512 integrity, `plugins.json`; finding or downloading a pinned Bun | in place |
+| `crates/plugin-host` | `anya-plugin-host` | service | engine plugins in one Bun process restarted with backoff, each an `Engine`; the anya-plugins index, installs checked against their sha512 integrity, `plugins.json`; finding or downloading a pinned Bun | in place |
 | `crates/config` | `anya-config` | app | the config file: shape, defaults, validation, atomic save | in place |
 | `crates/i18n` | `anya-i18n` | app | every user-facing string, locale detection (docs/decisions/0008) | in place |
 | `crates/runtime` | `anya-runtime` | app | `Control`, what the UIs may ask of a running Anya, and its data | in place |
@@ -47,8 +47,8 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | `crates/gui` | `anya-gui` | app | the settings page, the desktop window and tray (tao, wry, tray-icon), `--web` | in place |
 | `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin` | in place |
 | `host/` | — | — | `host.js`, the Bun side of the plugin host, embedded in the binary | in place |
-| `sdk/plugin/` | `@anyahq/plugin` | — | what plugin authors build on (docs/plugins.md) | in place |
-| `sdk/client/` | `@anyahq/client` | — | a thin subscriber for apps, tested against the fixtures | planned |
+| `sdk/plugin/` | `@wakaka6/anya-plugin` | — | what plugin authors build on (docs/plugins.md) | in place |
+| `sdk/client/` | `@wakaka6/anya-client` | — | a thin subscriber for apps, tested against the fixtures | planned |
 | `xtask` | `xtask` | tooling | `cargo xtask check`, `cargo xtask ci` | in place |
 
 A crate directory appears with its first code. Its layer is already in `Layer::of`, so the rules apply from its first commit.
@@ -80,7 +80,7 @@ Triggers and sinks get a trait once two adapters need the same one. Until then t
 
 ## Plugins
 
-Built-in pieces are crates in the binary that the user switches on or off. Community plugins run out of process in one Bun host and talk to Anya in JSON lines over stdin/stdout (docs/decisions/0004). The `anyahq-plugins` registry discovers and distributes reviewed packages; a tag or release updates the registry index, while installation and enabling remain explicit user actions (docs/decisions/0010). An engine plugin sends a `Manifest` and `Recognition`s, the shapes built-in engines use, so the plugin host's engine adapter is one more `Engine`.
+Built-in pieces are crates in the binary that the user switches on or off. Community plugins run out of process in one Bun host and talk to Anya in JSON lines over stdin/stdout (docs/decisions/0004). The `anya-plugins` registry discovers and distributes reviewed packages; a tag or release updates the registry index, while installation and enabling remain explicit user actions (docs/decisions/0010). An engine plugin sends a `Manifest` and `Recognition`s, the shapes built-in engines use, so the plugin host's engine adapter is one more `Engine`.
 
 Built-in pieces run on `anya-plugin-rt` (docs/decisions/0012): the app lists them, the runtime applies the ones the user has not turned off, and each serves what it provides into a `Point` such as `engines`. The Bun host serves its engines into the same point.
 

@@ -20,7 +20,7 @@ Planned with the server and the binary:
 
 - `anya replay <fixture>`: serves a fixture over the real transport, so an app is built without a microphone or an engine account.
 - Discovery: Anya writes where it listens, its version and protocol to a file in the user's runtime directory, so an app finds the instance instead of guessing a port.
-- Client SDKs, `@anyahq/client` for JS first: thin, tested against the same fixtures.
+- Client SDKs, `@wakaka6/anya-client` for JS first: thin, tested against the same fixtures.
 - Additive fields apps will want: wall-clock time on `session_start`, utterance timings, the session's language.
 
 ## Open

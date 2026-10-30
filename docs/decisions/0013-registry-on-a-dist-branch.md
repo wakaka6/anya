@@ -8,8 +8,8 @@ Accepted, 2026-10-30.
 
 ## Decision
 
-- The registry CI commits each release's tarball to `tgz/` and the updated `index.json` to the `dist` branch of `anyahq-plugins`.
-- Anya's default index is `https://raw.githubusercontent.com/anyahq/anyahq-plugins/dist/index.json`; an index entry's `artifact` is a raw URL on the same branch.
+- The registry CI commits each release's tarball to `tgz/` and the updated `index.json` to the `dist` branch of `anya-plugins`.
+- Anya's default index is `https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json`; an index entry's `artifact` is a raw URL on the same branch.
 - Nothing else in 0010 changes: review by pull request, the tag `<id>-v<version>`, validation, the sha512 `integrity` Anya checks before unpacking, immutable versions, and install, enable and update as separate user actions.
 
 ## Consequences

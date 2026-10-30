@@ -2,7 +2,7 @@
 //! Anya reads to offer plugins for install. The host is one Bun process;
 //! both directions are JSON lines on its stdin and stdout
 //! (docs/decisions/0004-plugins-in-bun.md). Plugin authors never see these
-//! messages: the `@anyahq/plugin` SDK speaks them.
+//! messages: the `@wakaka6/anya-plugin` SDK speaks them.
 
 use std::collections::BTreeMap;
 

@@ -1,5 +1,5 @@
-// @anyahq/plugin: what an Anya engine plugin imports. Plain ESM, no build step.
-// The plugin host serves this same file for `import "@anyahq/plugin"`, so a
+// @wakaka6/anya-plugin: what an Anya engine plugin imports. Plain ESM, no build step.
+// The plugin host serves this same file for `import "@wakaka6/anya-plugin"`, so a
 // plugin needs no copy of it; installing it is for the types and for tests.
 
 const ERROR_KINDS = ["not_configured", "connect", "upstream"];

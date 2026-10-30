@@ -12,6 +12,6 @@
     "permissions": []
   },
   "devDependencies": {
-    "@anyahq/plugin": "^1.0.0"
+    "@wakaka6/anya-plugin": "^1.0.0"
   }
 }

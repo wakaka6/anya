@@ -22,7 +22,7 @@ use crate::{BunPath, PluginDirs, PluginError, Store};
 /// The host script, written next to the SDK into the runtime directory.
 const HOST_JS: &str = include_str!("../../../host/host.js");
 
-/// The SDK the host serves to plugins as `@anyahq/plugin`.
+/// The SDK the host serves to plugins as `@wakaka6/anya-plugin`.
 const SDK_JS: &str = include_str!("../../../sdk/plugin/index.js");
 
 /// Commands waiting for the host's stdin: 40 ms of audio each, so about

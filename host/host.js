@@ -209,12 +209,12 @@ function unhandled(e) {
 process.on("uncaughtException", unhandled);
 process.on("unhandledRejection", unhandled);
 
-// `import "@anyahq/plugin"` in a plugin is this host's own copy of the SDK.
+// `import "@wakaka6/anya-plugin"` in a plugin is this host's own copy of the SDK.
 const sdk = { ...(await import("./sdk.js")) };
 Bun.plugin({
   name: "anya-sdk",
   setup(build) {
-    build.module("@anyahq/plugin", () => ({ exports: sdk, loader: "object" }));
+    build.module("@wakaka6/anya-plugin", () => ({ exports: sdk, loader: "object" }));
   },
 });
 

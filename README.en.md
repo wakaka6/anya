@@ -23,7 +23,7 @@ The protocol is in [docs/protocol.md](docs/protocol.md).
 
 ## Plugins
 
-Speech engines can be plugins, all run by one Bun process (Bun 1.2 or newer; if none is found, the first plugin install downloads a pinned release). Plugins come from the anyahq-plugins registry and every download is checked against its integrity hash.
+Speech engines can be plugins, all run by one Bun process (Bun 1.2 or newer; if none is found, the first plugin install downloads a pinned release). Plugins come from the anya-plugins registry and every download is checked against its integrity hash.
 
 ```bash
 anya plugin search [query]       # browse the registry
