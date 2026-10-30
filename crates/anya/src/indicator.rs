@@ -85,6 +85,18 @@ impl Indicator {
             .unwrap_or_default()
     }
 
+    /// What the user's own dictation has heard so far: the recording's text,
+    /// else the first stopped session's while it finishes. `None` while
+    /// nothing has been heard.
+    pub fn live_text(&self) -> Option<String> {
+        let session = self
+            .local
+            .recording
+            .as_ref()
+            .or(self.local.waiting.first())?;
+        Some(self.text_of(session)).filter(|t| !t.is_empty())
+    }
+
     /// What to show now, in `catalog`'s language.
     pub fn view(&self, catalog: &Catalog) -> View {
         if let Some(session) = &self.local.recording {
@@ -295,5 +307,26 @@ mod tests {
         assert_eq!(i.level(), Some(0.4));
         i.status(anya_dictation::Status::default());
         assert_eq!(i.level(), None);
+    }
+
+    #[test]
+    fn the_live_text_is_the_users_own_until_it_finishes() {
+        let mut i = Indicator::default();
+        i.frame(&start("remote", Source::Dictation));
+        i.frame(&heard("remote", "from the phone"));
+        i.frame(&start("mine", Source::Dictation));
+        i.status(recording("mine"));
+        assert_eq!(i.live_text(), None, "nothing heard yet");
+        i.frame(&heard("mine", "hello"));
+        assert_eq!(i.live_text().as_deref(), Some("hello"));
+        i.status(anya_dictation::Status {
+            state: State::Idle,
+            finishing: 1,
+            recording: None,
+            waiting: vec![SessionId("mine".to_owned())],
+        });
+        assert_eq!(i.live_text().as_deref(), Some("hello"), "while it finishes");
+        i.status(anya_dictation::Status::default());
+        assert_eq!(i.live_text(), None);
     }
 }

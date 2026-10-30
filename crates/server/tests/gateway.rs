@@ -11,7 +11,7 @@ use std::time::Duration;
 use anya_core::audio::CHUNK_BYTES;
 use anya_core::engine::{Choice, Engine, EngineError, Input, Output, Session, SessionParams};
 use anya_core::hub::Hub;
-use anya_protocol::{Frame, Manifest, Scope, Source, SourceState, contract};
+use anya_protocol::{Frame, Manifest, Scope, SessionId, Source, SourceState, contract};
 use anya_server::{Clients, Gateway, Server, TlsIdentity, parse_address};
 use common::*;
 use ring::digest::{SHA256, digest};
@@ -986,6 +986,44 @@ async fn only_a_dictation_subscriber_sees_anothers_session() {
         next_json(&mut plain).await["type"],
         "refused",
         "it saw no session"
+    );
+}
+
+#[tokio::test]
+async fn the_audience_names_the_dictating_client_and_counts_who_was_sent_its_text() {
+    let rig = rig(true).await;
+    let url = rig.server.url();
+    let audience = rig.server.audience();
+    let (dictator_id, dictator) = pair(&url, &rig.clients, "dictator", None).await;
+    let (watcher_id, watcher) = pair(&url, &rig.clients, "watcher", None).await;
+    let (second_id, second) = pair(&url, &rig.clients, "second", None).await;
+    let (plain_id, plain) = pair(&url, &rig.clients, "plain", None).await;
+    for id in [&watcher_id, &second_id] {
+        rig.clients
+            .set_scopes(id, vec![Scope::SubscribeDictation])
+            .expect("scopes");
+    }
+    rig.clients
+        .set_scopes(&plain_id, vec![Scope::SubscribeContinuous])
+        .expect("scopes");
+    let mut watching = as_client(&url, &watcher, None).await;
+    let mut also = as_client(&url, &second, None).await;
+    let _plain = as_client(&url, &plain, None).await;
+    let mut client = as_client(&url, &dictator, None).await;
+    eventually(|| audience.subscribers() == 4).await;
+
+    let session = start_dictation(&mut client, "r1").await;
+    send_audio(&mut client, CHUNK_BYTES).await;
+    until_kind(&mut client, "result").await;
+    until_kind(&mut watching, "result").await;
+    until_kind(&mut also, "result").await;
+
+    let id = SessionId(session);
+    assert_eq!(audience.client_of(&id), Some(dictator_id));
+    assert_eq!(
+        audience.readers_of(&id),
+        2,
+        "the two watchers: the dictator's own copy and the plain client do not count"
     );
 }
 

@@ -9,7 +9,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anya_core::audio::{Device, DeviceKind};
 use anya_protocol::{ErrorCode, Scope, Source};
-use anya_runtime::{Dictation, Entry, Lan, Notice, PairedClient, SaveError, Subscription};
+use anya_runtime::{
+    Dictation, Entry, Lan, Notice, PairedClient, SaveError, Subscription, UpdateIssue, UpdateState,
+    UpdateVia,
+};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -430,6 +433,94 @@ async fn i18n_answers_the_whole_catalog_in_the_ui_language() {
 // ---- state and status ----
 
 #[tokio::test]
+async fn route_translates_where_sessions_come_from_and_go_and_splits_a_final_by_destination() {
+    use anya_protocol::SessionId;
+    use anya_runtime::{LiveRoute, Origin, Route, RouteEvent, Sink, Step};
+    let control = FakeControl::sample();
+    lock(&control.config).ui.language = "zh-CN".to_owned();
+    let phone = Origin::Remote {
+        client: "iPhone".to_owned(),
+    };
+    let sinks = vec![
+        Sink::Client {
+            name: "iPhone".to_owned(),
+        },
+        Sink::Subscribers { count: 2 },
+    ];
+    let event = |seq, origin: &Origin, step| RouteEvent {
+        seq,
+        at: 1,
+        session: SessionId(format!("s{seq}")),
+        origin: origin.clone(),
+        engine: "cloud".to_owned(),
+        step,
+    };
+    *lock(&control.route) = Route {
+        live: vec![LiveRoute {
+            session: SessionId("s1".to_owned()),
+            origin: phone.clone(),
+            engine: "cloud".to_owned(),
+            streaming: true,
+            level: 0.5,
+            text: "明天".to_owned(),
+            sinks: sinks.clone(),
+        }],
+        log: vec![
+            event(1, &phone, Step::Audio { ms: 1000 }),
+            event(
+                2,
+                &phone,
+                Step::Final {
+                    text: "明天三点".to_owned(),
+                    sinks,
+                },
+            ),
+            event(
+                3,
+                &Origin::Dictation { device: None },
+                Step::Final {
+                    text: "好的".to_owned(),
+                    sinks: vec![Sink::Paste],
+                },
+            ),
+        ],
+    };
+    let h = harness_with(control, ShellKind::App).await;
+    let r = h.get("/api/route").await.json();
+
+    let live = &r["live"][0];
+    assert_eq!(live["origin"]["label"], "iPhone");
+    assert_eq!(live["origin"]["role"], "远程听写");
+    assert_eq!(live["engine"]["title"], "云端流式");
+    assert_eq!(live["sinks"][0]["label"], "回到 iPhone");
+    assert_eq!(live["sinks"][1]["label"], "订阅的应用 ×2");
+
+    let log = r["log"].as_array().expect("log");
+    let lines: Vec<(&str, &str, &str, &str)> = log
+        .iter()
+        .map(|l| {
+            let s = |k: &str| l[k].as_str().unwrap_or_default();
+            (s("from"), s("to"), s("label"), s("detail"))
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("iPhone", "云端流式", "音频", "1.0 秒"),
+            ("云端流式", "回到 iPhone", "定稿", "明天三点"),
+            ("云端流式", "订阅的应用 ×2", "定稿", "已授权 · 2 个"),
+            ("云端流式", "上屏", "定稿", "好的"),
+        ]
+    );
+    let activity: Vec<bool> = log.iter().map(|l| l["activity"] == true).collect();
+    assert_eq!(
+        activity,
+        [false, false, false, true],
+        "only the user's own dictation is on the Activity page"
+    );
+}
+
+#[tokio::test]
 async fn state_carries_the_forms_choices_translated() {
     let control = FakeControl::sample();
     {
@@ -681,6 +772,8 @@ async fn status_shows_only_the_latest_hundred_entries() {
             source: Source::Dictation,
             text: format!("line {i}"),
             delivered: anya_runtime::Delivered::Copied,
+            session: None,
+            engine: None,
         })
         .collect();
     let h = harness_with(control, ShellKind::Web).await;
@@ -1654,6 +1747,164 @@ async fn device_kinds_reach_the_page() {
         json!([{"id": "bh", "name": "BlackHole 2ch", "kind": "loopback"}])
     );
     assert!(s.get("devices_error").is_some_and(Value::is_null));
+}
+
+// ---- updates ----
+
+fn available(via: UpdateVia) -> UpdateState {
+    UpdateState::Available {
+        version: "0.9.0".to_owned(),
+        via,
+    }
+}
+
+async fn shown_update(h: &Harness) -> Value {
+    h.get("/api/status").await.json()["update"].clone()
+}
+
+#[tokio::test]
+async fn each_update_state_shows_the_notice_and_actions_that_fit_it() {
+    let h = harness(ShellKind::Web).await;
+    let cases = [
+        (UpdateState::Unknown, "Checking for updates…", false, false),
+        (UpdateState::Current, "Anya is up to date", false, false),
+        (
+            available(UpdateVia::Homebrew),
+            "Anya 0.9.0 is available",
+            true,
+            true,
+        ),
+        (
+            available(UpdateVia::Other),
+            "Anya 0.9.0 is available. Update it where you installed Anya from.",
+            true,
+            false,
+        ),
+        (
+            UpdateState::Upgrading {
+                version: "0.9.0".to_owned(),
+            },
+            "Upgrading to Anya 0.9.0…",
+            true,
+            false,
+        ),
+        (
+            UpdateState::Restart {
+                version: "0.9.0".to_owned(),
+            },
+            "Upgraded to Anya 0.9.0. Restart Anya to use it.",
+            true,
+            false,
+        ),
+        (
+            UpdateState::Failed {
+                detail: "no route to host".to_owned(),
+            },
+            "Could not check for updates: no route to host",
+            false,
+            false,
+        ),
+    ];
+    for (state, line, notice, can_upgrade) in cases {
+        *lock(&h.control.update) = state.clone();
+        let u = shown_update(&h).await;
+        assert_eq!(u["line"], line, "{state:?}");
+        assert_eq!(u["notice"], notice, "{state:?}");
+        assert_eq!(u["can_upgrade"], can_upgrade, "{state:?}");
+    }
+}
+
+#[tokio::test]
+async fn update_text_follows_the_ui_language_and_says_when_checks_are_off() {
+    let h = harness(ShellKind::Web).await;
+    *lock(&h.control.update) = available(UpdateVia::Homebrew);
+    lock(&h.control.config).ui.language = "zh-CN".to_owned();
+    assert_eq!(shown_update(&h).await["line"], "Anya 0.9.0 已发布");
+    lock(&h.control.config).ui.language = "en".to_owned();
+    *lock(&h.control.update) = UpdateState::Unknown;
+    lock(&h.control.config).updates.check = false;
+    assert_eq!(shown_update(&h).await["line"], "Update checks are off");
+}
+
+#[tokio::test]
+async fn upgrading_says_to_restart_and_the_state_follows() {
+    let h = harness(ShellKind::Web).await;
+    *lock(&h.control.update) = available(UpdateVia::Homebrew);
+    let res = h.post("/api/update/upgrade", &json!({})).await;
+    assert_eq!(res.status, 200);
+    let body = res.json();
+    assert_eq!(
+        body["message"],
+        "Upgrade finished. Restart Anya to use the new version."
+    );
+    assert_eq!(
+        body["update"]["line"],
+        "Upgraded to Anya 0.9.0. Restart Anya to use it."
+    );
+    assert_eq!(body["update"]["can_upgrade"], false);
+    assert_eq!(h.control.calls(), ["upgrade"]);
+}
+
+#[tokio::test]
+async fn every_upgrade_issue_reads_in_the_users_language() {
+    let h = harness(ShellKind::Web).await;
+    let cases = [
+        (
+            UpdateIssue::NotHomebrew,
+            "This Anya was not installed with Homebrew, so it cannot upgrade itself. Update it where you installed it from.",
+            "这个 Anya 不是通过 Homebrew 安装的，无法自行升级，请到你安装它的来源处更新。",
+        ),
+        (
+            UpdateIssue::BrewMissing,
+            "Homebrew was not found on this computer.",
+            "这台电脑上找不到 Homebrew。",
+        ),
+        (
+            UpdateIssue::NothingToInstall,
+            "There is no newer version to install.",
+            "没有更新的版本可安装。",
+        ),
+        (
+            UpdateIssue::Failed {
+                detail: "Error: disk full".to_owned(),
+            },
+            "The upgrade failed: Error: disk full",
+            "升级失败：Error: disk full",
+        ),
+    ];
+    for (issue, english, chinese) in cases {
+        *lock(&h.control.upgrade) = Err(issue.clone());
+        for (language, text) in [("en", english), ("zh-CN", chinese)] {
+            lock(&h.control.config).ui.language = language.to_owned();
+            let res = h.post("/api/update/upgrade", &json!({})).await;
+            assert_eq!(res.status, 409, "{issue:?}");
+            assert_eq!(res.json()["error"], text, "{issue:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn check_now_asks_for_a_new_check() {
+    let h = harness(ShellKind::Web).await;
+    let res = h.post("/api/update/check", &json!({})).await;
+    assert_eq!(res.status, 200);
+    assert_eq!(res.json()["update"]["state"], "unknown");
+    assert_eq!(h.control.calls(), ["check_update"]);
+}
+
+#[tokio::test]
+async fn the_update_check_switch_saves() {
+    let h = harness(ShellKind::Web).await;
+    assert_eq!(
+        h.get("/api/state").await.json()["config"]["updates"]["check"],
+        true
+    );
+    let mut c = edited(&h);
+    c["updates"]["check"] = json!(false);
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200);
+    assert!(!lock(&h.control.saved).last().expect("a save").updates.check);
+    assert_eq!(res.json()["state"]["config"]["updates"]["check"], false);
 }
 
 // ---- every word the page shows is in the catalog ----

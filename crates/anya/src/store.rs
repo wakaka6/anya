@@ -266,6 +266,8 @@ mod tests {
             source: Source::Dictation,
             text: format!("t{n}"),
             delivered: Delivered::Pasted,
+            session: None,
+            engine: None,
         }
     }
 

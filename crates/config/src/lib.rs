@@ -50,6 +50,8 @@ pub struct Config {
     pub subscription: Subscription,
     /// Engine plugins.
     pub plugins: Plugins,
+    /// Looking for a newer Anya.
+    pub updates: Updates,
     /// The recording overlay.
     pub overlay: Overlay,
     /// Development aids.
@@ -330,6 +332,34 @@ impl Plugins {
     /// The index URL when the config names one.
     pub fn index(&self) -> Option<&str> {
         Some(self.index.trim()).filter(|u| !u.is_empty())
+    }
+}
+
+/// `[updates]`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Updates {
+    /// Ask the tap once a day whether a newer Anya exists
+    /// (docs/decisions/0014). Off, Anya makes no such request.
+    pub check: bool,
+    /// URL (`https://` or `file://`) of the formula whose `version` is the
+    /// newest; empty is the default tap's.
+    pub formula: String,
+}
+
+impl Default for Updates {
+    fn default() -> Updates {
+        Updates {
+            check: true,
+            formula: String::new(),
+        }
+    }
+}
+
+impl Updates {
+    /// The formula URL when the config names one.
+    pub fn formula(&self) -> Option<&str> {
+        Some(self.formula.trim()).filter(|u| !u.is_empty())
     }
 }
 

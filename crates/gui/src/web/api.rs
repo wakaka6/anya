@@ -48,6 +48,7 @@ pub(super) async fn handle(page: &Arc<Page>, req: Request<Incoming>) -> Reply {
         (true, "/api/i18n") => Some(i18n(&catalog)),
         (true, "/api/state") => Some(reply::json(StatusCode::OK, &view::state(page, &catalog))),
         (true, "/api/status") => Some(reply::json(StatusCode::OK, &view::status(page, &catalog))),
+        (true, "/api/route") => Some(reply::json(StatusCode::OK, &view::route(page, &catalog))),
         (false, "/api/settings") => Some(save(page, &catalog, req).await),
         (false, "/api/dictation") => Some(switch(page, &catalog, req, Switch::Dictation).await),
         (false, "/api/continuous") => Some(switch(page, &catalog, req, Switch::Continuous).await),
@@ -67,6 +68,8 @@ pub(super) async fn handle(page: &Arc<Page>, req: Request<Incoming>) -> Reply {
         (false, "/api/plugins/install") => Some(install_plugin(page, &catalog, req).await),
         (false, "/api/plugins/enable") => Some(enable_plugin(page, &catalog, req).await),
         (false, "/api/plugins/remove") => Some(remove_plugin(page, &catalog, req).await),
+        (false, "/api/update/check") => Some(check_update(page, &catalog)),
+        (false, "/api/update/upgrade") => Some(upgrade(page, &catalog).await),
         (false, "/api/engine/ready") => Some(engine_ready(page, &catalog, req).await),
         (false, "/api/hotkey/check") => Some(check_hotkey(page, &catalog, req).await),
         (false, "/api/hotkey/record") => Some(record_hotkey(page, &catalog).await),
@@ -748,5 +751,40 @@ async fn remove_plugin(page: &Page, catalog: &Catalog, req: Request<Incoming>) -
         Ok(Ok(())) => installed(page, catalog),
         Ok(Err(issue)) => plugin_failed(catalog, &coded(issue.message(), catalog)),
         Err(e) => plugin_failed(catalog, &e.to_string()),
+    }
+}
+
+/// The update state as the page shows it right now.
+fn update_now(page: &Page, catalog: &Catalog) -> Value {
+    let checking = page.control.config().updates.check;
+    view::update(&page.control.update(), checking, catalog)
+}
+
+/// Asks for a new check; the answer shows in the polled status.
+fn check_update(page: &Page, catalog: &Catalog) -> Reply {
+    page.control.check_update();
+    reply::json(
+        StatusCode::OK,
+        &json!({ "update": update_now(page, catalog) }),
+    )
+}
+
+/// Runs `brew upgrade`, which can take minutes, off the server's threads.
+async fn upgrade(page: &Page, catalog: &Catalog) -> Reply {
+    let control = page.control.clone();
+    let done = tokio::task::spawn_blocking(move || control.upgrade()).await;
+    match done {
+        Ok(Ok(())) => reply::json(
+            StatusCode::OK,
+            &json!({
+                "update": update_now(page, catalog),
+                "message": catalog.t("gui.update.upgraded"),
+            }),
+        ),
+        Ok(Err(issue)) => reply::error(StatusCode::CONFLICT, &view::upgrade_issue(&issue, catalog)),
+        Err(e) => reply::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &catalog.tf("gui.update.issue_failed", &[("detail", &e.to_string())]),
+        ),
     }
 }

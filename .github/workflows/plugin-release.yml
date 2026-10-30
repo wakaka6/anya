@@ -1,10 +1,10 @@
-# Copy to .github/workflows/release.yml in the anya-plugins repository.
 # A tag `<plugin-id>-v<version>` (for example `echo-v1.2.0`) releases
 # plugins/<plugin-id>: CI packs it, validates it, and commits the tarball
-# (tgz/) and the updated index.json to the `dist` branch of this repository.
+# (tgz/) and the updated index.json to the `registry` branch of this repository
+# (docs/decisions/0013).
 # Anya reads both from raw.githubusercontent.com. Nothing installs on a user's
 # machine from here; Anya reads the index when the user opens the marketplace.
-name: release
+name: plugin-release
 on:
   push:
     tags: ["*-v*"]
@@ -24,15 +24,15 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           echo "PLUGIN=${tag%-v*}" >> "$GITHUB_ENV"
           echo "VERSION=${tag##*-v}" >> "$GITHUB_ENV"
-      - name: Check out the dist branch
+      - name: Check out the registry branch
         run: |
-          if git ls-remote --exit-code --heads origin dist >/dev/null; then
-            git worktree add "$RUNNER_TEMP/dist" origin/dist
+          if git ls-remote --exit-code --heads origin registry >/dev/null; then
+            git worktree add "$RUNNER_TEMP/registry" origin/registry
           else
-            git worktree add --orphan -b dist "$RUNNER_TEMP/dist"
+            git worktree add --orphan -b registry "$RUNNER_TEMP/registry"
           fi
-          mkdir -p "$RUNNER_TEMP/dist/tgz"
-          test -f "$RUNNER_TEMP/dist/index.json" || echo '{"version":1,"plugins":[]}' > "$RUNNER_TEMP/dist/index.json"
+          mkdir -p "$RUNNER_TEMP/registry/tgz"
+          test -f "$RUNNER_TEMP/registry/index.json" || echo '{"version":1,"plugins":[]}' > "$RUNNER_TEMP/registry/index.json"
       - name: Pack
         run: |
           cd "plugins/$PLUGIN"
@@ -41,19 +41,19 @@ jobs:
           npm pack --pack-destination "$RUNNER_TEMP/pack"
           mv "$RUNNER_TEMP"/pack/*.tgz "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz"
           tar -xzf "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" -C "$RUNNER_TEMP/unpacked" --strip-components=1
-      - name: Fetch the SDK
-        run: curl -fsSL https://raw.githubusercontent.com/wakaka6/anya/main/sdk/plugin/index.js -o "$RUNNER_TEMP/sdk.js"
+      - name: Use this commit's SDK
+        run: cp sdk/plugin/index.js "$RUNNER_TEMP/sdk.js"
       - name: Validate and add the index entry
         run: |
-          bun scripts/validate.mjs "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" \
-            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dist/tgz/$PLUGIN-$VERSION.tgz" \
-            "$RUNNER_TEMP/dist/index.json" "$RUNNER_TEMP/sdk.js"
-          cp "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" "$RUNNER_TEMP/dist/tgz/"
-      - name: Publish to the dist branch
-        working-directory: ${{ runner.temp }}/dist
+          bun scripts/validate-plugin.mjs "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/registry/tgz/$PLUGIN-$VERSION.tgz" \
+            "$RUNNER_TEMP/registry/index.json" "$RUNNER_TEMP/sdk.js"
+          cp "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" "$RUNNER_TEMP/registry/tgz/"
+      - name: Publish to the registry branch
+        working-directory: ${{ runner.temp }}/registry
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.json tgz
           git commit -m "$PLUGIN $VERSION"
-          git push origin HEAD:dist
+          git push origin HEAD:registry

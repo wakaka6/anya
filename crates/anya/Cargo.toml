@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 anya-audio.workspace = true
@@ -23,6 +24,7 @@ anya-i18n.workspace = true
 anya-output.workspace = true
 anya-overlay.workspace = true
 anya-plugin-host.workspace = true
+anya-update.workspace = true
 anya-plugin-rt.workspace = true
 anya-protocol.workspace = true
 anya-runtime.workspace = true

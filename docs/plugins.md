@@ -118,15 +118,15 @@ node -e 'const c=require("crypto"),f=require("fs");console.log("sha512-"+c.creat
 }] }
 ```
 
-Point Anya's plugin registry URL at `file:///abs/path/index.json` (`Registry::fetch` reads `file://` and `https://`), install, then enable the plugin. `docs/plugins/registry-ci/validate.mjs` runs the registry's checks on your package locally:
+Point Anya's plugin registry URL at `file:///abs/path/index.json` (`Registry::fetch` reads `file://` and `https://`), install, then enable the plugin. `scripts/validate-plugin.mjs` runs the registry's checks on your package locally:
 
 ```bash
-bun validate.mjs <unpacked-dir> my-engine-1.0.0.tgz <artifact-url> index.json <path-to>/sdk/plugin/index.js
+bun scripts/validate-plugin.mjs <unpacked-dir> my-engine-1.0.0.tgz <artifact-url> index.json <path-to>/sdk/plugin/index.js
 ```
 
 ## Registry index format (version 1)
 
-`https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json`, the `dist` branch of the registry repository, written by the registry's CI and read by Anya when the user opens the marketplace or checks for updates. Tarballs sit beside it in `dist/tgz/`. Types: `anya_protocol::Index`.
+`https://raw.githubusercontent.com/wakaka6/anya/registry/index.json`, the `registry` branch of this repository, written by the plugin-release workflow and read by Anya when the user opens the marketplace or checks for updates. Tarballs sit beside it in `registry/tgz/`. Types: `anya_protocol::Index`.
 
 | Field | Meaning |
 | --- | --- |
@@ -152,14 +152,14 @@ Unknown fields are ignored. Anya installs a release only when `kind` is `engine`
 
 Bun comes from `PATH` if it is version 1.2.0 or newer; otherwise Anya downloads its pinned Bun release (SHA-256 checked) when the first plugin is installed. Without plugins nothing is downloaded.
 
-## The anya-plugins release flow
+## The plugin release flow
 
-The registry repository `anya-plugins` holds one directory per plugin under `plugins/<id>/` and the CI below. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. Releasing:
+The Anya repository holds one directory per community plugin under `plugins/<id>/` and the workflow `.github/workflows/plugin-release.yml`. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. Releasing:
 
 1. A maintainer tags the merged commit `<plugin-id>-v<version>` (for example `echo-v1.2.0`). The tag version must equal `package.json`'s.
-2. The workflow packs the plugin (`npm pack`) and runs `scripts/validate.mjs` against the Anya SDK, which checks: id and version format; `anya.engine`, `anya.compat` (not unbounded), `anya.protocol` and `anya.permissions` are present and well formed; the entry loads and exports `defineEngine(...)`; `manifest.id` equals the plugin id and `streaming` is a boolean; the version is not already in the index.
-3. It computes the tarball's `sha512` integrity, appends the entry to `index.json` and commits the tarball (`tgz/`) and the index to the `dist` branch. There is no GitHub release and no GitHub Pages site.
+2. The workflow packs the plugin (`npm pack`) and runs `scripts/validate-plugin.mjs` against the SDK in the same commit, which checks: id and version format; `anya.engine`, `anya.compat` (not unbounded), `anya.protocol` and `anya.permissions` are present and well formed; the entry loads and exports `defineEngine(...)`; `manifest.id` equals the plugin id and `streaming` is a boolean; the version is not already in the index.
+3. It computes the tarball's `sha512` integrity, appends the entry to `index.json` and commits the tarball (`tgz/`) and the index to the `registry` branch. There is no GitHub release and no GitHub Pages site.
 
-Copy `docs/plugins/registry-ci/release.yml` to `.github/workflows/release.yml` and `docs/plugins/registry-ci/validate.mjs` to `scripts/validate.mjs` in the registry repository. The workflow pins Bun and downloads the SDK from the Anya repository; pin that URL to the Anya release the registry targets.
+Nothing to copy: the workflow and the validation script live in this repository, and the SDK it validates against is the one in the tagged commit.
 
 Published versions are immutable: to fix a release, publish a new version.

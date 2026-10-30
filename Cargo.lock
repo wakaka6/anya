@@ -92,6 +92,7 @@ dependencies = [
  "anya-runtime",
  "anya-server",
  "anya-tui",
+ "anya-update",
  "clap",
  "futures-util",
  "serde",
@@ -406,6 +407,17 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "unicode-width",
+]
+
+[[package]]
+name = "anya-update"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "semver",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

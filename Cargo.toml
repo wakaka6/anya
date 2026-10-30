@@ -18,6 +18,7 @@ members = [
     "crates/engines/mimo",
     "crates/server",
     "crates/plugin-host",
+    "crates/update",
     "crates/config",
     "crates/i18n",
     "crates/runtime",
@@ -31,7 +32,8 @@ members = [
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.95"
-# The licence is undecided (docs/decisions/0006-licence-pending.md).
+license = "MIT"
+# Unpublished until the first release (docs/decisions/0006-mit-licence.md).
 publish = false
 
 [workspace.dependencies]
@@ -51,6 +53,7 @@ anya-engine-auralwise = { path = "crates/engines/auralwise" }
 anya-engine-mimo = { path = "crates/engines/mimo" }
 anya-server = { path = "crates/server" }
 anya-plugin-host = { path = "crates/plugin-host" }
+anya-update = { path = "crates/update" }
 anya-config = { path = "crates/config" }
 anya-i18n = { path = "crates/i18n" }
 anya-runtime = { path = "crates/runtime" }

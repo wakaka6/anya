@@ -16,7 +16,7 @@ use crate::PluginError;
 /// Where the registry publishes its index. Callers may pass another URL to
 /// [`Registry::fetch`]: a mirror, a local file for plugin development.
 pub const DEFAULT_INDEX_URL: &str =
-    "https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json";
+    "https://raw.githubusercontent.com/wakaka6/anya/registry/index.json";
 
 /// The largest index Anya reads.
 const MAX_INDEX_BYTES: usize = 4 << 20;

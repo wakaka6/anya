@@ -17,8 +17,8 @@ use anya_protocol::{ErrorCode, Field, FieldKind, Manifest, PairingOffer, Scope, 
 use anya_runtime::{
     ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
     InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient, Pairing,
-    PluginIssue, PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status,
-    Subscription,
+    PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats, Status,
+    Subscription, UpdateIssue, UpdateState,
 };
 
 /// A running Anya that exists only in memory.
@@ -26,6 +26,8 @@ pub(crate) struct FakeControl {
     pub(crate) config: Mutex<Config>,
     pub(crate) status: Mutex<Status>,
     pub(crate) activity: Mutex<Vec<Entry>>,
+    /// What the route page shows; the tests and the example set it.
+    pub(crate) route: Mutex<Route>,
     /// Paired apps; pairing adds none, tests and the example put them here.
     pub(crate) clients: Mutex<Vec<PairedClient>>,
     /// Fails every client change with this write error.
@@ -45,6 +47,11 @@ pub(crate) struct FakeControl {
     pub(crate) copy_error: Mutex<Option<String>>,
     /// Refuses every overlay preview with this.
     pub(crate) preview_error: Mutex<Option<PreviewIssue>>,
+    /// What the update check knows; an upgrade that succeeds moves
+    /// `Available` to `Restart`.
+    pub(crate) update: Mutex<UpdateState>,
+    /// What `upgrade` answers.
+    pub(crate) upgrade: Mutex<Result<(), UpdateIssue>>,
     /// Every call that changes something, in order.
     pub(crate) calls: Mutex<Vec<String>>,
     /// Every config saved.
@@ -106,6 +113,8 @@ impl FakeControl {
                     source: Source::Dictation,
                     text: "Meet at the station at nine.".to_owned(),
                     delivered: Delivered::Pasted,
+                    session: Some(anya_protocol::SessionId("anya-1-1".to_owned())),
+                    engine: Some("cloud".to_owned()),
                 },
                 Entry::Failed {
                     at: now - 200_000,
@@ -118,8 +127,11 @@ impl FakeControl {
                     source: Source::Continuous,
                     text: "The quarterly numbers look good.".to_owned(),
                     delivered: Delivered::Kept,
+                    session: None,
+                    engine: None,
                 },
             ]),
+            route: Mutex::new(Route::default()),
             clients: Mutex::new(Vec::new()),
             clients_write_error: Mutex::new(None),
             plugins: Mutex::new(Vec::new()),
@@ -170,6 +182,8 @@ impl FakeControl {
             record_delay: Mutex::new(Duration::ZERO),
             copy_error: Mutex::new(None),
             preview_error: Mutex::new(None),
+            update: Mutex::new(UpdateState::Unknown),
+            upgrade: Mutex::new(Ok(())),
             calls: Mutex::new(Vec::new()),
             saved: Mutex::new(Vec::new()),
             copied: Mutex::new(Vec::new()),
@@ -318,6 +332,10 @@ impl Control for FakeControl {
 
     fn activity(&self) -> Vec<Entry> {
         lock(&self.activity).clone()
+    }
+
+    fn route(&self) -> Route {
+        lock(&self.route).clone()
     }
 
     fn plugins(&self) -> Vec<InstalledPlugin> {
@@ -481,6 +499,28 @@ impl Control for FakeControl {
         if matches!(status.dictation, Dictation::Failed { .. }) {
             status.dictation = Dictation::Recording;
         }
+    }
+
+    fn update(&self) -> UpdateState {
+        lock(&self.update).clone()
+    }
+
+    fn check_update(&self) {
+        self.call("check_update".to_owned());
+    }
+
+    fn upgrade(&self) -> Result<(), UpdateIssue> {
+        self.call("upgrade".to_owned());
+        let result = lock(&self.upgrade).clone();
+        if result.is_ok() {
+            let mut state = lock(&self.update);
+            if let UpdateState::Available { version, .. } = &*state {
+                *state = UpdateState::Restart {
+                    version: version.clone(),
+                };
+            }
+        }
+        result
     }
 
     fn dismiss_dictation(&self) {

@@ -33,10 +33,12 @@ use anya_protocol::{ErrorCode, PairingOffer, Scope, Source};
 use anya_runtime::{
     ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation, EngineInfo, Entry,
     HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient,
-    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status,
-    Subscription,
+    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats,
+    Status, Subscription, UpdateIssue, UpdateState, UpdateVia,
 };
-use anya_server::{Address, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address};
+use anya_server::{
+    Address, Audience, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address,
+};
 use clap::Parser;
 use tokio::sync::{Mutex as AsyncMutex, watch};
 
@@ -46,6 +48,7 @@ mod doctor;
 mod indicator;
 mod install;
 mod plugins;
+mod route;
 mod store;
 mod timing;
 
@@ -94,8 +97,71 @@ fn choice(config: Arc<Mutex<Config>>, points: Points, role: EngineRole) -> Choic
 /// How long the overlay preview stays before the overlay shows its real state.
 const PREVIEW_HOLD: Duration = Duration::from_millis(2500);
 
+/// How often Anya asks the tap whether a newer version exists.
+const UPDATE_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Looks for a newer version at start and then daily while `[updates] check`
+/// is on; `now` wakes it for a check the user asked for, which ignores that
+/// setting. An upgrade in progress or finished is never overwritten.
+async fn watch_updates(
+    config: Arc<Mutex<Config>>,
+    state: Arc<Mutex<UpdateState>>,
+    now: Arc<tokio::sync::Notify>,
+) {
+    let mut asked = false;
+    loop {
+        let (check, formula) = {
+            let cfg = lock(&config);
+            (
+                cfg.updates.check,
+                cfg.updates
+                    .formula()
+                    .unwrap_or(anya_update::DEFAULT_FORMULA)
+                    .to_owned(),
+            )
+        };
+        if check || asked {
+            let found = anya_update::latest(&formula).await;
+            let mut state = lock(&state);
+            if !matches!(
+                *state,
+                UpdateState::Upgrading { .. } | UpdateState::Restart { .. }
+            ) {
+                *state = match found {
+                    Ok(latest) if anya_update::is_newer(env!("CARGO_PKG_VERSION"), &latest) => {
+                        UpdateState::Available {
+                            version: latest.to_string(),
+                            via: match anya_update::Install::current() {
+                                anya_update::Install::Homebrew => UpdateVia::Homebrew,
+                                anya_update::Install::Other => UpdateVia::Other,
+                            },
+                        }
+                    }
+                    Ok(_) | Err(anya_update::UpdateError::NotPublished { .. }) => {
+                        UpdateState::Current
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "update check failed");
+                        UpdateState::Failed {
+                            detail: e.to_string(),
+                        }
+                    }
+                };
+            }
+        }
+        asked = tokio::select! {
+            () = tokio::time::sleep(UPDATE_EVERY) => false,
+            () = now.notified() => true,
+        };
+    }
+}
+
 /// How often the hotwords are compared with what the last session was given.
 const HOTWORDS_POLL: Duration = Duration::from_secs(2);
+
+/// Where [`App::audiences`] keeps each server's audience.
+const SUBSCRIPTION: usize = 0;
+const LAN: usize = 1;
 
 /// Bumps `params` whenever the merged hotwords (the config's and the file's)
 /// change, so a long continuous session reconnects once and takes them.
@@ -117,6 +183,24 @@ async fn watch_hotwords(config: Arc<Mutex<Config>>, params: watch::Sender<u64>, 
             last = now;
             params.send_modify(|value| *value = value.wrapping_add(1));
         }
+    }
+}
+
+/// The running servers' audiences, read once for one route.
+struct Servers {
+    audiences: Vec<Audience>,
+    /// Paired apps' names by id.
+    names: BTreeMap<String, String>,
+}
+
+impl route::Reach for Servers {
+    fn client_of(&self, session: &anya_protocol::SessionId) -> Option<String> {
+        let id = self.audiences.iter().find_map(|a| a.client_of(session))?;
+        Some(self.names.get(&id).cloned().unwrap_or(id))
+    }
+
+    fn readers_of(&self, session: &anya_protocol::SessionId) -> usize {
+        self.audiences.iter().map(|a| a.readers_of(session)).sum()
     }
 }
 
@@ -149,10 +233,19 @@ struct App {
     /// The LAN listener's port while sharing is on; changes restart it.
     lan_wanted: watch::Sender<Option<u16>>,
     lan_server: AsyncMutex<Option<Server>>,
+    /// Who the subscription server's and the LAN listener's frames reach;
+    /// the last one stays readable after its server stops.
+    audiences: Arc<Mutex<[Option<Audience>; 2]>>,
+    /// The route page's view of the hub.
+    router: Arc<Mutex<route::Router>>,
     data_dir: PathBuf,
     plugin_store: Store,
     /// Running once a plugin is enabled and a Bun is found.
     plugin_host: Arc<Mutex<Option<PluginHost>>>,
+    /// What the update check knows (docs/decisions/0014).
+    update: Arc<Mutex<UpdateState>>,
+    /// Wakes the update check for a check the user asked for.
+    update_now: Arc<tokio::sync::Notify>,
 }
 
 impl App {
@@ -239,9 +332,13 @@ impl App {
             state_dir,
             lan_wanted,
             lan_server: AsyncMutex::new(None),
+            audiences: Arc::default(),
+            router: Arc::default(),
             plugin_store: Store::new(PluginDirs::under(&data_dir)),
             data_dir,
             plugin_host: Arc::new(Mutex::new(None)),
+            update: Arc::new(Mutex::new(UpdateState::Unknown)),
+            update_now: Arc::new(tokio::sync::Notify::new()),
         });
         app.apply_hotkeys()?;
         app.continuous.set(
@@ -256,6 +353,7 @@ impl App {
         let (done_tx, done_rx) = tokio::sync::mpsc::unbounded_channel();
         app.apply_overlay(&cfg);
         tokio::spawn(app.clone().drive_overlay(status_rx.clone(), done_rx));
+        tokio::spawn(app.clone().drive_router());
         app.spawn_observers(status_rx, finished_rx, done_tx);
         tokio::spawn(watch_hotwords(config.clone(), params_tx, HOTWORDS_POLL));
         let mut edits = anya_config::watch(app.config_path.clone());
@@ -266,6 +364,11 @@ impl App {
             }
         });
         app.start_subscription(&cfg.subscription.address).await?;
+        tokio::spawn(watch_updates(
+            app.config.clone(),
+            app.update.clone(),
+            app.update_now.clone(),
+        ));
         let plugins_down = |detail: Option<String>| {
             app.activity.push(Entry::Notice {
                 at: now_ms(),
@@ -376,6 +479,7 @@ impl App {
             Some(port) => match self.start_lan(port).await {
                 Ok((server, fingerprint)) => {
                     let url = server.url();
+                    lock(&self.audiences)[LAN] = Some(server.audience());
                     *slot = Some(server);
                     Lan::Listening { url, fingerprint }
                 }
@@ -423,6 +527,7 @@ impl App {
         let config = self.config.clone();
         let activity = self.activity.clone();
         let stats = self.stats.clone();
+        let router = self.router.clone();
         let desktop = self.desktop;
         tokio::spawn(async move {
             while let Some(done) = finished.recv().await {
@@ -456,11 +561,18 @@ impl App {
                 };
                 let _ = done_tx.send((done.text.clone(), delivered));
                 stats.record(&done.text, done.audio_ms);
+                let engine = {
+                    let mut router = lock(&router);
+                    router.delivered(&done.session, delivered);
+                    router.engine_of(&done.session)
+                };
                 activity.push(Entry::Final {
                     at: now_ms(),
                     source: Source::Dictation,
                     text: done.text,
                     delivered,
+                    session: Some(done.session),
+                    engine,
                 });
                 lock(&status).stats = stats.get();
             }
@@ -482,6 +594,7 @@ impl App {
             url,
             subscribers: server.subscribers(),
         };
+        lock(&self.audiences)[SUBSCRIPTION] = Some(server.audience());
         *self.server.lock().await = Some(server);
         Ok(())
     }
@@ -638,7 +751,11 @@ impl App {
                 },
                 _ = resend.changed() => shown = None,
             }
-            lock(&self.status).level = indicator.level();
+            {
+                let mut status = lock(&self.status);
+                status.level = indicator.level();
+                status.live_text = indicator.live_text();
+            }
             let setting = lock(&self.config).ui.language.clone();
             if words.0 != setting {
                 words = (setting.clone(), Catalog::for_setting(&setting));
@@ -650,6 +767,39 @@ impl App {
                 }
                 shown = Some(view);
             }
+        }
+    }
+
+    /// Follows every session on the hub for the route page.
+    async fn drive_router(self: Arc<Self>) {
+        let mut hub = self.hub.subscribe();
+        {
+            let mut router = lock(&self.router);
+            for frame in &hub.snapshot {
+                router.frame(frame, now_ms());
+            }
+        }
+        loop {
+            match hub.frames.recv().await {
+                Ok(frame) => lock(&self.router).frame(&frame, now_ms()),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    }
+
+    /// What the servers know, for the route page, with each paired app by
+    /// its name.
+    fn reach(&self) -> Servers {
+        let names = self
+            .clients
+            .list()
+            .into_iter()
+            .map(|c| (c.id, c.name))
+            .collect();
+        Servers {
+            audiences: lock(&self.audiences).iter().flatten().cloned().collect(),
+            names,
         }
     }
 
@@ -897,6 +1047,11 @@ impl Control for App {
     fn status(&self) -> Status {
         let mut status = lock(&self.status).clone();
         status.stats = self.stats.get();
+        if let Subscription::Listening { subscribers, .. } = &mut status.subscription
+            && let Some(audience) = &lock(&self.audiences)[SUBSCRIPTION]
+        {
+            *subscribers = audience.subscribers();
+        }
         status
     }
 
@@ -1084,6 +1239,19 @@ impl Control for App {
         anya_output::deliver(self.desktop, text, Delivery::Clipboard).map_err(|e| e.to_string())
     }
 
+    fn route(&self) -> Route {
+        let outputs = route::Outputs {
+            delivery: match lock(&self.config).dictation.output {
+                ConfigOutput::Paste => Some(Delivered::Pasted),
+                ConfigOutput::Clipboard => Some(Delivered::Copied),
+                ConfigOutput::None => None,
+            },
+            overlay: lock(&self.overlay).is_some(),
+        };
+        let reach = self.reach();
+        lock(&self.router).route(&reach, outputs)
+    }
+
     fn preview_overlay(&self, view: PreviewView) -> Result<(), PreviewIssue> {
         let catalog = Catalog::for_setting(&lock(&self.config).ui.language);
         let slot = lock(&self.overlay);
@@ -1101,6 +1269,44 @@ impl Control for App {
 
     fn retry_dictation(&self) {
         self.dictation.input(DictationInput::Retry);
+    }
+
+    fn update(&self) -> UpdateState {
+        lock(&self.update).clone()
+    }
+
+    fn check_update(&self) {
+        self.update_now.notify_one();
+    }
+
+    fn upgrade(&self) -> Result<(), UpdateIssue> {
+        let (version, via) = match &*lock(&self.update) {
+            UpdateState::Available { version, via } => (version.clone(), *via),
+            _ => return Err(UpdateIssue::NothingToInstall),
+        };
+        if via != UpdateVia::Homebrew {
+            return Err(UpdateIssue::NotHomebrew);
+        }
+        *lock(&self.update) = UpdateState::Upgrading {
+            version: version.clone(),
+        };
+        match self.runtime.block_on(anya_update::upgrade()) {
+            Ok(()) => {
+                *lock(&self.update) = UpdateState::Restart { version };
+                Ok(())
+            }
+            Err(e) => {
+                *lock(&self.update) = UpdateState::Available { version, via };
+                tracing::warn!(error = %e, "brew upgrade failed");
+                Err(match e {
+                    anya_update::UpdateError::NotHomebrew => UpdateIssue::NotHomebrew,
+                    anya_update::UpdateError::BrewMissing => UpdateIssue::BrewMissing,
+                    other => UpdateIssue::Failed {
+                        detail: other.to_string(),
+                    },
+                })
+            }
+        }
     }
 
     fn dismiss_dictation(&self) {

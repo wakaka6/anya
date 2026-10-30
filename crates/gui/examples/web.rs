@@ -7,17 +7,22 @@
 //! ```
 //!
 //! It prints the sign-in link; open it, and `/panel.html` for the panel.
-//! Every few seconds the fake records a dictation, so the live states show.
+//! Every few seconds the fake records a dictation, and a paired iPad
+//! dictates through the gateway, so the live states and the route page show.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anya_config::EngineRole;
 use anya_gui::{Shell, ShellKind, web};
-use anya_protocol::{Scope, Source};
-use anya_runtime::{Delivered, Dictation, Entry, Lan, PairedClient};
+use anya_protocol::{Scope, SessionId, Source};
+use anya_runtime::{
+    Delivered, Dictation, Entry, Lan, LiveRoute, Origin, PairedClient, ROUTE_LOG, RouteEvent, Sink,
+    Step,
+};
 
 #[path = "../src/web/fake.rs"]
 mod fake;
@@ -51,11 +56,63 @@ const LINES: &[&str] = &[
     "The quarterly numbers look good.",
 ];
 
-/// Records a dictation every few seconds: recording with live text, the
-/// final result, idle again.
-async fn play(control: Arc<FakeControl>) {
-    for line in LINES.iter().cycle() {
-        tokio::time::sleep(Duration::from_secs(6)).await;
+const REMOTE_LINES: &[&str] = &[
+    "明天下午三点开会，记得带上周报。",
+    "Add oat milk to the shopping list.",
+];
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// One pretend session on the route page: it opens, sends audio a second at
+/// a time with the text growing, and ends with its final text.
+struct Pretend {
+    session: SessionId,
+    origin: Origin,
+    engine: &'static str,
+    sinks: Vec<Sink>,
+}
+
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
+impl Pretend {
+    fn log(&self, control: &FakeControl, step: Step) {
+        let mut route = lock(&control.route);
+        route.log.push(RouteEvent {
+            seq: SEQ.fetch_add(1, Ordering::Relaxed) + 1,
+            at: now_ms(),
+            session: self.session.clone(),
+            origin: self.origin.clone(),
+            engine: self.engine.to_owned(),
+            step,
+        });
+        let over = route.log.len().saturating_sub(ROUTE_LOG);
+        route.log.drain(..over);
+    }
+
+    fn show(&self, control: &FakeControl, level: f32, text: &str) {
+        let mut route = lock(&control.route);
+        let live = LiveRoute {
+            session: self.session.clone(),
+            origin: self.origin.clone(),
+            engine: self.engine.to_owned(),
+            streaming: true,
+            level,
+            text: text.to_owned(),
+            sinks: self.sinks.clone(),
+        };
+        match route.live.iter_mut().find(|r| r.session == self.session) {
+            Some(r) => *r = live,
+            None => route.live.push(live),
+        }
+    }
+
+    /// Plays `line` in parts; `heard` sees the text so far.
+    async fn play(&self, control: &FakeControl, line: &str, mut heard: impl FnMut(&str)) {
+        self.log(control, Step::Start { streaming: true });
         let words: Vec<&str> = line.split_inclusive(' ').collect();
         let parts = if words.len() > 1 {
             words
@@ -63,15 +120,69 @@ async fn play(control: Arc<FakeControl>) {
             line.split_inclusive('，').collect()
         };
         let mut live = String::new();
+        let mut logged = String::new();
+        let mut ticks = 0_u32;
         for part in parts {
             live.push_str(part);
-            {
+            heard(live.trim());
+            for _ in 0..4 {
+                ticks += 1;
+                let level = 0.35 + 0.3 * (ticks as f32 * 0.9).sin().abs();
+                self.show(control, level, live.trim());
+                if ticks.is_multiple_of(10) {
+                    self.log(control, Step::Audio { ms: 1000 });
+                    if logged != live.trim() {
+                        logged = live.trim().to_owned();
+                        self.log(
+                            control,
+                            Step::Partial {
+                                text: logged.clone(),
+                            },
+                        );
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+        if !ticks.is_multiple_of(10) {
+            self.log(
+                control,
+                Step::Audio {
+                    ms: u64::from(ticks % 10) * 100,
+                },
+            );
+        }
+        lock(&control.route)
+            .live
+            .retain(|r| r.session != self.session);
+        self.log(
+            control,
+            Step::Final {
+                text: (*line).to_owned(),
+                sinks: self.sinks.clone(),
+            },
+        );
+    }
+}
+
+/// Records a dictation every few seconds: recording with live text, the
+/// final result, idle again.
+async fn play(control: Arc<FakeControl>) {
+    for (n, line) in LINES.iter().cycle().enumerate() {
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let pretend = Pretend {
+            session: SessionId(format!("example-d{n}")),
+            origin: Origin::Dictation { device: None },
+            engine: "whisper",
+            sinks: vec![Sink::Paste, Sink::Overlay],
+        };
+        pretend
+            .play(&control, line, |text| {
                 let mut status = lock(&control.status);
                 status.dictation = Dictation::Recording;
-                status.live_text = Some(live.trim().to_owned());
-            }
-            tokio::time::sleep(Duration::from_millis(400)).await;
-        }
+                status.live_text = Some(text.to_owned());
+            })
+            .await;
         {
             let mut status = lock(&control.status);
             status.dictation = Dictation::Idle;
@@ -82,15 +193,33 @@ async fn play(control: Arc<FakeControl>) {
             status.stats.last_chars = line.chars().count() as u64;
             status.stats.last_audio_ms = 4_000;
         }
-        let at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
         lock(&control.activity).push(Entry::Final {
-            at,
+            at: now_ms(),
             source: Source::Dictation,
             text: (*line).to_owned(),
             delivered: Delivered::Pasted,
+            session: Some(pretend.session),
+            engine: Some("whisper".to_owned()),
         });
+    }
+}
+
+/// The paired iPad dictates through the gateway now and then, to another
+/// engine; one subscribed app is sent its text too.
+async fn remote(control: Arc<FakeControl>) {
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    for (n, line) in REMOTE_LINES.iter().cycle().enumerate() {
+        let name = "Kitchen iPad".to_owned();
+        let pretend = Pretend {
+            session: SessionId(format!("example-r{n}")),
+            origin: Origin::Remote {
+                client: name.clone(),
+            },
+            engine: "sherpa",
+            sinks: vec![Sink::Client { name }, Sink::Subscribers { count: 1 }],
+        };
+        pretend.play(&control, line, |_| {}).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
 
@@ -134,7 +263,7 @@ fn main() {
             config
                 .recognition
                 .set_engine(EngineRole::Continuous, "sherpa");
-            config.recognition.set_engine(EngineRole::Remote, "whisper");
+            config.recognition.set_engine(EngineRole::Remote, "sherpa");
             lock(&control.status).lan = Lan::Listening {
                 url: "wss://192.168.1.20:7591/asr".to_owned(),
                 fingerprint: "3f:a9:0c:51".to_owned(),
@@ -184,6 +313,7 @@ fn main() {
         };
         eprintln!("Anya settings: {}", server.url());
         eprintln!("Tray panel:    {}", server.panel_url());
+        tokio::spawn(remote(control.clone()));
         play(control).await;
     });
 }

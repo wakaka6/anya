@@ -36,7 +36,7 @@ fn record(dir: &tempfile::TempDir) -> Value {
 fn the_default_index_is_the_dist_branch_of_anya_plugins() {
     assert_eq!(
         DEFAULT_INDEX_URL,
-        "https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json"
+        "https://raw.githubusercontent.com/wakaka6/anya/registry/index.json"
     );
 }
 

@@ -9,6 +9,7 @@
 //! client behind `anya subscribe`: it prints what it receives as NDJSON.
 
 mod address;
+mod audience;
 mod clients;
 mod connection;
 mod discovery;
@@ -20,6 +21,7 @@ mod subscribe;
 mod tls;
 
 pub use address::{Address, AddressError, DEFAULT_ADDRESS, parse_address};
+pub use audience::Audience;
 pub use clients::{ClientInfo, Clients, ClientsError, PairingCode};
 pub use gateway::Gateway;
 pub use server::{Server, ServerError, start_replay};

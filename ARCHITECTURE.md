@@ -10,7 +10,7 @@ flowchart TB
   Trigger["Triggers: dictation · continuous"]
   Adapter["Adapters: audio (microphone and built-in system sound) · hotkey · output · overlay"]
   Engine["Engines: anya-engine-&lt;id&gt;"]
-  Service["Services: server · plugin-host"]
+  Service["Services: server · plugin-host · update"]
   Core["anya-core: seams, session controller"]
   Protocol["anya-protocol: wire formats"]
   App --> Trigger & Adapter & Engine & Service
@@ -38,14 +38,15 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | `crates/output` | `anya-output` | adapter | paste and clipboard sinks | in place |
 | `crates/overlay` | `anya-overlay` | adapter | recording overlay: layer-shell, X11, NSPanel with the notch | in place |
 | `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, auralwise, mimo | in place |
-| `crates/server` | `anya-server` | service | WebSocket subscription, authenticated remote dictation, pairing and paired clients, the TLS LAN listener | in place |
+| `crates/server` | `anya-server` | service | WebSocket subscription, authenticated remote dictation, pairing and paired clients, the TLS LAN listener; each server's `Audience`: who opened a session and how many subscribers were sent it | in place |
 | `crates/plugin-host` | `anya-plugin-host` | service | engine plugins in one Bun process restarted with backoff, each an `Engine`; the anya-plugins index, installs checked against their sha512 integrity, `plugins.json`; finding or downloading a pinned Bun | in place |
+| `crates/update` | `anya-update` | service | whether the Homebrew tap's formula names a newer version, whether this install is under a Cellar, and running `brew upgrade anya` (docs/decisions/0014) | in place |
 | `crates/config` | `anya-config` | app | the config file: shape, defaults, validation, atomic save | in place |
 | `crates/i18n` | `anya-i18n` | app | every user-facing string, locale detection (docs/decisions/0008) | in place |
 | `crates/runtime` | `anya-runtime` | app | `Control`, what the UIs may ask of a running Anya, and its data | in place |
 | `crates/tui` | `anya-tui` | app | the terminal UI | in place |
 | `crates/gui` | `anya-gui` | app | the settings page, the desktop window and tray (tao, wry, tray-icon), `--web` | in place |
-| `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin` | in place |
+| `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin`; the route page's view of the hub (`route.rs`), in memory only | in place |
 | `host/` | — | — | `host.js`, the Bun side of the plugin host, embedded in the binary | in place |
 | `sdk/plugin/` | `@wakaka6/anya-plugin` | — | what plugin authors build on (docs/plugins.md) | in place |
 | `sdk/client/` | `@wakaka6/anya-client` | — | a thin subscriber for apps, tested against the fixtures | planned |

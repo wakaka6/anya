@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use anya_config::{Config, EngineRole};
 use anya_core::audio::Device;
-use anya_protocol::{ErrorCode, Manifest, PairingOffer, Scope, Source, Text};
+use anya_protocol::{EndReason, ErrorCode, Manifest, PairingOffer, Scope, SessionId, Source, Text};
 use serde::{Deserialize, Serialize};
 
 /// Facts about this instance that do not change while it runs.
@@ -327,6 +327,13 @@ pub enum Entry {
         text: String,
         /// Where it went.
         delivered: Delivered,
+        /// The session, so the route page can point at this line. Lines
+        /// written before it was kept have none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
+        /// The id of the engine that recognized it, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        engine: Option<String>,
     },
     /// A session failed.
     Failed {
@@ -357,6 +364,144 @@ pub enum Entry {
         /// Untranslated specifics (a path, an error).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+    },
+}
+
+/// The most messages [`Route::log`] keeps.
+pub const ROUTE_LOG: usize = 200;
+
+/// What the route page shows: the sessions open now, and the latest
+/// messages between sources, engines and where the text goes. Kept in
+/// memory only, never on disk.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Route {
+    /// Sessions open now, oldest first.
+    pub live: Vec<LiveRoute>,
+    /// The latest messages, oldest first, at most [`ROUTE_LOG`].
+    pub log: Vec<RouteEvent>,
+}
+
+/// One open session: where its audio comes from, the engine it goes to and
+/// where its text goes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LiveRoute {
+    /// The session.
+    pub session: SessionId,
+    /// Where its audio comes from.
+    pub origin: Origin,
+    /// The engine's manifest id.
+    pub engine: String,
+    /// Partial results arrive while audio is sent.
+    pub streaming: bool,
+    /// The latest audio chunk's level, 0.0 to 1.0.
+    pub level: f32,
+    /// The session's text so far.
+    pub text: String,
+    /// Where its text goes. Empty when nothing receives it.
+    pub sinks: Vec<Sink>,
+}
+
+/// Where a session's audio comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Origin {
+    /// The user's own dictation.
+    Dictation {
+        /// The input device's name, when it is not the default.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device: Option<String>,
+    },
+    /// Continuous transcription.
+    Continuous {
+        /// The device's name, when known.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device: Option<String>,
+    },
+    /// A paired app dictating through the gateway.
+    Remote {
+        /// The app's name; empty while it is not known.
+        client: String,
+    },
+}
+
+/// Where a session's text goes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Sink {
+    /// Pasted into the focused field.
+    Paste,
+    /// Put on the clipboard.
+    Clipboard,
+    /// Shown on the recording overlay.
+    Overlay,
+    /// Sent back to the paired app that dictated.
+    Client {
+        /// The app's name; empty while it is not known.
+        name: String,
+    },
+    /// Sent to other apps subscribed to this source.
+    Subscribers {
+        /// How many were sent it.
+        count: usize,
+    },
+}
+
+/// One message on a session's route.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RouteEvent {
+    /// Increases by one per message.
+    pub seq: u64,
+    /// Unix ms.
+    pub at: u64,
+    /// The session it belongs to.
+    pub session: SessionId,
+    /// Where the session's audio comes from.
+    pub origin: Origin,
+    /// The engine's manifest id.
+    pub engine: String,
+    /// What happened.
+    #[serde(flatten)]
+    pub step: Step,
+}
+
+/// What a [`RouteEvent`] says happened, as its `step`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum Step {
+    /// The engine connected.
+    Start {
+        /// Partial results will arrive while audio is sent.
+        streaming: bool,
+    },
+    /// Audio went to the engine.
+    Audio {
+        /// How much, in ms.
+        ms: u64,
+    },
+    /// The engine sent a partial result.
+    Partial {
+        /// The session's text so far.
+        text: String,
+    },
+    /// The engine sent its final result, and it went to `sinks`.
+    Final {
+        /// The session's whole text.
+        text: String,
+        /// Where it went; empty when nothing received it.
+        sinks: Vec<Sink>,
+    },
+    /// The session failed.
+    Failed {
+        /// What went wrong.
+        error: ErrorCode,
+        /// Untranslated specifics.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    /// The session ended without a final result.
+    Ended {
+        /// Why.
+        reason: EndReason,
     },
 }
 
@@ -467,6 +612,69 @@ pub enum SaveError {
 pub struct Saved {
     /// Why applying fell short, untranslated; `None` when all applied.
     pub hotkeys_failed: Option<String>,
+}
+
+/// How the running Anya was installed, so the update notice says what to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateVia {
+    /// Under a Homebrew Cellar: Anya can run `brew upgrade anya`.
+    Homebrew,
+    /// Any other install: the user updates it where it came from.
+    Other,
+}
+
+/// What the update check knows (docs/decisions/0014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum UpdateState {
+    /// Checking is off, or has not finished yet.
+    Unknown,
+    /// This is the newest version.
+    Current,
+    /// A newer version exists.
+    Available {
+        /// The newer version.
+        version: String,
+        /// How this Anya was installed.
+        via: UpdateVia,
+    },
+    /// `brew upgrade anya` is running.
+    Upgrading {
+        /// The version being installed.
+        version: String,
+    },
+    /// The upgrade finished; the new version runs after a restart.
+    Restart {
+        /// The installed version.
+        version: String,
+    },
+    /// The check failed.
+    Failed {
+        /// The network's or the file system's words, untranslated.
+        detail: String,
+    },
+}
+
+/// Why an upgrade did not happen, as a code with its specifics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(tag = "issue", rename_all = "snake_case")]
+pub enum UpdateIssue {
+    /// This Anya was not installed with Homebrew.
+    #[error("this Anya was not installed with Homebrew")]
+    NotHomebrew,
+    /// `brew` was not found.
+    #[error("brew was not found")]
+    BrewMissing,
+    /// There is no newer version to install.
+    #[error("there is no newer version")]
+    NothingToInstall,
+    /// `brew upgrade` failed.
+    #[error("brew upgrade failed: {detail}")]
+    Failed {
+        /// The end of brew's own output.
+        detail: String,
+    },
 }
 
 /// Why a plugin operation did not happen, as a code with its specifics. The
@@ -778,6 +986,26 @@ pub trait Control: Send + Sync {
 
     /// Starts a new recording while a failure is shown (R on the overlay).
     fn retry_dictation(&self);
+
+    /// The sessions open now and the latest messages on their routes.
+    fn route(&self) -> Route {
+        Route::default()
+    }
+
+    /// What the update check knows now.
+    fn update(&self) -> UpdateState {
+        UpdateState::Unknown
+    }
+
+    /// Checks for a newer version now, in the background, even when the
+    /// daily check is off: the user asked. The answer shows in [`Control::update`].
+    fn check_update(&self) {}
+
+    /// Runs `brew upgrade anya` for a Homebrew install. Blocks until brew
+    /// ends, so call it off the UI thread. The new version runs after a restart.
+    fn upgrade(&self) -> Result<(), UpdateIssue> {
+        Err(UpdateIssue::NotHomebrew)
+    }
 
     /// Dismisses the failure being shown (Esc on the overlay).
     fn dismiss_dictation(&self);

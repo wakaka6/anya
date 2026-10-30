@@ -39,7 +39,7 @@ impl Layer {
             "anya-core" | "anya-plugin-rt" => Layer::Core,
             "anya-dictation" | "anya-continuous" => Layer::Trigger,
             "anya-audio" | "anya-hotkey" | "anya-output" | "anya-overlay" => Layer::Adapter,
-            "anya-server" | "anya-plugin-host" => Layer::Service,
+            "anya-server" | "anya-plugin-host" | "anya-update" => Layer::Service,
             "anya" | "anya-config" | "anya-i18n" | "anya-runtime" | "anya-tui" | "anya-gui" => {
                 Layer::App
             }

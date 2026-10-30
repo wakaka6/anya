@@ -1,7 +1,7 @@
 "use strict";
 
-// The settings window, for the desktop app and `anya --web`. Seven pages
-// behind a sidebar; every change saves at once: a control posts the whole
+// The settings window, for the desktop app and `anya --web`. Pages behind a
+// sidebar; every change saves at once: a control posts the whole
 // config to /api/settings and the answer is the new state. `state` is the
 // last state the server sent, and the only copy of the config.
 
@@ -18,9 +18,19 @@ let live = null;
 let lastStatus = null;
 let saveChain = Promise.resolve();
 
-const PAGES = ["activity", "dictation", "continuous", "engine", "plugins", "overlay", "apps", "general"];
+const PAGES = ["activity", "route", "dictation", "continuous", "engine", "plugins", "overlay", "apps", "general"];
+// The sidebar's groups, in PAGES order. A group without a label sits alone;
+// the last one is pinned to the foot of the sidebar.
+const NAV_GROUPS = [
+  { pages: ["activity", "route"] },
+  { label: "gui.nav.group_transcribe", pages: ["dictation", "continuous"] },
+  { label: "gui.nav.group_recognize", pages: ["engine", "plugins"] },
+  { label: "gui.nav.group_output", pages: ["overlay", "apps"] },
+  { pages: ["general"], foot: true },
+];
 const NAV = {
   activity: "gui.nav.activity",
+  route: "gui.nav.route",
   dictation: "gui.nav.dictation",
   continuous: "gui.nav.continuous",
   engine: "gui.nav.engine",
@@ -31,6 +41,7 @@ const NAV = {
 };
 const SUBTITLE = {
   activity: "gui.activity.subtitle",
+  route: "gui.route.subtitle",
   dictation: "gui.dictation.subtitle",
   continuous: "gui.continuous.subtitle",
   engine: "gui.engine.subtitle",
@@ -266,7 +277,7 @@ function renderPage() {
   live = null;
   hotkeyViews.clear();
   const builders = {
-    activity: buildActivity, dictation: buildDictation, continuous: buildContinuous,
+    activity: buildActivity, route: buildRoute, dictation: buildDictation, continuous: buildContinuous,
     engine: buildEngine, plugins: buildPlugins, overlay: buildOverlay, apps: buildApps, general: buildGeneral,
   };
   const root = $("page");
@@ -301,6 +312,7 @@ function showPage(name) {
 
 const ICONS = {
   activity: ["M3 12h4l3-7 4 14 3-7h4"],
+  route: ["M4 7a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M16 17a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M8 7h7a3 3 0 0 1 3 3v5"],
   dictation: ["M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M5 11a7 7 0 0 0 14 0", "M12 18v3"],
   continuous: ["M4 10v4", "M8 6v12", "M12 3v18", "M16 7v10", "M20 10v4"],
   engine: ["M8 8h8v8H8z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"],
@@ -310,12 +322,12 @@ const ICONS = {
   general: ["M4 7h9M17 7h3M4 17h3M11 17h9", "M15 5v4M9 15v4"],
 };
 
-// A System Settings style icon: a white glyph on a coloured rounded square.
+// A thin line glyph in the text colour.
 function navIcon(name) {
   const svg = new DOMParser().parseFromString(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ICONS[name].map((d) => `<path d="${d}"/>`).join("")}</svg>`,
     "image/svg+xml").documentElement;
-  return el("span", { class: `icon ic-${name}`, "aria-hidden": "true" }, document.importNode(svg, true));
+  return el("span", { class: "icon", "aria-hidden": "true" }, document.importNode(svg, true));
 }
 
 function drawNav() {
@@ -324,11 +336,14 @@ function drawNav() {
     showPage(name);
     $("nav").querySelector(`[data-page="${name}"]`)?.focus({ preventScroll: true });
   };
-  $("nav").replaceChildren(pill, ...PAGES.map((name) => el("button", {
-    type: "button",
-    "data-page": name,
-    onclick: () => go(name),
-  }, navIcon(name), el("span", {}, t(NAV[name])))));
+  const groups = NAV_GROUPS.map((g) => el("div", { class: g.foot ? "nav-group foot" : "nav-group" },
+    ...(g.label ? [el("div", { class: "nav-label" }, t(g.label))] : []),
+    ...g.pages.map((name) => el("button", {
+      type: "button",
+      "data-page": name,
+      onclick: () => go(name),
+    }, navIcon(name), el("span", { class: "nav-text" }, t(NAV[name]))))));
+  $("nav").replaceChildren(pill, ...groups);
   // Up and down move the selection while the sidebar has focus.
   $("nav").onkeydown = (ev) => {
     const step = { ArrowUp: -1, ArrowDown: 1 }[ev.key];
@@ -338,6 +353,43 @@ function drawNav() {
     if (next) go(next);
   };
   new ResizeObserver(placeNav).observe($("nav"));
+  drawSidebarToggle();
+}
+
+// The sidebar folds to its icons; the choice is kept across windows.
+const SIDEBAR_ICON = ["M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z", "M9 5v14"];
+
+function sidebarFolded() {
+  return document.body.classList.contains("folded");
+}
+
+function drawSidebarToggle() {
+  let folded = false;
+  try { folded = localStorage.getItem("anya.sidebar") === "folded"; } catch {}
+  $("sidebarToggle").replaceChildren(glyph(SIDEBAR_ICON));
+  $("sidebarToggle").onclick = () => {
+    setFolded(!sidebarFolded());
+    try { localStorage.setItem("anya.sidebar", sidebarFolded() ? "folded" : "open"); } catch {}
+  };
+  setFolded(folded);
+}
+
+function setFolded(folded) {
+  toggleClass(document.body, "folded", folded);
+  const label = t(folded ? "gui.sidebar.expand" : "gui.sidebar.collapse");
+  setAttr($("sidebarToggle"), "title", label);
+  setAttr($("sidebarToggle"), "aria-label", label);
+  setAttr($("sidebarToggle"), "aria-expanded", String(!folded));
+  sidebarTitles();
+}
+
+// Folded, a row's name and the engine's state show as tooltips.
+function sidebarTitles() {
+  const folded = sidebarFolded();
+  for (const button of $("nav").querySelectorAll("button")) {
+    setAttr(button, "title", folded ? t(NAV[button.dataset.page]) : null);
+  }
+  setAttr($("engineLine"), "title", folded ? $("engineLine").textContent : null);
 }
 
 // The one selection pill slides to the chosen row.
@@ -370,7 +422,8 @@ function drawEngineLine() {
   const line = $("engineLine");
   if (line.dataset.state === kind && line.lastChild?.textContent === text) return;
   line.dataset.state = kind;
-  line.replaceChildren(el("i", { class: `dot ${kind}` }), el("span", {}, text));
+  line.replaceChildren(el("i", { class: `dot ${kind}` }), el("span", { class: "nav-text" }, text));
+  sidebarTitles();
 }
 
 // ---- hotkeys ----
@@ -420,32 +473,6 @@ function redrawHotkeys() {
 // The chips of the hotkey list at `path`.
 function hotkeyField(path) {
   const chips = el("div", { class: "chips" });
-  const manual = el("input", {
-    type: "text",
-    spellcheck: "false",
-    hidden: true,
-    placeholder: t("gui.hotkey.manual_placeholder"),
-    "aria-label": t("gui.hotkey.manual_aria"),
-  });
-  const toggle = el("button", {
-    type: "button",
-    class: "ghost",
-    onclick: () => {
-      manual.hidden = !manual.hidden;
-      if (!manual.hidden) { manual.value = getPath(cfg(), path); manual.focus(); }
-    },
-  }, t("gui.hotkey.manual"));
-  manual.addEventListener("change", async () => {
-    showError(path, "");
-    try {
-      const { value } = await api("/api/hotkey/check", { value: manual.value.trim(), role: roleOf(path) });
-      await commit((c) => setPath(c, path, value), { field: path });
-      manual.value = value;
-      redrawHotkeys();
-    } catch (err) {
-      showError(path, err.message);
-    }
-  });
   const draw = () => {
     const list = splitHotkeys(getPath(cfg(), path));
     const items = list.map((combo, i) => el("span", { class: "chip" },
@@ -465,7 +492,7 @@ function hotkeyField(path) {
   };
   hotkeyViews.set(path, draw);
   draw();
-  return el("div", { class: "ctl col" }, chips, toggle, manual);
+  return el("div", { class: "ctl col" }, chips);
 }
 
 function roleOf(path) {
@@ -660,11 +687,6 @@ function buildActivity() {
     el("span", {}, t("gui.notready.text")),
     el("button", { type: "button", class: "main", onclick: () => showPage("engine") }, t("gui.notready.go")));
 
-  const bars = levelBars();
-  const liveText = el("p");
-  const liveCard = el("div", { class: "card live-card", hidden: true },
-    el("div", { class: "head" }, el("i", { class: "dot rec" }), t("gui.activity.live"), bars), liveText);
-
   let filter = "all";
   const open = new Set();
   let entries = [];
@@ -722,6 +744,7 @@ function buildActivity() {
     }
     setHidden(empty, shown.length > 0);
     firstDraw = false;
+    if (jumpTo != null) showJumped(list);
   };
 
   live = (data) => {
@@ -730,16 +753,22 @@ function buildActivity() {
     setText(chars, n(data.stats.chars));
     setText(duration, tf("gui.stats.minutes", { count: n(minutes(data.stats.audio_ms)) }));
     setHidden(gate, data.engine.ready);
-    const s = data.status;
-    const speaking = s.dictation.state === "recording" || s.dictation.state === "stopping" || (s.finishing > 0 && s.live_text);
-    setHidden(liveCard, !speaking);
-    setText(liveText, s.live_text ?? "");
-    bars.setLevel(s.level);
     entries = data.activity;
     drawLog();
   };
 
-  return [gate, cards, liveCard, group(t("gui.activity.history"), [list], { action: chips })];
+  return [gate, cards, group(t("gui.activity.history"), [list], { action: chips })];
+}
+
+// The line the route page pointed at: scrolled to and lit for a moment.
+function showJumped(list) {
+  const session = jumpTo;
+  jumpTo = null;
+  const row = [...list.querySelectorAll("li[data-session]")].find((li) => li.dataset.session === session);
+  if (!row) return;
+  row.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 1600);
 }
 
 function logRow(e, open, redraw) {
@@ -755,8 +784,9 @@ function logRow(e, open, redraw) {
   const tag = el("span", { class: "chip tag static" },
     t(e.source === "continuous" ? "gui.activity.tag_continuous" : "gui.activity.tag_dictation"));
   if (e.kind === "final") {
-    return el("li", { class: "ok" }, time, tag,
-      el("span", { class: "text" }, e.text), el("span", { class: "dest" }, e.note), copyButton(e.text));
+    const dest = e.engine ? tf("gui.activity.via", { engine: e.engine, note: e.note }) : e.note;
+    return el("li", { class: "ok", "data-session": e.session ?? null }, time, tag,
+      el("span", { class: "text" }, e.text), el("span", { class: "dest" }, dest), copyButton(e.text));
   }
   const expanded = open.has(e.at);
   const toggle = e.detail
@@ -768,6 +798,370 @@ function logRow(e, open, redraw) {
     : el("span");
   return el("li", { class: "error" }, time, tag, el("span", { class: "text" }, e.text), el("span"), toggle,
     expanded && e.detail ? el("p", { class: "detail mono" }, e.detail) : null);
+}
+
+// ---- 1b. route ----
+//
+// Where each open session's sound comes from, the engine it goes to and
+// where its text goes, as a map, with the latest messages under it. The map
+// is drawn again only when its nodes change; levels, text and the packets
+// moving along its lines are updated in place. Nothing here is saved.
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ROUTE_FILTERS = [
+  ["all", "gui.route.filter_all"],
+  ["text", "gui.route.filter_text"],
+  ["audio", "gui.route.filter_audio"],
+  ["error", "gui.route.filter_error"],
+];
+const CHEVRON_ICON = ["M9 6l6 6-6 6"];
+// The session the route page asked the Activity page to show.
+let jumpTo = null;
+
+function svgEl(tag, attrs = {}, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) node.setAttribute(k, v);
+  node.append(...children.filter((c) => c != null));
+  return node;
+}
+
+// Sets `node`'s text to `text`, cut to `width` px: from the end for live
+// text (the newest words stay), from the start otherwise.
+function fitText(node, text, width, { tail = false } = {}) {
+  if (node.dataset.full === text && node.dataset.width === String(width)) return;
+  node.dataset.full = text;
+  node.dataset.width = String(width);
+  node.textContent = text;
+  let s = [...text];
+  while (s.length > 1 && node.getComputedTextLength() > width) {
+    s = tail ? s.slice(1) : s.slice(0, -1);
+    node.textContent = tail ? `…${s.join("")}` : `${s.join("")}…`;
+  }
+}
+
+function buildRoute() {
+  const map = routeMap();
+  const caption = el("p", { class: "route-caption", hidden: true }, t("gui.route.caption"));
+  const card = el("div", { class: "card route-card" },
+    el("div", { class: "route-head" }, t("gui.route.live")), map.node, caption);
+
+  let filter = "all";
+  let entries = [];
+  const list = el("ol", { class: "log route-log" });
+  const empty = el("li", { class: "empty", hidden: true }, t("gui.route.log_empty"));
+  list.append(empty);
+  const rows = new Map();
+  let madeFor = null;
+  const chips = segmented(ROUTE_FILTERS.map(([id, key]) => [id, t(key)]), filter,
+    (id) => { filter = id; drawLog(); }, t("gui.route.log"));
+  const drawLog = () => {
+    const shown = entries.filter((e) => filter === "all" || e.filter === filter).reverse();
+    if (filter !== madeFor) {
+      for (const node of rows.values()) node.remove();
+      rows.clear();
+      madeFor = filter;
+    }
+    const key = (e) => `${e.seq}.${e.row}`;
+    const wanted = new Set(shown.map(key));
+    for (const [k, node] of rows) {
+      if (!wanted.has(k)) { node.remove(); rows.delete(k); }
+    }
+    let cursor = list.firstElementChild;
+    for (const e of shown) {
+      const node = rows.get(key(e));
+      if (!node) {
+        const made = routeRow(e, map.pick);
+        list.insertBefore(made, cursor);
+        rows.set(key(e), made);
+      } else if (node === cursor) {
+        cursor = cursor.nextElementSibling;
+      } else {
+        list.insertBefore(node, cursor);
+      }
+    }
+    setHidden(empty, shown.length > 0);
+  };
+
+  // The status poll paces the route's: one request at a time, only while
+  // this page is shown.
+  let asking = false;
+  live = async () => {
+    if (asking) return;
+    asking = true;
+    let data = null;
+    try { data = await api("/api/route"); } catch {}
+    asking = false;
+    if (!data || !card.isConnected) return;
+    map.draw(data.live);
+    setHidden(caption, data.live.length === 0);
+    entries = data.log;
+    drawLog();
+  };
+
+  const note = el("span", { class: "route-note" }, t("gui.route.log_note"));
+  return [card, group(t("gui.route.log"), [list], { action: el("span", { class: "route-actions" }, note, chips) })];
+}
+
+// One message: when, from where to where, what, and for the user's own
+// dictation a way to its line on the Activity page.
+function routeRow(e, pick) {
+  const jump = e.activity
+    ? el("button", {
+      type: "button",
+      class: "icon-btn",
+      title: t("gui.route.open_activity"),
+      "aria-label": t("gui.route.open_activity"),
+      onclick: (ev) => { ev.stopPropagation(); jumpTo = e.session; showPage("activity"); },
+    }, glyph(CHEVRON_ICON))
+    : el("span");
+  return el("li", { class: e.level || "plain", onclick: () => pick(e.session) },
+    el("time", { datetime: new Date(e.at).toISOString() }, clockMs(e.at).slice(0, 8)),
+    el("span", { class: "path", title: `${e.from} → ${e.to}` }, `${e.from} → ${e.to}`),
+    el("span", { class: `kind ${e.kind}` }, e.label),
+    el("span", { class: "text", title: e.detail }, e.detail),
+    jump);
+}
+
+// The map of open sessions: sources on the left, where text goes on the
+// right, Anya between them inside the local boundary, and the engines above
+// it, outside. Hovering a node, or picking a message, lights its sessions'
+// lines alone.
+function routeMap() {
+  const W = 700;
+  const BOX = { w: 150, h: 30 };
+  const ENGINE = { w: 204, h: 70, gap: 16 };
+  const ROW = 48;
+  // Anya's node: the app icon, 2R across, named under it.
+  const R = 28;
+  const anya = (cx, cy, on) => [
+    svgEl("image", { class: "rm-anya-icon", href: "icon.svg", x: cx - R, y: cy - R, width: 2 * R, height: 2 * R }),
+    // The icon's own rounded square sits 1/32 inside its image.
+    svgEl("rect", { class: on ? "rm-anya on" : "rm-anya", x: cx - R * 15 / 16, y: cy - R * 15 / 16, width: R * 15 / 8, height: R * 15 / 8, rx: 12 }),
+    svgEl("text", { class: "rm-anya-label rm-small", x: cx, y: cy + R + 15 }, t("gui.route.anya")),
+  ];
+  const node = el("div", { class: "route-map" });
+  let shape = null;
+  let svg = null;
+  // Per drawing: engines by id, links, nodes, and what each session last showed.
+  let parts = null;
+  let picked = null;
+  let pickTimer = 0;
+  // What each session last sent a packet for, kept across redraws.
+  const seen = new Map();
+  const packets = [];
+  let frame = 0;
+
+  const light = (sessions) => {
+    if (!svg) return;
+    toggleClass(svg, "focus", !!sessions);
+    for (const item of svg.querySelectorAll("[data-sessions]")) {
+      const mine = sessions && item.dataset.sessions.split(" ").some((s) => sessions.includes(s));
+      toggleClass(item, "lit", !!mine);
+    }
+  };
+  const hoverable = (item, sessions) => {
+    item.dataset.sessions = sessions.join(" ");
+    item.addEventListener("mouseenter", () => light(sessions));
+    item.addEventListener("mouseleave", () => light(picked ? [picked] : null));
+    return item;
+  };
+
+  const idle = () => {
+    svg = svgEl("svg", { viewBox: `0 0 ${W} 150`, class: "route-svg idle", role: "img", "aria-label": t("gui.route.idle") },
+      svgEl("rect", { class: "rm-bound", x: 1, y: 1, width: W - 2, height: 148, rx: 12 }),
+      svgEl("text", { class: "rm-small rm-muted", x: 16, y: 22 }, t("gui.route.boundary")),
+      ...anya(W / 2, 62, false),
+      svgEl("text", { class: "rm-small rm-muted", x: W / 2, y: 132, "text-anchor": "middle" }, t("gui.route.idle")));
+    node.replaceChildren(svg);
+    parts = null;
+  };
+
+  const build = (routes) => {
+    const sources = new Map();
+    const engines = new Map();
+    const sinks = new Map();
+    for (const r of routes) {
+      const s = sources.get(r.origin.key) ?? { ...r.origin, sessions: [] };
+      s.sessions.push(r.session);
+      sources.set(r.origin.key, s);
+      const e = engines.get(r.engine.id) ?? { ...r.engine, roles: new Set(), streaming: r.streaming, sessions: [] };
+      e.roles.add(r.origin.role);
+      e.sessions.push(r.session);
+      engines.set(r.engine.id, e);
+      for (const k of r.sinks) {
+        const d = sinks.get(k.key) ?? { ...k, sessions: [] };
+        d.sessions.push(r.session);
+        sinks.set(k.key, d);
+      }
+    }
+    const n = Math.max(sources.size, sinks.size, 1);
+    const boundTop = ENGINE.h + 32;
+    const rowsTop = boundTop + 34;
+    const cy = rowsTop + (n * ROW) / 2;
+    const cx = W / 2;
+    const height = Math.max(rowsTop + n * ROW + 12, cy + R + 26);
+    const column = (count) => (i) => rowsTop + ROW * (i + (n - count) / 2) + ROW / 2;
+
+    svg = svgEl("svg", { viewBox: `0 0 ${W} ${height + 2}`, class: "route-svg" });
+    const linkLayer = svgEl("g");
+    const packetLayer = svgEl("g", { class: "rm-packets" });
+    const nodeLayer = svgEl("g");
+    svg.append(svgEl("rect", { class: "rm-bound", x: 1, y: boundTop, width: W - 2, height: height - boundTop, rx: 12 }),
+      svgEl("text", { class: "rm-small rm-muted", x: 16, y: boundTop + 20 }, t("gui.route.boundary")),
+      linkLayer, packetLayer, nodeLayer);
+    node.replaceChildren(svg);
+
+    const link = (d, sessions) => {
+      const path = hoverable(svgEl("path", { class: "rm-link", d }), sessions);
+      linkLayer.append(path);
+      return path;
+    };
+    const toAnya = new Map();
+    const fromAnya = new Map();
+    const toEngine = new Map();
+
+    const ex = ENGINE.w * engines.size + ENGINE.gap * (engines.size - 1);
+    [...engines.values()].forEach((e, j) => {
+      const x = (W - ex) / 2 + j * (ENGINE.w + ENGINE.gap);
+      const ecx = x + ENGINE.w / 2;
+      const sx = cx + (j - (engines.size - 1) / 2) * 14;
+      const sy = cy - R + 2;
+      toEngine.set(e.id, link(`M${sx} ${sy} C${sx} ${sy - 44} ${ecx} ${ENGINE.h + 44} ${ecx} ${ENGINE.h}`, e.sessions));
+      const title = svgEl("text", { class: "rm-title", x: x + 12, y: 20 });
+      const roles = svgEl("text", { class: "rm-small rm-muted", x: x + 12, y: 36 });
+      const bars = BAR_WEIGHTS.slice(0, 5).map((_, i) => svgEl("rect", { class: "rm-bar", x: x + 12 + i * 5, y: 52, width: 3, height: 2, rx: 1 }));
+      const text = svgEl("text", { class: "rm-small", x: x + 44, y: 57 });
+      nodeLayer.append(hoverable(svgEl("g", { class: "rm-node" },
+        svgEl("rect", { class: "rm-box", x, y: 0, width: ENGINE.w, height: ENGINE.h, rx: 10 }),
+        title, roles, ...bars, text), e.sessions));
+      const how = t(e.streaming ? "gui.route.streaming" : "gui.route.batch");
+      fitText(roles, `${[...e.roles].join(" · ")} · ${how}`, ENGINE.w - 24);
+      fitText(title, e.title, ENGINE.w - 24);
+      e.bars = bars;
+      e.text = text;
+      e.x = x;
+    });
+
+    const box = (x, y, label, sessions) => {
+      const labelNode = svgEl("text", { class: "rm-label", x: x + 12, y: y + 5 });
+      nodeLayer.append(hoverable(svgEl("g", { class: "rm-node" },
+        svgEl("rect", { class: "rm-box", x, y: y - BOX.h / 2, width: BOX.w, height: BOX.h, rx: 8 }),
+        svgEl("title", {}, label), labelNode), sessions));
+      fitText(labelNode, label, BOX.w - 24);
+    };
+    const sy = column(sources.size);
+    [...sources.values()].forEach((s, i) => {
+      const y = sy(i);
+      toAnya.set(s.key, link(`M${16 + BOX.w} ${y} C${cx - 110} ${y} ${cx - 110} ${cy} ${cx - R} ${cy}`, s.sessions));
+      box(16, y, s.label, s.sessions);
+    });
+    const dy = column(sinks.size);
+    [...sinks.values()].forEach((d, i) => {
+      const y = dy(i);
+      const x = W - 16 - BOX.w;
+      fromAnya.set(d.key, link(`M${cx + R} ${cy} C${cx + 110} ${cy} ${cx + 110} ${y} ${x} ${y}`, d.sessions));
+      box(x, y, d.label, d.sessions);
+    });
+    nodeLayer.append(hoverable(svgEl("g", { class: "rm-node" }, ...anya(cx, cy, true)), routes.map((r) => r.session)));
+
+    parts = { engines, toAnya, fromAnya, toEngine, packetLayer };
+    light(picked ? [picked] : null);
+  };
+
+  // Packets: a few bars for audio going up to the engine, a pill of the
+  // newest words coming back down and out.
+  const run = (paths, make, durs) => {
+    if (!parts || reducedMotion()) return;
+    const item = make();
+    parts.packetLayer.append(item);
+    packets.push({ item, paths, durs, leg: 0, start: performance.now() });
+    if (!frame) frame = requestAnimationFrame(step);
+  };
+  const step = (now) => {
+    frame = 0;
+    for (let i = packets.length - 1; i >= 0; i--) {
+      const p = packets[i];
+      let k = (now - p.start) / p.durs[p.leg];
+      if (k >= 1 && p.leg + 1 < p.paths.length) {
+        p.leg += 1;
+        p.start = now;
+        k = 0;
+      }
+      if (k >= 1 || !p.item.isConnected) {
+        p.item.remove();
+        packets.splice(i, 1);
+        continue;
+      }
+      const [path, backwards] = p.paths[p.leg];
+      const len = path.getTotalLength();
+      const at = path.getPointAtLength(len * (backwards ? 1 - k : k));
+      p.item.setAttribute("transform", `translate(${at.x.toFixed(1)} ${at.y.toFixed(1)})`);
+    }
+    if (packets.length && node.isConnected) frame = requestAnimationFrame(step);
+  };
+  const audioGlyph = () => svgEl("g", { class: "rm-audio" },
+    svgEl("rect", { x: -4, y: -3, width: 2, height: 6, rx: 1 }),
+    svgEl("rect", { x: -1, y: -5, width: 2, height: 10, rx: 1 }),
+    svgEl("rect", { x: 2, y: -2, width: 2, height: 4, rx: 1 }));
+  const textGlyph = (words) => {
+    const label = svgEl("text", { class: "rm-pill-text", x: 0, y: 3.5 }, words);
+    return svgEl("g", { class: "rm-text" }, svgEl("rect", { x: -16, y: -7, width: 32, height: 14, rx: 7 }), label);
+  };
+
+  const update = (routes) => {
+    if (!parts) return;
+    const now = performance.now();
+    const levels = new Map();
+    for (const s of seen.keys()) {
+      if (!routes.some((r) => r.session === s)) seen.delete(s);
+    }
+    for (const r of routes) {
+      const e = parts.engines.get(r.engine.id);
+      levels.set(r.engine.id, Math.max(levels.get(r.engine.id) ?? 0, r.level));
+      fitText(e.text, r.text, ENGINE.w - 56, { tail: true });
+      const last = seen.get(r.session) ?? { text: "", audio: 0 };
+      const up = [parts.toAnya.get(r.origin.key), parts.toEngine.get(r.engine.id)];
+      if (r.level > 0.04 && now - last.audio > 900 - r.level * 500) {
+        last.audio = now;
+        run([[up[0], false], [up[1], false]], audioGlyph, [550, 450]);
+      }
+      if (r.text && r.text !== last.text) {
+        last.text = r.text;
+        const words = [...r.text.replace(/[\s\p{P}]+$/u, "")].slice(-2).join("");
+        for (const k of r.sinks) {
+          run([[up[1], true], [parts.fromAnya.get(k.key), false]], () => textGlyph(words), [450, 550]);
+        }
+      }
+      seen.set(r.session, last);
+    }
+    for (const [id, e] of parts.engines) {
+      const shaped = Math.min(1, (levels.get(id) ?? 0) ** 0.6 * 1.4);
+      e.bars.forEach((bar, i) => {
+        const h = Math.max(2, Math.round(14 * shaped * BAR_WEIGHTS[i]));
+        bar.setAttribute("height", h);
+        bar.setAttribute("y", 53 - h / 2);
+      });
+    }
+  };
+
+  const draw = (routes) => {
+    const key = JSON.stringify(routes.map((r) => [r.session, r.origin.key, r.origin.label, r.engine.id, r.streaming, r.sinks]));
+    if (key !== shape) {
+      shape = key;
+      if (routes.length) build(routes); else idle();
+    }
+    update(routes);
+  };
+
+  // A message picked in the log lights its session for a moment.
+  const pick = (session) => {
+    picked = session;
+    light([session]);
+    clearTimeout(pickTimer);
+    pickTimer = setTimeout(() => { picked = null; light(null); }, 2000);
+  };
+
+  return { node, draw, pick };
 }
 
 // ---- 2. dictation ----
@@ -1828,6 +2222,38 @@ $("pairing").addEventListener("keydown", (ev) => {
 
 // ---- 7. general ----
 
+// What the update check knows, with the actions that fit it. The status poll
+// redraws it; Upgrade blocks until brew ends, so the poll shows "Upgrading".
+function updateRow() {
+  const upgrade = el("button", { type: "button", class: "main", hidden: true }, t("gui.update.upgrade"));
+  const check = el("button", { type: "button", class: "ghost" }, t("gui.update.check_now"));
+  const line = el("span", {});
+  const node = row("", null, ctl(upgrade, check));
+  node.querySelector(".label").replaceChildren(line);
+  const draw = (u) => {
+    setText(line, u.line);
+    setHidden(upgrade, !u.can_upgrade);
+  };
+  check.addEventListener("click", async () => {
+    try { draw((await api("/api/update/check", {})).update); } catch (err) { notify(err.message, "error"); }
+  });
+  upgrade.addEventListener("click", async () => {
+    upgrade.disabled = true;
+    check.disabled = true;
+    try {
+      const done = await api("/api/update/upgrade", {});
+      draw(done.update);
+      notify(done.message);
+    } catch (err) {
+      notify(err.message, "error");
+    }
+    upgrade.disabled = false;
+    check.disabled = false;
+  });
+  live = (data) => draw(data.update);
+  return node;
+}
+
 function buildGeneral() {
   const path = state.info.config_path;
   const signed = (db) => (db > 0 ? `+${db}` : String(db));
@@ -1840,11 +2266,14 @@ function buildGeneral() {
       onchange: (db, back) => commit((c) => { c.audio.gain = db; }, { field: "audio.gain", revert: () => back(cfg().audio.gain) }),
     }))]),
     group(t("gui.general.group_about"), [
-      row(t("gui.config.label"), t("gui.config.help"), pathLine(path), { stack: true }),
+      row(t("gui.config.label"), t("gui.config.help"), pathLine(path), { stack: true })]),
+    group(t("gui.update.label"), [
       row(t("gui.version.label"), null, el("span", { class: "value" }, tf("gui.version.value", {
         version: state.info.version,
         platform: t(platform() === "macos" ? "gui.platform.macos" : "gui.platform.linux"),
-      })))]),
+      }))),
+      updateRow(),
+      row(t("gui.update.check.label"), t("gui.update.check.help"), ctl(bindToggle("updates.check", t("gui.update.check.label"))), { top: true })]),
     group(t("gui.general.group_trouble"), [
       row(t("gui.debug.label"), t("gui.debug.help"), bindToggle("debug.enabled", t("gui.debug.label")))]),
   ];
@@ -1937,9 +2366,9 @@ async function boot() {
   }, { passive: true });
 }
 
-// ⌘1 … ⌘8 jump to a page.
+// ⌘1 … ⌘9 jump to a page.
 document.addEventListener("keydown", (ev) => {
-  if (!(ev.metaKey || ev.ctrlKey) || ev.altKey || !/^[1-8]$/.test(ev.key) || rec) return;
+  if (!(ev.metaKey || ev.ctrlKey) || ev.altKey || !/^[1-9]$/.test(ev.key) || rec) return;
   ev.preventDefault();
   showPage(PAGES[Number(ev.key) - 1]);
 });

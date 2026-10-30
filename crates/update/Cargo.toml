@@ -1,0 +1,21 @@
+[package]
+name = "anya-update"
+description = "Finds out whether Homebrew has a newer Anya, and runs the upgrade."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+semver.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

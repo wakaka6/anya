@@ -22,7 +22,7 @@ ignore = [
 
 [licenses]
 version = 2
-# Permissive licences only, so the choice in docs/decisions/0006 stays open.
+# Permissive licences only (docs/decisions/0006).
 # Copyleft (MPL, LGPL, GPL) stays out; ask before adding one.
 allow = [
     "MIT",
@@ -45,7 +45,7 @@ exceptions = [
 ]
 
 [licenses.private]
-# Workspace crates are unpublished and have no licence yet.
+# Workspace crates are unpublished.
 ignore = true
 
 [bans]

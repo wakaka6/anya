@@ -108,6 +108,25 @@ function drawTop() {
   if (bars) bars.setLevel(s.level);
 }
 
+// A newer version, an upgrade under way, or one waiting for a restart. Only a
+// Homebrew install is offered the upgrade; a failed check is not shown here.
+function drawUpdate() {
+  const u = data.update;
+  once("update", [u], () => {
+    setHidden($("update"), !u.notice);
+    if (!u.notice) { $("update").replaceChildren(); return; }
+    const button = u.can_upgrade ? el("button", { type: "button", class: "main" }, t("gui.update.upgrade")) : null;
+    button?.addEventListener("click", async () => {
+      button.disabled = true;
+      try { await api("/api/update/upgrade", {}); } catch (err) { toast(err.message, "error"); }
+      button.disabled = false;
+    });
+    $("update").replaceChildren(card("update",
+      el("p", { class: "sentence" }, u.line),
+      button ? el("div", { class: "actions" }, button) : null));
+  });
+}
+
 function openEngine() {
   try { localStorage.setItem("anya.goto", `engine:${Date.now()}`); } catch {}
   api("/api/window", { action: "settings" }).catch(() => {});
@@ -229,6 +248,7 @@ function render(fresh) {
   setAttr($("status"), "title", data.detail ? `${data.pill.label}  ${data.detail}` : data.pill.label);
   setClass($("statusDot"), `dot ${DOT[data.pill.state] ?? ""}`);
   setText($("statusLabel"), data.pill.label);
+  drawUpdate();
   drawTop();
   if (!busy) drawSwitches();
   drawRecent();

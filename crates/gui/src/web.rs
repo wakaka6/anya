@@ -27,13 +27,16 @@
 //! |---|---|---|
 //! | `GET /api/i18n` | | `{locale, text: {key: text}}`, the whole catalog |
 //! | `GET /api/state` | | `{locale, shell, info, default_address, config, engines: [{id, title, blurb, docs, streaming, ready, custom, plugin, enabled, fields}], positions, languages, ui_languages, devices, devices_error?, lan, clients, plugins}`; `config.recognition.{dictation, continuous, remote}` name the engine each use sends to, and a refused one is reported as field `recognition.<use>` |
-//! | `GET /api/status` | | `{status, pill: {state, label}, detail, failure: {text, detail}?, config_broken, engine: {id, title, ready}, subscription: {state, line, url?, subscribers?}, lan: {state, line, url?, fingerprint?}, clients, plugins: [{id, name, version, enabled, state, line}], stats, activity: [{at, kind, source, level, text, note, detail?}]}`; `status.level` is the dictation input level, `null` unless recording |
+//! | `GET /api/status` | | `{status, pill: {state, label}, detail, failure: {text, detail}?, config_broken, engine: {id, title, ready}, subscription: {state, line, url?, subscribers?}, lan: {state, line, url?, fingerprint?}, clients, plugins: [{id, name, version, enabled, state, line}], stats, update: {state, line, notice, can_upgrade}, activity: [{at, kind, source, level, text, note, engine?, session?, detail?}]}`; `update.state` is `unknown \| current \| available \| upgrading \| restart \| failed`, `notice` says the tray panel shows it (never for `failed`) and `can_upgrade` that Anya can run the upgrade; `status.level` is the dictation input level, `null` unless recording |
+//! | `GET /api/route` | | `{live: [{session, origin: {key, label, role, local}, engine: {id, title}, streaming, level, text, sinks: [{key, label}]}], log: [{seq, row, at, session, from, to, kind, filter, label, detail, level, activity}]}`, in memory only; `kind` is `start \| audio \| partial \| final \| failed \| ended`, `filter` is `text \| audio \| error \| other`, a final is one line per place it went, and `activity` says the Activity page has the line |
 //! | `POST /api/settings` | the whole config | `{state, warning?}`; 400 `{error, invalid: [{fields, message}]}`; 500 when writing fails |
 //! | `POST /api/dictation` | `{on}` | `{state, warning?}` |
 //! | `POST /api/continuous` | `{on}` | `{state, warning?}`; switches the running service too |
 //! | `POST /api/dictation/retry` | | 204; starts a new recording while a failure is shown |
 //! | `POST /api/dictation/dismiss` | | 204; dismisses the failure being shown |
 //! | `POST /api/overlay/preview` | `{view: "listening" \| "done" \| "error"}` | 204, then the real overlay shows that view for a moment; app shell only, else 404; 409 when the overlay is not running |
+//! | `POST /api/update/check` | | `{update}`; asks for a new check, the answer shows in `/api/status` |
+//! | `POST /api/update/upgrade` | | `{update, message}` once `brew upgrade` has ended (it blocks until then); 409 with the reason when refused or failed |
 //! | `POST /api/engine/ready` | `{id, settings}` | `{ready}` for unsaved engine settings |
 //! | `POST /api/hotkey/check` | `{value, role}` | `{value}` canonical; 400 with the reason |
 //! | `POST /api/hotkey/record` | | `{value}` or `{value: null}` (Esc, time out); 409 busy; 500 when the OS recorder fails |

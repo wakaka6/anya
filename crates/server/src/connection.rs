@@ -19,6 +19,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::audience::Ledger;
 use crate::clients::Attachment;
 use crate::gateway::{Dictations, Ended, Gateway, Pushed, StopError};
 use crate::server::{End, Inbound, Sink, encode, write_queue};
@@ -31,6 +32,8 @@ pub(crate) struct Live {
     pub(crate) gateway: Option<Gateway>,
     /// Whether this is the LAN listener, where nothing is granted without a token.
     pub(crate) lan: bool,
+    /// Where the connections note who opened a session and who was sent it.
+    pub(crate) ledger: Ledger,
 }
 
 /// Serves one connection until it ends. `client` is the client its token
@@ -77,6 +80,8 @@ where
     let mut conn = Conn {
         hub: live.hub,
         gateway: live.gateway,
+        seat: live.ledger.seat(),
+        ledger: live.ledger,
         grant,
         queue,
         who,
@@ -128,6 +133,9 @@ where
 struct Conn {
     hub: Hub,
     gateway: Option<Gateway>,
+    /// This connection in the ledger.
+    seat: u64,
+    ledger: Ledger,
     grant: Grant,
     queue: mpsc::Sender<Message>,
     /// The client this connection acts as; `None` before it has paired.
@@ -192,6 +200,11 @@ impl Conn {
             },
             frame => frame,
         };
+        if let Frame::Result { session, .. } = &frame
+            && !self.grant.own.contains(session)
+        {
+            self.ledger.read(session, self.seat);
+        }
         match encode(&frame) {
             Some(message) => self.send(message),
             None => Ok(()),
@@ -356,6 +369,9 @@ impl Conn {
             Err((reason, detail)) => self.refuse(Some(request_id), None, reason, detail.as_deref()),
             Ok(started) => {
                 self.grant.own.insert(started.session.clone());
+                if let Some(who) = &self.who {
+                    self.ledger.opened(&started.session, who.id());
+                }
                 self.refused_audio = false;
                 self.reply(&Reply::DictationAccepted {
                     request_id,

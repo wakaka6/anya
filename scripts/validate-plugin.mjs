@@ -1,5 +1,5 @@
 // Registry CI: validates a plugin release and merges its entry into index.json.
-//   bun validate.mjs <package-dir> <tarball.tgz> <artifact-url> <index.json> <sdk/index.js>
+//   bun scripts/validate-plugin.mjs <package-dir> <tarball.tgz> <artifact-url> <index.json> <sdk/index.js>
 // <package-dir> is the unpacked tarball (its package.json at the root);
 // <sdk/index.js> is the @wakaka6/anya-plugin SDK of the Anya release the plugin targets.
 import { createHash } from "node:crypto";

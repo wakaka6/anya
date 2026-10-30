@@ -40,7 +40,7 @@ Fix the code. A rule changes only together with ARCHITECTURE.md and a new decisi
 
 ## Licence
 
-Anya has no licence yet (docs/decisions/0006). Code is written for Anya; code from another project comes in only when its authors agreed or its licence leaves the choice open. Comments and docs describe Anya alone.
+Anya is MIT licensed (docs/decisions/0006). Code from another project comes in only when its licence is compatible with MIT or its authors agreed. Comments and docs describe Anya alone.
 
 ## Docs and commits
 

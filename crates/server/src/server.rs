@@ -29,6 +29,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::address::Address;
+use crate::audience::{Audience, Ledger};
 use crate::clients::Clients;
 use crate::connection::{self, Live};
 use crate::discovery::DiscoveryFile;
@@ -109,6 +110,7 @@ pub enum ServerError {
 pub struct Server {
     url: String,
     subscribers: Arc<AtomicUsize>,
+    ledger: Ledger,
     stop: watch::Sender<bool>,
     task: Option<JoinHandle<()>>,
     socket: Option<SocketFile>,
@@ -146,6 +148,7 @@ impl Server {
             hub,
             gateway,
             lan: false,
+            ledger: Ledger::default(),
         };
         let mut server = launch(Feed::Live(live), address).await?;
         if let Some(path) = discovery {
@@ -170,6 +173,7 @@ impl Server {
             hub,
             gateway: Some(gateway),
             lan: true,
+            ledger: Ledger::default(),
         };
         let any = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
         let listen_error = |source| ServerError::Listen {
@@ -198,6 +202,11 @@ impl Server {
     /// Subscribers connected now and still receiving frames.
     pub fn subscribers(&self) -> usize {
         self.subscribers.load(Ordering::SeqCst)
+    }
+
+    /// Who this server's frames reach, readable while it runs and after.
+    pub fn audience(&self) -> Audience {
+        Audience::new(Arc::clone(&self.subscribers), self.ledger.clone())
     }
 
     /// Stops listening, closes every subscriber with "going away", waits
@@ -325,6 +334,10 @@ fn spawn(
     tls: Option<TlsAcceptor>,
 ) -> Server {
     let subscribers = Arc::new(AtomicUsize::new(0));
+    let ledger = match &feed {
+        Feed::Live(live) => live.ledger.clone(),
+        _ => Ledger::default(),
+    };
     let (stop, stopped) = watch::channel(false);
     let task = tokio::spawn(accept(
         listener,
@@ -337,6 +350,7 @@ fn spawn(
     Server {
         url,
         subscribers,
+        ledger,
         stop,
         task: Some(task),
         socket,

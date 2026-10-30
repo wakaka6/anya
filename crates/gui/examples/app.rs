@@ -186,6 +186,8 @@ impl Control for Fake {
             source: Source::Dictation,
             text: "Anya hears what you mean.".to_owned(),
             delivered: Delivered::Pasted,
+            session: None,
+            engine: None,
         }]
     }
 

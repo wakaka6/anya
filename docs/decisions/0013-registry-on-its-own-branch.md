@@ -1,4 +1,4 @@
-# 0013: The registry publishes to a branch of its own repository
+# 0013: The registry publishes to the `registry` branch of the Anya repository
 
 Accepted, 2026-10-30.
 
@@ -8,8 +8,8 @@ Accepted, 2026-10-30.
 
 ## Decision
 
-- The registry CI commits each release's tarball to `tgz/` and the updated `index.json` to the `dist` branch of `anya-plugins`.
-- Anya's default index is `https://raw.githubusercontent.com/wakaka6/anya-plugins/dist/index.json`; an index entry's `artifact` is a raw URL on the same branch.
+- The registry CI commits each release's tarball to `tgz/` and the updated `index.json` to the `registry` branch of the Anya repository itself, which also holds the plugins under `plugins/<id>/` and the workflow (one repository, no separate registry repo).
+- Anya's default index is `https://raw.githubusercontent.com/wakaka6/anya/registry/index.json`; an index entry's `artifact` is a raw URL on the same branch.
 - Nothing else in 0010 changes: review by pull request, the tag `<id>-v<version>`, validation, the sha512 `integrity` Anya checks before unpacking, immutable versions, and install, enable and update as separate user actions.
 
 ## Consequences
