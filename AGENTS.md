@@ -4,6 +4,8 @@ Anya is a local speech-to-text service for Linux and macOS. A small core capture
 
 Read ARCHITECTURE.md before adding a crate, a dependency between crates, or a type that crosses a seam. Read docs/protocol.md before touching anything a subscriber receives. Read the record in docs/decisions/ before changing what it decided.
 
+Read LESSONS.md before changing code: what recent merged work got wrong and the rule that would have caught it. Write and review changes against docs/code-standards.md.
+
 ## Commands
 
 ```bash
