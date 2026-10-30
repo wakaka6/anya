@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use anya_core::desktop::Desktop;
 use anya_i18n::Catalog;
+
+use crate::plugins::Action as PluginAction;
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command as Clap, value_parser};
 
 /// How the main command runs.
@@ -29,8 +31,6 @@ pub struct Run {
     pub config: Option<PathBuf>,
     /// `--backend`.
     pub backend: Option<Desktop>,
-    /// `--debug`: debug hotkeys and details in the UIs.
-    pub debug: bool,
     /// `--verbose`: debug-level logs.
     pub verbose: bool,
     /// The UI.
@@ -56,6 +56,13 @@ pub enum Command {
         timeout: Option<Duration>,
         /// `--max-events`; `None` is unlimited.
         max_events: Option<u64>,
+    },
+    /// Search, install, enable, disable, remove or list engine plugins.
+    Plugin {
+        /// `--config`, for the registry index.
+        config: Option<PathBuf>,
+        /// What to do.
+        action: PluginAction,
     },
     /// Serve a recorded frame stream to subscribers.
     Replay {
@@ -113,7 +120,6 @@ fn command(c: &Catalog) -> Clap {
                 .value_parser(|s: &str| s.parse::<Desktop>().map_err(|e| e.to_string()))
                 .help(c.t("cli.help.backend").to_owned()),
         )
-        .arg(flag("debug", "cli.help.debug"))
         .arg(flag("verbose", "cli.help.verbose"))
         .arg(flag("tui", "cli.help.tui"))
         .arg(flag("web", "cli.help.web"))
@@ -151,6 +157,57 @@ fn command(c: &Catalog) -> Clap {
                 ),
         )
         .subcommand(
+            Clap::new("plugin")
+                .about(c.t("cli.plugin.about").to_owned())
+                .arg(config().global(true))
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Clap::new("search")
+                        .about(c.t("cli.plugin.search.about").to_owned())
+                        .arg(
+                            Arg::new("query")
+                                .value_name("QUERY")
+                                .help(c.t("cli.help.plugin_query").to_owned()),
+                        ),
+                )
+                .subcommand(
+                    Clap::new("install")
+                        .about(c.t("cli.plugin.install.about").to_owned())
+                        .arg(plugin_id(c, "cli.help.plugin_install_id")),
+                )
+                .subcommand(
+                    Clap::new("enable")
+                        .about(c.t("cli.plugin.enable.about").to_owned())
+                        .arg(plugin_id(c, "cli.help.plugin_id")),
+                )
+                .subcommand(
+                    Clap::new("disable")
+                        .about(c.t("cli.plugin.disable.about").to_owned())
+                        .arg(plugin_id(c, "cli.help.plugin_id")),
+                )
+                .subcommand(
+                    Clap::new("remove")
+                        .about(c.t("cli.plugin.remove.about").to_owned())
+                        .arg(plugin_id(c, "cli.help.plugin_id")),
+                )
+                .subcommand(Clap::new("list").about(c.t("cli.plugin.list.about").to_owned()))
+                .subcommand(
+                    Clap::new("builtin")
+                        .about(c.t("cli.plugin.builtin.about").to_owned())
+                        .subcommand(
+                            Clap::new("on")
+                                .about(c.t("cli.plugin.builtin.on.about").to_owned())
+                                .arg(plugin_id(c, "cli.help.plugin_id")),
+                        )
+                        .subcommand(
+                            Clap::new("off")
+                                .about(c.t("cli.plugin.builtin.off.about").to_owned())
+                                .arg(plugin_id(c, "cli.help.plugin_id")),
+                        ),
+                ),
+        )
+        .subcommand(
             Clap::new("replay")
                 .about(c.t("cli.replay.about").to_owned())
                 .arg(
@@ -168,6 +225,52 @@ fn command(c: &Catalog) -> Clap {
                 )
                 .arg(flag("fast", "cli.help.fast")),
         )
+}
+
+fn plugin_id(c: &Catalog, help: &str) -> Arg {
+    Arg::new("id")
+        .required(true)
+        .value_name("ID")
+        .help(c.t(help).to_owned())
+}
+
+/// `id` or `id@version`.
+fn split_version(raw: &str) -> (String, Option<String>) {
+    match raw.trim().split_once('@') {
+        Some((id, version)) if !version.is_empty() => (id.to_owned(), Some(version.to_owned())),
+        Some((id, _)) => (id.to_owned(), None),
+        None => (raw.trim().to_owned(), None),
+    }
+}
+
+fn plugin_action(m: &ArgMatches) -> PluginAction {
+    let id = |s: &ArgMatches| s.get_one::<String>("id").cloned().unwrap_or_default();
+    match m.subcommand() {
+        Some(("search", s)) => PluginAction::Search(
+            s.get_one::<String>("query")
+                .map(|q| q.trim().to_owned())
+                .filter(|q| !q.is_empty()),
+        ),
+        Some(("install", s)) => {
+            let (id, version) = split_version(&id(s));
+            PluginAction::Install { id, version }
+        }
+        Some(("enable", s)) => PluginAction::Enable(id(s)),
+        Some(("disable", s)) => PluginAction::Disable(id(s)),
+        Some(("remove", s)) => PluginAction::Remove(id(s)),
+        Some(("builtin", b)) => match b.subcommand() {
+            Some(("on", s)) => PluginAction::BuiltinSet {
+                id: id(s),
+                on: true,
+            },
+            Some(("off", s)) => PluginAction::BuiltinSet {
+                id: id(s),
+                on: false,
+            },
+            _ => PluginAction::BuiltinList,
+        },
+        _ => PluginAction::List,
+    }
 }
 
 fn get_path(m: &ArgMatches, id: &str) -> Option<PathBuf> {
@@ -197,6 +300,10 @@ pub fn parse(
                 .filter(|d| !d.is_zero()),
             max_events: s.get_one::<u64>("max-events").copied().filter(|n| *n > 0),
         },
+        Some(("plugin", s)) => Command::Plugin {
+            config: get_path(s, "config"),
+            action: plugin_action(s),
+        },
         Some(("replay", s)) => Command::Replay {
             file: get_path(s, "file").unwrap_or_default(),
             addr: get_addr(s),
@@ -205,7 +312,6 @@ pub fn parse(
         _ => Command::Run(Run {
             config: get_path(&m, "config"),
             backend: m.get_one::<Desktop>("backend").copied(),
-            debug: m.get_flag("debug"),
             verbose: m.get_flag("verbose"),
             mode: if m.get_flag("daemon") {
                 Mode::Daemon
@@ -295,6 +401,53 @@ mod tests {
         assert_eq!(parse_duration("2h"), Ok(Duration::from_secs(7200)));
         assert_eq!(parse_duration("30"), Ok(Duration::from_secs(30)));
         assert!(parse_duration("-1s").is_err() && parse_duration("3d").is_err());
+    }
+
+    #[test]
+    fn plugin_commands_take_an_id_and_install_a_version() {
+        let plugin = |args: &[&str]| match run(&[&["plugin"], args].concat()) {
+            Ok(Command::Plugin { action, .. }) => Some(action),
+            _ => None,
+        };
+        assert_eq!(plugin(&["search"]), Some(PluginAction::Search(None)));
+        assert_eq!(
+            plugin(&["search", "echo"]),
+            Some(PluginAction::Search(Some("echo".into())))
+        );
+        assert_eq!(
+            plugin(&["install", "echo@1.2.0"]),
+            Some(PluginAction::Install {
+                id: "echo".into(),
+                version: Some("1.2.0".into())
+            })
+        );
+        assert_eq!(
+            plugin(&["install", "echo"]),
+            Some(PluginAction::Install {
+                id: "echo".into(),
+                version: None
+            })
+        );
+        assert_eq!(
+            plugin(&["enable", "echo"]),
+            Some(PluginAction::Enable("echo".into()))
+        );
+        assert_eq!(plugin(&["list"]), Some(PluginAction::List));
+        assert_eq!(plugin(&["builtin"]), Some(PluginAction::BuiltinList));
+        assert_eq!(
+            plugin(&["builtin", "off", "openai"]),
+            Some(PluginAction::BuiltinSet {
+                id: "openai".into(),
+                on: false
+            })
+        );
+        assert!(run(&["plugin"]).is_err());
+        assert!(run(&["plugin", "enable"]).is_err());
+        let Ok(Command::Plugin { config, .. }) = run(&["plugin", "list", "--config", "/c.toml"])
+        else {
+            panic!("not plugin")
+        };
+        assert_eq!(config.as_deref(), Some(std::path::Path::new("/c.toml")));
     }
 
     #[test]

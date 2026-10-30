@@ -7,16 +7,35 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+anya-audio.workspace = true
 anya-config.workspace = true
+anya-continuous.workspace = true
 anya-core.workspace = true
+anya-dictation.workspace = true
+anya-engine-auralwise.workspace = true
+anya-engine-dashscope.workspace = true
+anya-engine-doubao.workspace = true
+anya-engine-mimo.workspace = true
+anya-engine-openai.workspace = true
+anya-gui.workspace = true
+anya-hotkey.workspace = true
 anya-i18n.workspace = true
+anya-output.workspace = true
+anya-overlay.workspace = true
+anya-plugin-host.workspace = true
+anya-plugin-rt.workspace = true
 anya-protocol.workspace = true
 anya-runtime.workspace = true
+anya-server.workspace = true
+anya-tui.workspace = true
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context"] }
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net", "fs", "io-std"] }
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [lints]
 workspace = true

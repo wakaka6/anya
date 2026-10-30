@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anya_audio::System as AudioSystem;
-use anya_config::{Config, Mode as ConfigMode, Output as ConfigOutput};
+use anya_config::{Config, EngineRole, Mode as ConfigMode, Output as ConfigOutput};
 use anya_continuous::{Continuous, Settings as ContinuousSettings};
 use anya_core::audio::{AudioSource, Device};
 use anya_core::desktop::Desktop;
@@ -65,10 +65,12 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn choice(config: Arc<Mutex<Config>>, points: Points) -> Choice {
+/// The engine `role` uses, read from the config each time a session opens so
+/// a saved change applies to the next session of that use.
+fn choice(config: Arc<Mutex<Config>>, points: Points, role: EngineRole) -> Choice {
     Arc::new(move || {
         let cfg = lock(&config).clone();
-        let id = cfg.recognition.engine_id().to_owned();
+        let id = cfg.recognition.engine_id(role).to_owned();
         let engine = points
             .engines
             .all()
@@ -141,7 +143,7 @@ struct App {
     overlay: Mutex<Option<(Overlay, &'static str)>>,
     /// Bumped when a new overlay window needs the current view again.
     overlay_resend: watch::Sender<u64>,
-    choice: Choice,
+    remote_choice: Choice,
     clients: Clients,
     state_dir: PathBuf,
     /// The LAN listener's port while sharing is on; changes restart it.
@@ -170,11 +172,12 @@ impl App {
             session_prefix: format!("anya-{}", now_ms()),
         });
         let audio: Arc<dyn AudioSource> = Arc::new(AudioSystem::new(cfg.audio.gain));
-        let choice = choice(config.clone(), points.clone());
+        let choice_for = |role| choice(config.clone(), points.clone(), role);
+        let remote_choice = choice_for(EngineRole::Remote);
         let (dictation, status_rx, finished_rx) = anya_dictation::spawn(
             hub.clone(),
             audio.clone(),
-            choice.clone(),
+            choice_for(EngineRole::Dictation),
             DictationSettings {
                 mode: match cfg.dictation.mode {
                     ConfigMode::Toggle => DictationMode::Toggle,
@@ -187,8 +190,12 @@ impl App {
             },
         );
         let (params_tx, params_rx) = watch::channel(0_u64);
-        let continuous =
-            anya_continuous::spawn(hub.clone(), audio.clone(), choice.clone(), params_rx);
+        let continuous = anya_continuous::spawn(
+            hub.clone(),
+            audio.clone(),
+            choice_for(EngineRole::Continuous),
+            params_rx,
+        );
         let (quit, _) = watch::channel(false);
         let state_dir = anya_config::state_dir().map_err(|e| e.to_string())?;
         let data_dir = anya_config::data_dir().map_err(|e| e.to_string())?;
@@ -227,7 +234,7 @@ impl App {
             server: AsyncMutex::new(None),
             overlay: Mutex::new(None),
             overlay_resend: watch::channel(0).0,
-            choice,
+            remote_choice,
             clients,
             state_dir,
             lan_wanted,
@@ -347,10 +354,10 @@ impl App {
     }
 
     /// What the servers need to take remote dictation: the engine choice
-    /// dictation uses, the paired clients and the same final-result wait.
+    /// remote dictation uses, the paired clients and the same final-result wait.
     fn gateway(&self) -> Gateway {
         Gateway {
-            choice: self.choice.clone(),
+            choice: self.remote_choice.clone(),
             clients: self.clients.clone(),
             final_timeout: anya_dictation::FINAL_TIMEOUT,
         }
@@ -667,6 +674,29 @@ impl App {
         });
     }
 
+    /// Every built-in engine, switched on or off, then the engines community
+    /// plugins serve (which have no switch here).
+    fn listed_engines(&self) -> Vec<(Arc<dyn Engine>, Option<bool>)> {
+        let served = self.points.engines.all();
+        let builtin = builtin::engines();
+        let mut out: Vec<_> = builtin
+            .iter()
+            .map(
+                |b| match served.iter().find(|s| s.manifest().id == b.manifest().id) {
+                    Some(on) => (on.clone(), Some(true)),
+                    None => (b.clone(), Some(false)),
+                },
+            )
+            .collect();
+        out.extend(
+            served
+                .into_iter()
+                .filter(|s| !builtin.iter().any(|b| b.manifest().id == s.manifest().id))
+                .map(|s| (s, None)),
+        );
+        out
+    }
+
     /// Makes `cfg` the config in effect: dictation, continuous, hotkeys, the
     /// LAN listener and the overlay follow it. Returns why the hotkeys could
     /// not be registered, if they could not.
@@ -733,7 +763,9 @@ impl App {
                             Invalid::HotkeyUnparsable { value }
                         }
                         anya_config::Problem::BadScale => Invalid::BadScale,
-                        anya_config::Problem::UnknownEngine(id) => Invalid::UnknownEngine { id },
+                        anya_config::Problem::UnknownEngine(role, id) => {
+                            Invalid::UnknownEngine { role, id }
+                        }
                     })
                     .collect(),
             ));
@@ -834,11 +866,10 @@ impl Control for App {
     }
 
     fn engines(&self) -> Vec<EngineInfo> {
-        self.points
-            .engines
-            .all()
+        self.listed_engines()
             .iter()
-            .map(|engine| EngineInfo {
+            .map(|(engine, enabled)| EngineInfo {
+                enabled: *enabled,
                 manifest: engine.manifest().clone(),
                 ready: engine
                     .check(
@@ -852,10 +883,9 @@ impl Control for App {
     }
 
     fn engine_ready(&self, id: &str, settings: &BTreeMap<String, String>) -> bool {
-        self.points
-            .engines
-            .all()
+        self.listed_engines()
             .iter()
+            .map(|(engine, _)| engine)
             .find(|e| e.manifest().id == id)
             .is_some_and(|e| e.check(settings).is_ok())
     }
@@ -1109,10 +1139,6 @@ async fn run_app(run: Run, catalog: Catalog) -> Result<(), String> {
     let desktop = run.backend.unwrap_or_else(Desktop::detect);
     let context = doctor::Context::detect(desktop, &path);
     let engine_list = builtin::engines();
-    let chosen_engine = cfg.recognition.engine_id().to_owned();
-    let engine = engine_list
-        .iter()
-        .find(|engine| engine.manifest().id == chosen_engine);
     let mut checks = [
         anya_audio::checks(desktop),
         anya_hotkey::checks(desktop),
@@ -1120,11 +1146,10 @@ async fn run_app(run: Run, catalog: Catalog) -> Result<(), String> {
         anya_overlay::checks(desktop),
     ]
     .concat();
-    checks.push(doctor::engine_check(
-        &chosen_engine,
-        engine.map(|engine| engine.as_ref()),
-        &cfg.recognition.settings(&chosen_engine),
-        catalog.locale(),
+    checks.extend(doctor::engine_checks(
+        &cfg.recognition,
+        &engine_list,
+        &catalog,
     ));
     let report = doctor::render(&catalog, &context, &checks);
     if run.doctor {
@@ -1235,7 +1260,7 @@ async fn run_command(command: Command, catalog: Catalog) -> Result<(), String> {
             let path = config.unwrap_or(anya_config::default_path().map_err(|e| e.to_string())?);
             let cfg = anya_config::load(&path).map_err(|e| e.to_string())?;
             let data = anya_config::data_dir().map_err(|e| e.to_string())?;
-            plugins::run(action, &cfg, &data, &catalog, &mut std::io::stdout()).await
+            plugins::run(action, &cfg, &path, &data, &catalog, &mut std::io::stdout()).await
         }
         Command::Replay { file, addr, fast } => {
             let text = tokio::fs::read_to_string(&file)
@@ -1327,6 +1352,70 @@ mod tests {
             reloaded(Err(broken), &current),
             Reloaded::Broken("line 2: expected a string".to_owned())
         );
+    }
+
+    struct Stub(anya_protocol::Manifest);
+
+    impl anya_core::engine::Engine for Stub {
+        fn manifest(&self) -> &anya_protocol::Manifest {
+            &self.0
+        }
+        fn open(&self, _params: anya_core::engine::SessionParams) -> anya_core::engine::Session {
+            let (input, _) = tokio::sync::mpsc::channel(1);
+            let (_, output) = tokio::sync::mpsc::channel(1);
+            anya_core::engine::Session { input, output }
+        }
+    }
+
+    fn stub(id: &str) -> Arc<dyn anya_core::engine::Engine> {
+        Arc::new(Stub(anya_protocol::Manifest {
+            id: id.to_owned(),
+            title: anya_protocol::Text::localized([("en", id)]),
+            blurb: anya_protocol::Text::localized([("en", id)]),
+            docs: None,
+            streaming: false,
+            fields: Vec::new(),
+        }))
+    }
+
+    fn opens_on(choice: &Choice) -> String {
+        let (engine, _) = choice().expect("a session can open");
+        engine.manifest().id.clone()
+    }
+
+    #[test]
+    fn each_use_opens_its_sessions_on_the_engine_chosen_for_it() {
+        let points = Points::default();
+        let _held: Vec<_> = ["alpha", "beta", "gamma"]
+            .into_iter()
+            .map(|id| points.engines.serve(stub(id)))
+            .collect();
+        let mut cfg = Config::default();
+        cfg.recognition.set_engine(EngineRole::Dictation, "alpha");
+        cfg.recognition.set_engine(EngineRole::Continuous, "beta");
+        cfg.recognition.set_engine(EngineRole::Remote, "gamma");
+        let config = Arc::new(Mutex::new(cfg));
+        let dictation = choice(config.clone(), points.clone(), EngineRole::Dictation);
+        let continuous = choice(config.clone(), points.clone(), EngineRole::Continuous);
+        let remote = choice(config.clone(), points, EngineRole::Remote);
+        assert_eq!(opens_on(&dictation), "alpha");
+        assert_eq!(opens_on(&continuous), "beta");
+        assert_eq!(opens_on(&remote), "gamma");
+
+        // A saved change applies to the next session of that use only.
+        lock(&config)
+            .recognition
+            .set_engine(EngineRole::Remote, "alpha");
+        assert_eq!(opens_on(&remote), "alpha");
+        assert_eq!(opens_on(&dictation), "alpha");
+        assert_eq!(opens_on(&continuous), "beta");
+
+        // An engine that is not served fails that use alone.
+        lock(&config)
+            .recognition
+            .set_engine(EngineRole::Continuous, "nope");
+        assert!(continuous().is_err());
+        assert_eq!(opens_on(&dictation), "alpha");
     }
 
     #[tokio::test]

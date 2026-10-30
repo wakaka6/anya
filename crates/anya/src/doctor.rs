@@ -8,28 +8,57 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
+use anya_config::Recognition;
 use anya_core::desktop::Desktop;
 use anya_core::doctor::{Check, Severity};
 use anya_core::engine::{Engine, EngineError};
 use anya_i18n::Catalog;
 
-/// The configured engine: is it known, and are its settings enough to open
-/// a session. A warning: Anya starts, and the settings window is where the
-/// credentials go.
-pub fn engine_check(
+/// One check per engine in use, each once: is it known, and are its settings
+/// enough to open a session. Each says which uses rely on it. A warning:
+/// Anya starts, and the settings window is where the credentials go.
+pub fn engine_checks(
+    recognition: &Recognition,
+    engines: &[Arc<dyn Engine>],
+    c: &Catalog,
+) -> Vec<Check> {
+    recognition
+        .engines_in_use()
+        .into_iter()
+        .map(|id| {
+            let uses = crate::builtin::use_names(recognition, id, c, "doctor.engine.use");
+            let engine = engines.iter().find(|e| e.manifest().id == id);
+            engine_check(
+                id,
+                &uses,
+                engine.map(|e| e.as_ref()),
+                &recognition.settings(id),
+                c.locale(),
+            )
+        })
+        .collect()
+}
+
+fn engine_check(
     id: &str,
+    uses: &str,
     engine: Option<&dyn Engine>,
     settings: &BTreeMap<String, String>,
     locale: &str,
 ) -> Check {
     const CODE: &str = "engine";
     let Some(engine) = engine else {
-        return Check::failed(CODE, Severity::Warning, "unknown").with("engine", id);
+        return Check::failed(CODE, Severity::Warning, "unknown")
+            .with("engine", id)
+            .with("uses", uses);
     };
     let title = engine.manifest().title.get(locale).to_owned();
     match engine.check(settings) {
-        Ok(()) => Check::passed(CODE, Severity::Warning, "ready").with("engine", title),
+        Ok(()) => Check::passed(CODE, Severity::Warning, "ready")
+            .with("engine", title)
+            .with("uses", uses),
         Err(e @ (EngineError::NotConfigured(_) | EngineError::Invalid(_))) => {
             let field = e.detail().to_owned();
             let label = engine
@@ -45,10 +74,12 @@ pub fn engine_check(
             Check::failed(CODE, Severity::Warning, outcome)
                 .with("engine", title)
                 .with("field", label)
+                .with("uses", uses)
         }
         Err(e) => Check::failed(CODE, Severity::Warning, "invalid")
             .with("engine", title)
-            .with("detail", e.to_string()),
+            .with("detail", e.to_string())
+            .with("uses", uses),
     }
 }
 
@@ -322,6 +353,45 @@ mod tests {
         assert!(
             zh.trim_end()
                 .ends_with(Catalog::new("zh-CN").t("doctor.unhealthy")),
+            "{zh}"
+        );
+    }
+
+    #[test]
+    fn every_engine_in_use_is_checked_once_and_names_the_uses_that_rely_on_it() {
+        let mut recognition = anya_config::Recognition::default();
+        let shared = crate::builtin::ids()[0].clone();
+        recognition.dictation.clone_from(&shared);
+        recognition.continuous.clone_from(&shared);
+        recognition.remote = "nope".into();
+        let engines = crate::builtin::engines();
+        let c = Catalog::new("en");
+
+        let checks = engine_checks(&recognition, &engines, &c);
+        assert_eq!(checks.len(), 2, "one per engine, not per use");
+        assert!(checks.iter().all(|check| !check.blocks()));
+        let out = render(&c, &ctx(), &checks);
+        assert!(
+            out.contains("dictation, continuous dictation"),
+            "the shared engine lists both uses: {out}"
+        );
+        assert!(
+            out.contains("no engine called \"nope\" (chosen for remote dictation)"),
+            "{out}"
+        );
+        assert!(
+            out.contains("[recognition] dictation, continuous or remote"),
+            "{out}"
+        );
+
+        let zh_catalog = Catalog::new("zh-CN");
+        let zh = render(
+            &zh_catalog,
+            &ctx(),
+            &engine_checks(&recognition, &engines, &zh_catalog),
+        );
+        assert!(
+            zh.contains("听写、持续转写") && zh.contains("远程听写"),
             "{zh}"
         );
     }
