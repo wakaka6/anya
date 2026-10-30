@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 pub mod desktop;
 pub mod web;
 
+/// The macOS pane that grants Accessibility, which global hotkeys need: the
+/// one link besides web pages the shell opens, and only on the page's asking.
+pub(crate) const PRIVACY_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
 /// Which shell shows the page; the page hides what a shell cannot do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]

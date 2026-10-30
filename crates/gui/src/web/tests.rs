@@ -8,8 +8,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anya_core::audio::{Device, DeviceKind};
-use anya_protocol::{ErrorCode, Source};
-use anya_runtime::{Dictation, Entry, Notice, SaveError, Subscription};
+use anya_protocol::{ErrorCode, Scope, Source};
+use anya_runtime::{Dictation, Entry, Lan, Notice, PairedClient, SaveError, Subscription};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -419,12 +419,12 @@ async fn i18n_answers_the_whole_catalog_in_the_ui_language() {
     let h = harness(ShellKind::Web).await;
     let res = h.get("/api/i18n").await.json();
     assert_eq!(res["locale"], "en");
-    assert_eq!(res["text"]["gui.tabs.engine"], "Engine");
-    assert_eq!(res["text"]["common.save"], "Save");
+    assert_eq!(res["text"]["gui.nav.engine"], "Engine");
+    assert_eq!(res["text"]["common.cancel"], "Cancel");
     lock(&h.control.config).ui.language = "zh-CN".to_owned();
     let res = h.get("/api/i18n").await.json();
     assert_eq!(res["locale"], "zh-CN");
-    assert_eq!(res["text"]["gui.tabs.engine"], "识别引擎");
+    assert_eq!(res["text"]["gui.nav.engine"], "引擎");
 }
 
 // ---- state and status ----
@@ -465,18 +465,20 @@ async fn state_carries_the_forms_choices_translated() {
     assert_eq!(engines[0]["fields"][1]["options"], json!(["v1", "v2"]));
     assert_eq!(engines[0]["fields"][1]["advanced"], true);
     assert_eq!(engines[1]["id"], "whisper");
+    assert_eq!(engines[1]["ready"], true);
+    assert_eq!(engines[1]["plugin"], false);
+    assert_eq!(engines[2]["id"], "sherpa");
+    assert_eq!(engines[2]["plugin"], true);
+    assert_eq!(engines[2]["ready"], true);
 
     let positions = s["positions"].as_array().expect("positions");
-    assert_eq!(
-        positions[0],
-        json!({"value": "notch", "label": "Notch (macOS)"})
-    );
+    assert_eq!(positions[0], json!({"value": "notch", "label": "Notch"}));
     assert_eq!(
         positions.last(),
         Some(&json!({"value": "middle", "label": "middle"}))
     );
     let languages = s["languages"].as_array().expect("languages");
-    assert_eq!(languages[0], json!({"value": "", "label": "Auto-detect"}));
+    assert_eq!(languages[0], json!({"value": "", "label": "Auto"}));
     assert_eq!(
         languages[1],
         json!({"value": "zh-CN", "label": "简体中文 (zh-CN)"})
@@ -485,13 +487,22 @@ async fn state_carries_the_forms_choices_translated() {
         languages.last(),
         Some(&json!({"value": "pt-BR", "label": "pt-BR"}))
     );
+    // The first choice names the language the system would give.
+    let ui = s["ui_languages"].as_array().expect("ui languages");
+    assert_eq!(ui[0]["value"], "system");
+    assert!(
+        ui[0]["label"]
+            .as_str()
+            .is_some_and(|l| l.starts_with("Follow the system (")),
+        "{}",
+        ui[0]
+    );
     assert_eq!(
-        s["ui_languages"],
-        json!([
-            {"value": "system", "label": "Same as the system"},
-            {"value": "en", "label": "English"},
-            {"value": "zh-CN", "label": "简体中文"},
-        ])
+        ui[1..],
+        [
+            json!({"value": "en", "label": "English"}),
+            json!({"value": "zh-CN", "label": "简体中文"}),
+        ]
     );
 }
 
@@ -501,7 +512,9 @@ async fn state_in_chinese_and_with_an_engine_anya_lacks() {
     {
         let mut c = lock(&control.config);
         c.ui.language = "zh-CN".to_owned();
-        c.recognition.engine = "  ".to_owned();
+        c.recognition.dictation = "  ".to_owned();
+        c.recognition.continuous = "  ".to_owned();
+        c.recognition.remote = "whisper".to_owned();
     }
     *lock(&control.devices) = Err("no audio server".to_owned());
     let h = harness_with(control, ShellKind::Web).await;
@@ -510,8 +523,10 @@ async fn state_in_chinese_and_with_an_engine_anya_lacks() {
     assert_eq!(s["engines"][0]["title"], "云端流式");
     assert_eq!(s["engines"][0]["ready"], false);
     // A blank engine is the default one, shown although Anya lacks it.
-    let current = s["config"]["recognition"]["engine"].clone();
+    let current = s["config"]["recognition"]["dictation"].clone();
     assert_eq!(current, anya_config::DEFAULT_ENGINE);
+    assert_eq!(s["config"]["recognition"]["continuous"], current);
+    assert_eq!(s["config"]["recognition"]["remote"], "whisper");
     let custom = s["engines"]
         .as_array()
         .and_then(|e| e.last())
@@ -542,29 +557,34 @@ async fn status_reports_state_activity_and_subscription_translated() {
     });
     let h = harness_with(control, ShellKind::Web).await;
     let s = h.get("/api/status").await.json();
-    assert_eq!(s["pill"], json!({"state": "failed", "label": "Error"}));
+    assert_eq!(
+        s["pill"],
+        json!({"state": "failed", "label": "Something went wrong"})
+    );
+    assert_eq!(
+        s["failure"],
+        json!({"text": "Cannot reach the recognition service", "detail": "connection refused"})
+    );
     assert_eq!(
         s["detail"],
         "Cannot reach the recognition service: connection refused  1 finishing in the background"
     );
     assert_eq!(s["subscription"]["state"], "ok");
-    assert_eq!(
-        s["subscription"]["line"],
-        "Listening on ws://127.0.0.1:7590/asr · 2 subscribed"
-    );
-    assert_eq!(s["stats"]["sessions"], 42);
+    assert_eq!(s["subscription"]["line"], "Listening · 2 apps connected");
+    assert_eq!(s["subscription"]["url"], "ws://127.0.0.1:7590/asr");
+    assert_eq!(s["subscription"]["subscribers"], 2);
+    assert_eq!(s["stats"]["sessions"], 128);
+    assert_eq!(s["status"]["level"], Value::Null);
     assert_eq!(s["status"]["finishing"], 1);
     let activity = s["activity"].as_array().expect("activity");
     assert_eq!(activity[0]["text"], "Settings file changed; applied");
     assert_eq!(activity[1]["kind"], "final");
     assert_eq!(activity[1]["note"], "Pasted");
     assert_eq!(activity[2]["level"], "error");
-    assert_eq!(
-        activity[2]["text"],
-        "Cannot reach the recognition service: connection refused"
-    );
+    assert_eq!(activity[2]["text"], "Cannot reach the recognition service");
+    assert_eq!(activity[2]["detail"], "connection refused");
     assert_eq!(activity[3]["source"], "continuous");
-    assert_eq!(activity[3]["note"], "Continuous transcription");
+    assert_eq!(activity[3]["note"], "Transcribed");
     assert_eq!(activity[4]["level"], "warn");
     assert_eq!(
         activity[4]["text"],
@@ -584,6 +604,10 @@ async fn status_reports_state_activity_and_subscription_translated() {
         let mut c = lock(&h.control.config);
         c.ui.language = "zh-CN".to_owned();
         c.dictation.enabled = false;
+        c.recognition.engines.insert(
+            "cloud".to_owned(),
+            BTreeMap::from([("api_key".to_owned(), "k".to_owned())]),
+        );
     }
     let s = h.get("/api/status").await.json();
     assert_eq!(s["pill"], json!({"state": "off", "label": "听写已关闭"}));
@@ -593,6 +617,59 @@ async fn status_reports_state_activity_and_subscription_translated() {
         json!({"state": "missing", "line": "未启动：address in use"})
     );
     assert_eq!(s["activity"][1]["note"], "已上屏");
+    assert_eq!(s["failure"], Value::Null);
+}
+
+#[tokio::test]
+async fn debug_lines_show_only_while_debug_mode_is_on() {
+    let control = FakeControl::sample();
+    lock(&control.activity).extend([
+        Entry::Debug {
+            at: 10,
+            event: anya_runtime::DebugEvent::KeyDown {
+                combo: "Fn".to_owned(),
+            },
+        },
+        Entry::Debug {
+            at: 11,
+            event: anya_runtime::DebugEvent::Timing {
+                connect_ms: Some(210),
+                first_text_ms: Some(830),
+                final_ms: Some(480),
+            },
+        },
+    ]);
+    let h = harness_with(control, ShellKind::Web).await;
+    let shown = |s: &Value| {
+        s["activity"]
+            .as_array()
+            .map_or(0, |a| a.iter().filter(|e| e["kind"] == "debug").count())
+    };
+    assert_eq!(shown(&h.get("/api/status").await.json()), 0);
+
+    let mut c = edited(&h);
+    c["debug"]["enabled"] = json!(true);
+    assert_eq!(h.post("/api/settings", &c).await.status, 200);
+    let s = h.get("/api/status").await.json();
+    assert_eq!(shown(&s), 2);
+    let lines: Vec<&str> = s["activity"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|e| e["kind"] == "debug")
+        .filter_map(|e| e["text"].as_str())
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "Pressed Fn",
+            "Connected 210 ms · First words 830 ms · Stop to result 480 ms"
+        ]
+    );
+
+    c["debug"]["enabled"] = json!(false);
+    h.post("/api/settings", &c).await;
+    assert_eq!(shown(&h.get("/api/status").await.json()), 0);
 }
 
 #[tokio::test]
@@ -611,7 +688,7 @@ async fn status_shows_only_the_latest_hundred_entries() {
     let activity = s["activity"].as_array().expect("activity");
     assert_eq!(activity.len(), 100);
     assert_eq!(activity[0]["text"], "line 50");
-    assert_eq!(activity[99]["note"], "Copied to the clipboard");
+    assert_eq!(activity[99]["note"], "Copied");
 }
 
 // ---- saving ----
@@ -658,8 +735,42 @@ async fn save_warns_when_the_hotkeys_did_not_apply() {
     assert_eq!(res.status, 200);
     assert_eq!(
         res.json()["warning"],
-        "Saved, but the hotkeys could not be registered: Accessibility denied"
+        "Hotkeys could not be registered: Accessibility denied"
     );
+}
+
+#[tokio::test]
+async fn each_use_saves_its_own_engine_and_is_refused_by_its_own_field() {
+    let h = harness(ShellKind::Web).await;
+    let mut c = edited(&h);
+    c["recognition"]["dictation"] = json!("whisper");
+    c["recognition"]["continuous"] = json!("sherpa");
+    c["recognition"]["remote"] = json!("cloud");
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let saved = lock(&h.control.saved).last().cloned().expect("a save");
+    assert_eq!(saved.recognition.dictation, "whisper");
+    assert_eq!(saved.recognition.continuous, "sherpa");
+    assert_eq!(saved.recognition.remote, "cloud");
+    let config = &res.json()["state"]["config"]["recognition"];
+    assert_eq!(config["dictation"], "whisper");
+    assert_eq!(config["continuous"], "sherpa");
+    assert_eq!(config["remote"], "cloud");
+
+    for role in ["dictation", "continuous", "remote"] {
+        let mut c = edited(&h);
+        c["recognition"][role] = json!("nope");
+        let res = h.post("/api/settings", &c).await;
+        assert_eq!(res.status, 400, "{role}: {}", res.body);
+        assert_eq!(
+            res.json()["invalid"],
+            json!([{
+                "fields": [format!("recognition.{role}")],
+                "message": "Unknown recognition engine: nope",
+            }]),
+            "{role}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -667,7 +778,7 @@ async fn invalid_settings_are_refused_per_field_in_both_languages() {
     let h = harness(ShellKind::Web).await;
     let mut c = edited(&h);
     c["dictation"]["hotkeys"] = json!("Ctrl+A");
-    c["recognition"]["engine"] = json!("nope");
+    c["recognition"]["continuous"] = json!("nope");
     let res = h.post("/api/settings", &c).await;
     assert_eq!(res.status, 400);
     let body = res.json();
@@ -678,7 +789,7 @@ async fn invalid_settings_are_refused_per_field_in_both_languages() {
                 "fields": ["dictation.hotkeys"],
                 "message": "Ctrl+A types text; use a combination such as Alt+Super, F9, Alt+F8 or Ctrl+Alt+Tab",
             },
-            {"fields": ["recognition.engine"], "message": "Unknown recognition engine: nope"},
+            {"fields": ["recognition.continuous"], "message": "Unknown recognition engine: nope"},
         ])
     );
     assert_eq!(
@@ -981,6 +1092,17 @@ async fn window_actions_answer_first_then_act_in_the_app_only() {
     );
     assert!(eventually(|| h.shell.quits.load(Ordering::SeqCst) == 1).await);
     assert_eq!(
+        h.post("/api/window", &json!({"action": "privacy"}))
+            .await
+            .status,
+        204
+    );
+    assert!(eventually(|| lock(&h.shell.opened).len() == 1).await);
+    assert_eq!(
+        lock(&h.shell.opened)[0],
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    );
+    assert_eq!(
         h.post("/api/window", &json!({"action": "explode"}))
             .await
             .status,
@@ -1011,6 +1133,478 @@ async fn copy_reaches_the_clipboard_or_says_why_not() {
 }
 
 #[tokio::test]
+async fn the_overlay_preview_shows_and_says_when_it_cannot() {
+    let h = harness(ShellKind::App).await;
+    for (view, call) in [
+        ("listening", "preview_overlay Listening"),
+        ("done", "preview_overlay Done"),
+        ("error", "preview_overlay Error"),
+    ] {
+        let res = h.post("/api/overlay/preview", &json!({"view": view})).await;
+        assert_eq!(res.status, 204, "{view}");
+        assert_eq!(h.control.calls().last().map(String::as_str), Some(call));
+    }
+    assert_eq!(
+        h.post("/api/overlay/preview", &json!({"view": "sideways"}))
+            .await
+            .status,
+        400
+    );
+
+    *lock(&h.control.preview_error) = Some(anya_runtime::PreviewIssue::NotRunning);
+    let res = h
+        .post("/api/overlay/preview", &json!({"view": "done"}))
+        .await;
+    assert_eq!(res.status, 409);
+    assert_eq!(
+        res.json()["error"],
+        en("error.preview.not_running"),
+        "the refusal reads in the UI language"
+    );
+
+    let web = harness(ShellKind::Web).await;
+    let res = web
+        .post("/api/overlay/preview", &json!({"view": "done"}))
+        .await;
+    assert_eq!(res.status, 204, "a browser tab previews the same overlay");
+}
+
+#[tokio::test]
+async fn a_shown_failure_can_be_retried_or_dismissed() {
+    let control = FakeControl::sample();
+    lock(&control.status).dictation = Dictation::Failed {
+        error: ErrorCode::Connect,
+        detail: None,
+    };
+    let h = harness_with(control, ShellKind::App).await;
+    assert_eq!(
+        h.post("/api/dictation/dismiss", &json!({})).await.status,
+        204
+    );
+    assert_eq!(
+        h.get("/api/status").await.json()["pill"]["state"],
+        "not_ready"
+    );
+    lock(&h.control.status).dictation = Dictation::Failed {
+        error: ErrorCode::Connect,
+        detail: None,
+    };
+    assert_eq!(h.post("/api/dictation/retry", &json!({})).await.status, 204);
+    assert_eq!(
+        h.get("/api/status").await.json()["pill"]["state"],
+        "recording"
+    );
+    assert_eq!(h.control.calls(), ["dismiss_dictation", "retry_dictation"]);
+}
+
+#[tokio::test]
+async fn the_input_level_reaches_the_page_while_recording() {
+    let control = FakeControl::sample();
+    {
+        let mut st = lock(&control.status);
+        st.dictation = Dictation::Recording;
+        st.level = Some(0.5);
+    }
+    let h = harness_with(control, ShellKind::Web).await;
+    let s = h.get("/api/status").await.json();
+    assert_eq!(s["pill"]["state"], "recording");
+    assert_eq!(s["status"]["level"], 0.5);
+}
+
+#[tokio::test]
+async fn the_status_engine_follows_the_dictation_engine_only() {
+    let h = harness(ShellKind::App).await;
+    let mut c = edited(&h);
+    c["recognition"]["continuous"] = json!("whisper");
+    c["recognition"]["remote"] = json!("sherpa");
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    // Dictation still uses `cloud`, which has no key: not ready.
+    let s = h.get("/api/status").await.json();
+    assert_eq!(
+        s["engine"],
+        json!({"id": "cloud", "title": "Cloud Stream", "ready": false})
+    );
+    assert_eq!(s["pill"]["state"], "not_ready");
+
+    let mut c = edited(&h);
+    c["recognition"]["dictation"] = json!("whisper");
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let s = h.get("/api/status").await.json();
+    assert_eq!(
+        s["engine"],
+        json!({"id": "whisper", "title": "Whisper", "ready": true})
+    );
+    assert_eq!(s["pill"]["state"], "idle");
+}
+
+#[tokio::test]
+async fn the_panel_state_is_not_ready_or_broken_before_it_is_idle() {
+    let control = FakeControl::sample();
+    let h = harness_with(control, ShellKind::App).await;
+    let s = h.get("/api/status").await.json();
+    assert_eq!(
+        s["pill"],
+        json!({"state": "not_ready", "label": "Not ready"})
+    );
+    assert_eq!(
+        s["engine"],
+        json!({"id": "cloud", "title": "Cloud Stream", "ready": false})
+    );
+
+    lock(&h.control.config).recognition.engines.insert(
+        "cloud".to_owned(),
+        BTreeMap::from([("api_key".to_owned(), "k".to_owned())]),
+    );
+    let s = h.get("/api/status").await.json();
+    assert_eq!(s["pill"], json!({"state": "idle", "label": "Ready"}));
+    assert_eq!(s["config_broken"], false);
+
+    // The file went bad after the server started, and was not read again.
+    lock(&h.control.activity).push(Entry::Notice {
+        at: super::now_ms() + 1,
+        notice: Notice::ConfigBroken,
+        detail: Some("line 3".to_owned()),
+    });
+    let s = h.get("/api/status").await.json();
+    assert_eq!(
+        s["pill"],
+        json!({"state": "config_broken", "label": "Settings file has an error"})
+    );
+    assert_eq!(s["config_broken"], true);
+    lock(&h.control.activity).push(Entry::Notice {
+        at: super::now_ms() + 2,
+        notice: Notice::ConfigReloaded,
+        detail: None,
+    });
+    assert_eq!(h.get("/api/status").await.json()["config_broken"], false);
+}
+
+fn paired(id: &str, name: &str) -> PairedClient {
+    PairedClient {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        scopes: vec![Scope::Dictate],
+        paired_at: 1,
+        last_seen: None,
+        connections: 0,
+    }
+}
+
+fn listening() -> Lan {
+    Lan::Listening {
+        url: "wss://192.168.1.5:7591/asr".to_owned(),
+        fingerprint: "ab:cd".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn lan_status_and_clients_reach_the_page_in_its_language() {
+    let control = FakeControl::sample();
+    lock(&control.clients).push(paired("c1", "Kitchen iPad"));
+    let h = harness_with(control, ShellKind::Web).await;
+    let s = h.get("/api/status").await.json();
+    assert_eq!(
+        s["lan"],
+        json!({"state": "off", "line": "LAN sharing is off"})
+    );
+    assert_eq!(s["clients"][0]["name"], "Kitchen iPad");
+    assert_eq!(s["clients"][0]["scopes"], json!(["dictate"]));
+
+    lock(&h.control.status).lan = listening();
+    let s = h.get("/api/status").await.json();
+    assert_eq!(s["lan"]["state"], "ok");
+    assert_eq!(s["lan"]["line"], "Listening on wss://192.168.1.5:7591/asr");
+    assert_eq!(s["lan"]["fingerprint"], "ab:cd");
+    assert_eq!(h.get("/api/state").await.json()["lan"], s["lan"]);
+
+    lock(&h.control.status).lan = Lan::Down {
+        detail: "address in use".to_owned(),
+    };
+    let s = h.get("/api/status").await.json();
+    assert_eq!(s["lan"]["state"], "missing");
+    assert_eq!(
+        s["lan"]["line"],
+        "LAN sharing is not listening: address in use"
+    );
+}
+
+#[tokio::test]
+async fn pairing_gives_a_code_and_a_qr_or_says_why_not() {
+    let h = harness(ShellKind::Web).await;
+    let res = h.post("/api/pairing", &json!({})).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["error"], "Cannot pair: LAN sharing is off");
+
+    lock(&h.control.status).lan = Lan::Down {
+        detail: "address in use".to_owned(),
+    };
+    let res = h.post("/api/pairing", &json!({})).await;
+    assert_eq!(res.status, 409);
+    assert!(
+        res.json()["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("address in use"))
+    );
+
+    lock(&h.control.status).lan = listening();
+    let res = h.post("/api/pairing", &json!({})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let p = res.json();
+    assert_eq!(p["code"], "123456");
+    assert_eq!(p["url"], "wss://192.168.1.5:7591/asr");
+    assert_eq!(p["fingerprint"], "ab:cd");
+    assert!(
+        (1..=120).contains(&p["expires_in"].as_u64().expect("seconds")),
+        "{p}"
+    );
+    assert!(p["qr"].as_str().is_some_and(|s| s.contains("<svg")));
+    assert_eq!(h.control.calls(), ["start_pairing"; 3]);
+}
+
+#[tokio::test]
+async fn client_scopes_change_and_a_bad_request_changes_nothing() {
+    let control = FakeControl::sample();
+    lock(&control.clients).push(paired("c1", "Kitchen iPad"));
+    let h = harness_with(control, ShellKind::Web).await;
+    let res = h
+        .post(
+            "/api/clients/scopes",
+            &json!({"id": "c1", "scopes": ["subscribe_dictation", "dictate", "dictate"]}),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    assert_eq!(
+        res.json()["clients"][0]["scopes"],
+        json!(["dictate", "subscribe_dictation"])
+    );
+    assert_eq!(
+        lock(&h.control.clients)[0].scopes,
+        [Scope::Dictate, Scope::SubscribeDictation]
+    );
+
+    let res = h
+        .post("/api/clients/scopes", &json!({"id": "c1", "scopes": []}))
+        .await;
+    assert_eq!(res.json()["clients"][0]["scopes"], json!([]));
+
+    let res = h
+        .post(
+            "/api/clients/scopes",
+            &json!({"id": "nobody", "scopes": []}),
+        )
+        .await;
+    assert_eq!(res.status, 404);
+    assert_eq!(res.json()["error"], "That app is not paired");
+
+    let before = h.control.calls().len();
+    let res = h
+        .post(
+            "/api/clients/scopes",
+            &json!({"id": "c1", "scopes": ["dictate", "from_the_future"]}),
+        )
+        .await;
+    assert_eq!(res.status, 400);
+    assert_eq!(h.control.calls().len(), before, "nothing was asked of Anya");
+}
+
+#[tokio::test]
+async fn removing_a_client_unpairs_it() {
+    let control = FakeControl::sample();
+    lock(&control.clients).extend([paired("c1", "Kitchen iPad"), paired("c2", "Laptop")]);
+    let h = harness_with(control, ShellKind::Web).await;
+    let res = h.post("/api/clients/remove", &json!({"id": "c1"})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let left = res.json()["clients"].clone();
+    assert_eq!(left.as_array().map(Vec::len), Some(1));
+    assert_eq!(left[0]["id"], "c2");
+
+    let res = h.post("/api/clients/remove", &json!({"id": "c1"})).await;
+    assert_eq!(res.status, 404);
+    assert_eq!(h.post("/api/clients/remove", &json!({})).await.status, 400);
+    assert_eq!(h.control.calls(), ["remove_client c1"]);
+}
+
+#[tokio::test]
+async fn the_registry_is_read_when_asked_and_its_failure_is_told() {
+    let h = harness(ShellKind::Web).await;
+    assert_eq!(h.get("/api/status").await.json()["plugins"], json!([]));
+    let res = h.post("/api/plugins/market", &json!({})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let p = &res.json()["plugins"][0];
+    assert_eq!(p["name"], "Echo");
+    assert_eq!(p["streaming"], true);
+    assert_eq!(p["permissions"], json!(["network:example.com"]));
+
+    *lock(&h.control.market) = Err(anya_runtime::PluginIssue::Fetch {
+        url: "https://r.example/index.json".to_owned(),
+        reason: "no route to host".to_owned(),
+    });
+    let res = h.post("/api/plugins/market", &json!({})).await;
+    assert_eq!(res.status, 502);
+    assert_eq!(
+        res.json()["error"],
+        "Cannot read the plugin registry: Cannot fetch https://r.example/index.json: no route to host"
+    );
+}
+
+#[tokio::test]
+async fn installing_a_plugin_leaves_it_off_until_it_is_enabled() {
+    let h = harness(ShellKind::Web).await;
+    let res = h.post("/api/plugins/install", &json!({"id": "nope"})).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(
+        res.json()["error"],
+        "The plugin change failed: The registry has no plugin nope version latest"
+    );
+    assert!(lock(&h.control.plugins).is_empty());
+
+    let res = h.post("/api/plugins/install", &json!({"id": "echo"})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let p = res.json()["plugins"][0].clone();
+    assert_eq!(
+        (p["id"].as_str(), p["enabled"].clone()),
+        (Some("echo"), json!(false))
+    );
+    assert_eq!(p["state"], "off");
+    assert_eq!(p["name"], "Echo");
+    assert_eq!(
+        h.control.calls(),
+        ["install_plugin nope", "install_plugin echo"]
+    );
+
+    let res = h
+        .post("/api/plugins/enable", &json!({"id": "echo", "on": true}))
+        .await;
+    let p = res.json()["plugins"][0].clone();
+    assert_eq!(
+        (p["enabled"].clone(), p["state"].as_str()),
+        (json!(true), Some("ok"))
+    );
+    assert_eq!(p["line"], "Loaded");
+    assert_eq!(
+        h.get("/api/state").await.json()["plugins"][0]["enabled"],
+        true
+    );
+    let res = h
+        .post("/api/plugins/enable", &json!({"id": "echo", "on": false}))
+        .await;
+    assert_eq!(res.json()["plugins"][0]["state"], "off");
+}
+
+#[tokio::test]
+async fn plugin_and_pairing_refusals_read_in_the_users_language() {
+    let control = FakeControl::sample();
+    lock(&control.config).ui.language = "zh-CN".to_owned();
+    let h = harness_with(control, ShellKind::Web).await;
+    let res = h.post("/api/plugins/install", &json!({"id": "nope"})).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(
+        res.json()["error"],
+        "插件操作失败：仓库里没有插件 nope latest"
+    );
+    *lock(&h.control.market) = Err(anya_runtime::PluginIssue::Integrity {
+        what: "echo".to_owned(),
+    });
+    let res = h.post("/api/plugins/market", &json!({})).await;
+    assert_eq!(res.status, 502);
+    assert_eq!(
+        res.json()["error"],
+        "无法读取插件仓库：echo 的下载内容与完整性哈希不符，未安装任何内容"
+    );
+    let res = h.post("/api/pairing", &json!({})).await;
+    assert_eq!(res.json()["error"], "无法配对：局域网共享已关闭");
+    lock(&h.control.status).lan = Lan::Down {
+        detail: "address in use".to_owned(),
+    };
+    let res = h.post("/api/pairing", &json!({})).await;
+    assert_eq!(
+        res.json()["error"],
+        "无法配对：局域网监听未启动：address in use"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_client_change_reads_in_the_users_language() {
+    let control = FakeControl::sample();
+    lock(&control.config).ui.language = "zh-CN".to_owned();
+    lock(&control.clients).push(paired("c1", "Kitchen iPad"));
+    *lock(&control.clients_write_error) = Some("disk full".to_owned());
+    let h = harness_with(control, ShellKind::Web).await;
+    let res = h.post("/api/clients/remove", &json!({"id": "c1"})).await;
+    assert_eq!(res.status, 500);
+    assert_eq!(
+        res.json()["error"],
+        "无法修改该应用：保存已配对的应用失败：disk full"
+    );
+    let res = h
+        .post("/api/clients/scopes", &json!({"id": "c1", "scopes": []}))
+        .await;
+    assert_eq!(res.status, 500);
+}
+
+#[tokio::test]
+async fn a_failed_plugin_says_why_in_the_users_language() {
+    let control = FakeControl::sample();
+    lock(&control.config).ui.language = "zh-CN".to_owned();
+    lock(&control.plugins).push(anya_runtime::InstalledPlugin {
+        id: "echo".to_owned(),
+        version: "1.0.0".to_owned(),
+        enabled: true,
+        load: anya_runtime::PluginLoad::Failed {
+            detail: "no entry".to_owned(),
+        },
+        title: None,
+        description: None,
+    });
+    let h = harness_with(control, ShellKind::Web).await;
+    let p = h.get("/api/status").await.json()["plugins"][0].clone();
+    assert_eq!(p["state"], "missing");
+    assert_eq!(p["line"], "未能加载：no entry");
+    assert_eq!(p["name"], "echo");
+}
+
+#[tokio::test]
+async fn plugins_that_are_not_installed_cannot_be_switched_or_removed() {
+    let control = FakeControl::sample();
+    let h = harness_with(control, ShellKind::Web).await;
+    for (path, body) in [
+        ("/api/plugins/enable", json!({"id": "echo", "on": true})),
+        ("/api/plugins/remove", json!({"id": "echo"})),
+    ] {
+        let res = h.post(path, &body).await;
+        assert_eq!(res.status, 404, "{path}");
+        assert_eq!(res.json()["error"], "That plugin is not installed");
+    }
+    assert!(h.control.calls().is_empty(), "nothing was asked of Anya");
+
+    h.post("/api/plugins/install", &json!({"id": "echo"})).await;
+    let res = h.post("/api/plugins/remove", &json!({"id": "echo"})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    assert_eq!(res.json()["plugins"], json!([]));
+    assert_eq!(h.post("/api/plugins/remove", &json!({})).await.status, 400);
+}
+
+#[tokio::test]
+async fn the_lan_port_saves_and_zero_means_the_default() {
+    let h = harness(ShellKind::Web).await;
+    let mut c = h.get("/api/state").await.json()["config"].clone();
+    c["subscription"]["lan"] = json!(true);
+    c["subscription"]["lan_port"] = json!(9000);
+    assert_eq!(h.post("/api/settings", &c).await.status, 200);
+    c["subscription"]["lan_port"] = json!(0);
+    assert_eq!(h.post("/api/settings", &c).await.status, 200);
+    let saved = lock(&h.control.saved);
+    assert_eq!(saved[0].subscription.lan_port, 9000);
+    assert!(saved[1].subscription.lan);
+    assert_eq!(
+        saved[1].subscription.lan_port,
+        anya_config::DEFAULT_LAN_PORT
+    );
+}
+
+#[tokio::test]
 async fn engine_ready_judges_unsaved_settings() {
     let h = harness(ShellKind::Web).await;
     let ask = |settings: Value| json!({"id": "cloud", "settings": settings});
@@ -1024,6 +1618,25 @@ async fn engine_ready_judges_unsaved_settings() {
     assert_eq!(blank.json()["ready"], false);
     let none = h.post("/api/engine/ready", &json!({"id": "whisper"})).await;
     assert_eq!(none.json()["ready"], true);
+}
+
+#[tokio::test]
+async fn a_built_in_engine_switch_is_saved_in_the_config_and_shown_back() {
+    let h = harness(ShellKind::Web).await;
+    let before = h.get("/api/state").await.json();
+    assert_eq!(before["engines"][0]["enabled"], true);
+    assert!(
+        before["engines"][2]["enabled"].is_null(),
+        "an engine with no switch says so"
+    );
+
+    let mut c = edited(&h);
+    c["plugins"]["builtin"] = json!({"cloud": false});
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let saved = lock(&h.control.saved).last().cloned().expect("a save");
+    assert_eq!(saved.plugins.builtin.get("cloud"), Some(&false));
+    assert_eq!(res.json()["state"]["engines"][0]["enabled"], false);
 }
 
 #[tokio::test]

@@ -57,6 +57,8 @@ enum UserEvent {
     Menu(tray_icon::menu::MenuEvent),
     /// Show the settings window (the page, or a later start of Anya).
     ShowSettings,
+    /// The tray panel's page needs this many logical pixels of height.
+    PanelHeight(f64),
     /// The user quit from the page: end Anya.
     Quit,
     /// The binary asked the app to end.

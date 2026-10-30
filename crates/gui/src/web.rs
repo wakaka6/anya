@@ -26,18 +26,28 @@
 //! | Route | Body | Answer |
 //! |---|---|---|
 //! | `GET /api/i18n` | | `{locale, text: {key: text}}`, the whole catalog |
-//! | `GET /api/state` | | `{locale, shell, info, default_address, config, engines, positions, languages, ui_languages, devices, devices_error?}` |
-//! | `GET /api/status` | | `{status, pill: {state, label}, detail, subscription: {state, line}, stats, activity}` |
+//! | `GET /api/state` | | `{locale, shell, info, default_address, config, engines: [{id, title, blurb, docs, streaming, ready, custom, plugin, enabled, fields}], positions, languages, ui_languages, devices, devices_error?, lan, clients, plugins}`; `config.recognition.{dictation, continuous, remote}` name the engine each use sends to, and a refused one is reported as field `recognition.<use>` |
+//! | `GET /api/status` | | `{status, pill: {state, label}, detail, failure: {text, detail}?, config_broken, engine: {id, title, ready}, subscription: {state, line, url?, subscribers?}, lan: {state, line, url?, fingerprint?}, clients, plugins: [{id, name, version, enabled, state, line}], stats, activity: [{at, kind, source, level, text, note, detail?}]}`; `status.level` is the dictation input level, `null` unless recording |
 //! | `POST /api/settings` | the whole config | `{state, warning?}`; 400 `{error, invalid: [{fields, message}]}`; 500 when writing fails |
 //! | `POST /api/dictation` | `{on}` | `{state, warning?}` |
 //! | `POST /api/continuous` | `{on}` | `{state, warning?}`; switches the running service too |
+//! | `POST /api/dictation/retry` | | 204; starts a new recording while a failure is shown |
+//! | `POST /api/dictation/dismiss` | | 204; dismisses the failure being shown |
+//! | `POST /api/overlay/preview` | `{view: "listening" \| "done" \| "error"}` | 204, then the real overlay shows that view for a moment; app shell only, else 404; 409 when the overlay is not running |
 //! | `POST /api/engine/ready` | `{id, settings}` | `{ready}` for unsaved engine settings |
 //! | `POST /api/hotkey/check` | `{value, role}` | `{value}` canonical; 400 with the reason |
 //! | `POST /api/hotkey/record` | | `{value}` or `{value: null}` (Esc, time out); 409 busy; 500 when the OS recorder fails |
 //! | `POST /api/hotkey/suspend` | `{active}` | 204; global hotkeys pause while the page records keys itself |
+//! | `POST /api/pairing` | | `{code, expires_in, url, fingerprint, qr}` (`qr` an SVG of the pairing offer, `expires_in` in seconds); 409 when LAN sharing is off or down |
+//! | `POST /api/clients/scopes` | `{id, scopes}` | `{clients}`; 400 for an unknown scope, 404 for an unknown client |
+//! | `POST /api/clients/remove` | `{id}` | `{clients}`; 404 for an unknown client |
+//! | `POST /api/plugins/market` | | `{plugins: [{id, name, description, version, streaming, permissions}]}` from the registry; 502 when it cannot be read |
+//! | `POST /api/plugins/install` | `{id}` | `{plugins}` the installed list; the plugin is installed disabled; 409 with the reason when refused |
+//! | `POST /api/plugins/enable` | `{id, on}` | `{plugins}`; 404 for a plugin that is not installed |
+//! | `POST /api/plugins/remove` | `{id}` | `{plugins}`; 404 for a plugin that is not installed |
 //! | `POST /api/open` | `{url}` | 204; app shell and engine docs links only, else 403 |
 //! | `POST /api/pick-file` | `{path}` | `{path}` (`~/…` under home, `""` cancelled); app shell only, else 404 |
-//! | `POST /api/window` | `{action: "settings" \| "quit"}` | 204, then acts; app shell only, else 404 |
+//! | `POST /api/window` | `{action: "settings" \| "quit" \| "privacy"}` | 204, then acts (`privacy` opens the system's Accessibility pane); app shell only, else 404 |
 //! | `POST /api/copy` | `{text}` | 204; puts text on the clipboard |
 
 use std::net::SocketAddr;
@@ -158,6 +168,7 @@ async fn start(
         host: addr.to_string(),
         cookie: format!("anya_key_{}", addr.port()),
         key: key.clone(),
+        started: now_ms(),
         catalog: Mutex::new(None),
         recording: AtomicBool::new(false),
         suspended: AtomicBool::new(false),
@@ -181,6 +192,8 @@ struct Page {
     /// The cookie carrying the key.
     cookie: String,
     key: String,
+    /// When this server started, unix ms: older activity notices are history.
+    started: u64,
     /// The catalog for the `[ui] language` it was made for.
     catalog: Mutex<Option<(String, Arc<Catalog>)>>,
     /// The OS hotkey recorder is running for a request.
@@ -204,6 +217,13 @@ impl Page {
             }
         }
     }
+}
+
+/// The time now, unix ms.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Locks `m`, taking the value even if a holder panicked: every value kept

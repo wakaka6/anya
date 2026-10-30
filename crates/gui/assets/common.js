@@ -1,6 +1,6 @@
 "use strict";
 
-// Helpers shared by the settings page (app.js) and the tray panel (panel.js).
+// Helpers shared by the settings window (app.js) and the tray panel (panel.js).
 //
 // Every word on both pages comes from Anya's catalog (GET /api/i18n). HTML
 // names keys in data-i18n attributes; scripts call t("…") with the whole key
@@ -108,8 +108,10 @@ function keyLabel(name, platform) {
   }
 }
 
-function keycaps(names, platform) {
-  return el("span", { class: "keycaps" }, ...names.map((n) => el("kbd", {}, keyLabel(n, platform))));
+// A combination as the keys are printed: symbols side by side on macOS,
+// joined with "+" elsewhere.
+function comboLabel(combo, platform) {
+  return combo.split("+").map((k) => keyLabel(k, platform)).join(platform === "macos" ? " " : "+");
 }
 
 // Splits a hotkey list like Anya's parser: a comma right after "+" is the key.
@@ -128,49 +130,173 @@ function splitHotkeys(s) {
   return out;
 }
 
-// Characters per minute of recorded audio.
-function cpm(chars, ms) {
-  return ms > 0 ? Math.round(chars / (ms / 60000)) : 0;
+const COPY_ICON = ["M9 9h10v10H9z", "M5 15V5h10"];
+const CHECK_ICON = ["M5 12.5l4.5 4.5L19 7.5"];
+
+// A stroked glyph as an inline SVG.
+function glyph(paths) {
+  const svg = new DOMParser().parseFromString(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${paths.map((d) => `<path d="${d}"/>`).join("")}</svg>`,
+    "image/svg+xml").documentElement;
+  return document.importNode(svg, true);
 }
 
 // Copies through Anya, which reaches the system clipboard from the desktop
-// window and a browser alike.
-function copyButton(text) {
-  const button = el("button", {
-    type: "button",
-    class: "ghost",
-    onclick: async () => {
-      let ok = true;
-      try {
-        await api("/api/copy", { text });
-      } catch {
-        ok = false;
-      }
-      button.textContent = t(ok ? "gui.copied" : "gui.copy_failed");
-      setTimeout(() => { button.textContent = t("gui.copy"); }, 1200);
-    },
-  }, t("gui.copy"));
+// window and a browser alike. An icon button: its tooltip names the action
+// and says how it went for a moment.
+function copyButton(text, label = "gui.copy") {
+  const button = el("button", { type: "button", class: "icon-btn", title: t(label), "aria-label": t(label) }, glyph(COPY_ICON));
+  button.addEventListener("click", async () => {
+    let ok = true;
+    try {
+      await api("/api/copy", { text: typeof text === "function" ? text() : text });
+    } catch {
+      ok = false;
+    }
+    const said = t(ok ? "gui.copied" : "gui.copy_failed");
+    button.title = said;
+    button.setAttribute("aria-label", said);
+    button.classList.toggle("done", ok);
+    button.classList.toggle("failed", !ok);
+    button.replaceChildren(glyph(ok ? CHECK_ICON : COPY_ICON));
+    setTimeout(() => {
+      button.title = t(label);
+      button.setAttribute("aria-label", t(label));
+      button.classList.remove("done", "failed");
+      button.replaceChildren(glyph(COPY_ICON));
+    }, 1200);
+  });
   return button;
 }
 
-function renderPill(data) {
-  $("status").dataset.state = data.pill.state;
-  $("statusLabel").textContent = data.pill.label;
-  if ($("statusDetail")) $("statusDetail").textContent = data.detail;
-  $("status").title = data.detail ? `${data.pill.label}  ${data.detail}` : data.pill.label;
+// How long ago `ms` was, in words.
+function ago(ms) {
+  const minutes = Math.floor((Date.now() - ms) / 60000);
+  if (minutes < 1) return t("gui.time.just_now");
+  if (minutes < 60) return tf("gui.time.minutes_ago", { count: minutes });
+  if (minutes < 1440) return tf("gui.time.hours_ago", { count: Math.floor(minutes / 60) });
+  return new Date(ms).toLocaleDateString(LOCALE);
 }
 
-function renderOffline() {
-  $("status").dataset.state = "offline";
-  $("statusLabel").textContent = t("gui.state.offline");
-  if ($("statusDetail")) $("statusDetail").textContent = "";
-  $("status").title = t("gui.state.offline");
+function clock(ms) {
+  return new Date(ms).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function renderStats(stats) {
-  const n = (v) => v.toLocaleString(LOCALE);
-  $("statSessions").textContent = n(stats.sessions);
-  $("statChars").textContent = n(stats.chars);
-  $("statAvg").textContent = n(cpm(stats.chars, stats.audio_ms));
-  $("statLast").textContent = n(cpm(stats.last_chars, stats.last_audio_ms));
+// A time of day to the millisecond, for the lines debug mode records.
+function clockMs(ms) {
+  const d = new Date(ms);
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+// Whole minutes of recorded audio, at least one once there is any.
+function minutes(ms) {
+  return ms > 0 ? Math.max(1, Math.round(ms / 60000)) : 0;
+}
+
+// Writers that touch the DOM only when the value changed: a poll that finds
+// nothing new must leave the page alone (selection, hover and layout stay).
+function setText(node, value) {
+  const v = String(value ?? "");
+  if (node.textContent !== v) node.textContent = v;
+}
+
+function setAttr(node, name, value) {
+  if (value == null || value === false) {
+    if (node.hasAttribute(name)) node.removeAttribute(name);
+  } else {
+    const v = value === true ? "" : String(value);
+    if (node.getAttribute(name) !== v) node.setAttribute(name, v);
+  }
+}
+
+function setHidden(node, hidden) {
+  if (node.hidden !== !!hidden) node.hidden = !!hidden;
+}
+
+function setClass(node, name) {
+  if (node.className !== name) node.className = name;
+}
+
+function toggleClass(node, name, on) {
+  if (node.classList.contains(name) !== !!on) node.classList.toggle(name, !!on);
+}
+
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---- the floating message ----
+//
+// A save is confirmed by a small check that fades in over the content and out
+// again; nothing moves. An error stays until dismissed or the next action.
+
+let toastNode = null;
+let toastTimer = 0;
+
+function toastBox() {
+  if (!toastNode) {
+    toastNode = el("div", { id: "toast", class: "toast", role: "status" });
+    document.body.append(toastNode);
+  }
+  return toastNode;
+}
+
+function toast(text, kind = "ok") {
+  const box = toastBox();
+  clearTimeout(toastTimer);
+  box.replaceChildren(el("span", { class: "mark" }, kind === "ok" ? "✓" : "!"), el("span", { class: "msg" }, text));
+  box.title = text;
+  if (kind === "error") {
+    box.append(el("button", { type: "button", class: "x", "aria-label": t("gui.close"), onclick: dismissToast }, "×"));
+  }
+  box.className = `toast ${kind}`;
+  void box.offsetWidth;
+  box.classList.add("show");
+  if (kind === "ok") toastTimer = setTimeout(dismissToast, 900);
+}
+
+function dismissToast() {
+  clearTimeout(toastTimer);
+  toastNode?.classList.remove("show");
+}
+
+function toastIsError() {
+  return !!toastNode?.classList.contains("show") && toastNode.classList.contains("error");
+}
+
+// The webview's own menu only where text can be selected or edited.
+document.addEventListener("contextmenu", (ev) => {
+  if (!ev.target.closest?.("input, textarea, code, .selectable, .log .text, .log .detail")) ev.preventDefault();
+});
+
+const BAR_WEIGHTS = [0.45, 0.75, 1, 0.7, 0.9, 0.55, 0.8];
+
+// A row of bars that follow an input level from 0 to 1.
+function levelBars() {
+  const bars = BAR_WEIGHTS.map(() => el("i"));
+  const node = el("span", { class: "bars", "aria-hidden": "true" }, ...bars);
+  let last = null;
+  node.setLevel = (level) => {
+    const shaped = Math.min(1, Math.max(0, level ?? 0) ** 0.6 * 1.4);
+    const key = Math.round(shaped * 100);
+    if (key === last) return;
+    last = key;
+    bars.forEach((bar, i) => { bar.style.height = `${Math.round(18 + 82 * shaped * BAR_WEIGHTS[i])}%`; });
+  };
+  node.setLevel(0);
+  return node;
+}
+
+// A tray panel or settings window poll of the live state.
+function poller(render, onOffline, every) {
+  const tick = async () => {
+    if (!document.hidden) {
+      try {
+        render(await api("/api/status"));
+      } catch {
+        onOffline();
+      }
+    }
+    setTimeout(tick, every);
+  };
+  tick();
 }

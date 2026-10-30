@@ -8,13 +8,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anya_config::Config;
+use anya_config::{Config, EngineRole};
 use anya_core::audio::{Device, DeviceKind};
 use anya_i18n::Catalog;
-use anya_protocol::{Manifest, Source, Text};
+use anya_protocol::{Manifest, Scope, Source, Text};
 use anya_runtime::{
-    Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info, Invalid, SaveError, Saved,
-    Stats, Status, Subscription,
+    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
+    InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient, Pairing, PluginIssue,
+    PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
 };
 
 struct Fake {
@@ -51,7 +52,6 @@ impl Control for Fake {
             .to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             config_path: PathBuf::from("~/.config/anya/config.toml"),
-            debug: false,
         }
     }
 
@@ -87,6 +87,7 @@ impl Control for Fake {
                 fields: Vec::new(),
             },
             ready: true,
+            enabled: None,
         }]
     }
 
@@ -114,11 +115,13 @@ impl Control for Fake {
             dictation: Dictation::Idle,
             finishing: 0,
             live_text: None,
+            level: None,
             continuous_on: self.continuous_on.load(Ordering::Relaxed),
             subscription: Subscription::Listening {
                 url: "ws://127.0.0.1:7590/asr".to_owned(),
                 subscribers: 1,
             },
+            lan: Lan::Off,
             stats: Stats {
                 sessions: 42,
                 chars: 3180,
@@ -127,6 +130,54 @@ impl Control for Fake {
                 last_audio_ms: 9_000,
             },
         }
+    }
+
+    fn clients(&self) -> Vec<PairedClient> {
+        Vec::new()
+    }
+
+    fn start_pairing(&self) -> Result<Pairing, PairError> {
+        Err(PairError::LanOff)
+    }
+
+    fn set_client_scopes(&self, _id: &str, _scopes: Vec<Scope>) -> Result<(), ClientIssue> {
+        Err(ClientIssue::Write {
+            detail: "no paired clients".to_owned(),
+        })
+    }
+
+    fn remove_client(&self, _id: &str) -> Result<(), ClientIssue> {
+        Err(ClientIssue::Write {
+            detail: "no paired clients".to_owned(),
+        })
+    }
+
+    fn plugins(&self) -> Vec<InstalledPlugin> {
+        Vec::new()
+    }
+
+    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no registry".to_owned(),
+        })
+    }
+
+    fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no registry".to_owned(),
+        })
+    }
+
+    fn set_plugin_enabled(&self, _id: &str, _on: bool) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no plugins".to_owned(),
+        })
+    }
+
+    fn remove_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no plugins".to_owned(),
+        })
     }
 
     fn activity(&self) -> Vec<Entry> {
@@ -160,6 +211,14 @@ impl Control for Fake {
         Ok(Some("Alt+Super".to_owned()))
     }
 
+    fn preview_overlay(&self, _view: PreviewView) -> Result<(), PreviewIssue> {
+        Ok(())
+    }
+
+    fn retry_dictation(&self) {}
+
+    fn dismiss_dictation(&self) {}
+
     fn copy(&self, _text: &str) -> Result<(), String> {
         Ok(())
     }
@@ -174,7 +233,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
     let (quit_tx, quit_rx) = tokio::sync::watch::channel(false);
-    let config = Config::default();
+    let mut config = Config::default();
+    for role in EngineRole::ALL {
+        config.recognition.set_engine(role, "demo");
+    }
     let catalog = Catalog::for_setting(&config.ui.language);
     let control = Arc::new(Fake {
         config: Mutex::new(config),

@@ -13,7 +13,7 @@ use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 use tao::platform::run_return::EventLoopExtRunReturn;
-use tao::window::{Window, WindowBuilder};
+use tao::window::{Theme, Window, WindowBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::{NewWindowResponse, WebView, WebViewBuilder};
@@ -27,7 +27,11 @@ use crate::Shell;
 
 const SETTINGS_SIZE: (f64, f64) = (780.0, 760.0);
 const SETTINGS_MIN_SIZE: (f64, f64) = (420.0, 480.0);
-const PANEL_SIZE: (f64, f64) = (340.0, 596.0);
+const PANEL_WIDTH: f64 = 340.0;
+/// The panel's height until its page says how tall it is, and the range the
+/// page may ask for.
+const PANEL_HEIGHT: f64 = 420.0;
+const PANEL_HEIGHTS: (f64, f64) = (160.0, 720.0);
 /// Between the tray icon and the panel, and the panel and the screen edge.
 const PANEL_GAP: f64 = 6.0;
 /// How often the tray's text looks for a changed language setting.
@@ -135,6 +139,8 @@ pub(super) fn run(
         shell,
         settings,
         panel,
+        panel_height: PANEL_HEIGHT,
+        panel_anchor: None,
         tray: None,
         toggle: Toggle::default(),
         next_relabel: Instant::now() + RELABEL_EVERY,
@@ -192,23 +198,19 @@ impl Surface {
                 .with_title_hidden(true)
                 .with_fullsize_content_view(true)
                 .with_traffic_light_inset(LogicalPosition::new(20.0, 19.0))
-        };
-        #[cfg(target_os = "linux")]
-        let builder = match icons::decode(icons::APP).and_then(|i| {
-            tao::window::Icon::from_rgba(i.pixels, i.width, i.height).map_err(|e| e.to_string())
-        }) {
-            Ok(icon) => builder.with_window_icon(Some(icon)),
-            Err(e) => {
-                tracing::warn!(error = %e, "no window icon");
-                builder
-            }
+                // The sidebar material shows through the page's sidebar.
+                .with_transparent(true)
         };
         let window = Rc::new(
             builder
                 .build(target)
                 .map_err(|e| no_window("settings window")(e.to_string()))?,
         );
+        #[cfg(target_os = "linux")]
+        set_window_icon(&window, window.theme());
         let webview = webview(&window, url, origin, shell, true)?;
+        #[cfg(target_os = "macos")]
+        super::macos::backdrop(&window, super::macos::Backdrop::Sidebar);
         Ok(Surface {
             _webview: webview,
             window,
@@ -224,7 +226,7 @@ impl Surface {
     ) -> Result<Surface, DesktopError> {
         let builder = WindowBuilder::new()
             .with_title(catalog.t("tray.window_title"))
-            .with_inner_size(LogicalSize::new(PANEL_SIZE.0, PANEL_SIZE.1))
+            .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
             .with_resizable(false)
             .with_minimizable(false)
             .with_maximizable(false)
@@ -237,6 +239,9 @@ impl Surface {
             use tao::platform::unix::WindowBuilderExtUnix;
             builder.with_skip_taskbar(true)
         };
+        // The menu material and its rounded corners show through the page.
+        #[cfg(target_os = "macos")]
+        let builder = builder.with_transparent(true);
         let window = Rc::new(
             builder
                 .build(target)
@@ -245,6 +250,8 @@ impl Surface {
         #[cfg(target_os = "macos")]
         super::macos::float_over_spaces(&window);
         let webview = webview(&window, url, origin, shell, false)?;
+        #[cfg(target_os = "macos")]
+        super::macos::backdrop(&window, super::macos::Backdrop::Menu);
         Ok(Surface {
             _webview: webview,
             window,
@@ -254,7 +261,9 @@ impl Surface {
 
 /// The page at `url` in `window`. Links away from `origin` open in the
 /// browser. With `title_bar`, the page's header moves the window: it posts
-/// `drag` on a press and `zoom` on a double click.
+/// `drag` on a press and `zoom` on a double click. Without, the page posts
+/// `height:<px>` and the window takes that height. On macOS the page is told
+/// a system material is behind it.
 fn webview(
     window: &Rc<Window>,
     url: &str,
@@ -284,10 +293,17 @@ fn webview(
             NewWindowResponse::Deny
         }
     };
+    // Until the page paints its own background the window shows through,
+    // never WebKit's white.
     let mut builder = WebViewBuilder::new()
+        .with_transparent(true)
         .with_url(url)
         .with_navigation_handler(navigate)
         .with_new_window_req_handler(new_window);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.with_initialization_script(super::macos::VIBRANT_SCRIPT);
+    }
     if title_bar {
         let window = Rc::clone(window);
         builder = builder.with_ipc_handler(move |request| match request.body().as_str() {
@@ -298,6 +314,20 @@ fn webview(
             }
             "zoom" => window.set_maximized(!window.is_maximized()),
             other => tracing::debug!(message = other, "unknown page message"),
+        });
+    } else {
+        let shell = Arc::clone(shell);
+        builder = builder.with_ipc_handler(move |request| {
+            match request
+                .body()
+                .strip_prefix("height:")
+                .and_then(|h| h.parse::<f64>().ok())
+            {
+                Some(height) if height.is_finite() => {
+                    shell.send(UserEvent::PanelHeight(height));
+                }
+                _ => tracing::debug!(message = request.body().as_str(), "unknown page message"),
+            }
         });
     }
     #[cfg(target_os = "linux")]
@@ -354,6 +384,7 @@ impl TrayMenu {
 
 /// The macOS application menu. It is never shown (Anya has no menu bar),
 /// but its key equivalents give the webviews' text fields Cmd+C, Cmd+V…
+/// and the settings window Cmd+W.
 #[cfg(target_os = "macos")]
 fn edit_menu(catalog: &Catalog) -> Result<Menu, String> {
     use tray_icon::menu::Submenu;
@@ -371,7 +402,13 @@ fn edit_menu(catalog: &Catalog) -> Result<Menu, String> {
         ],
     )
     .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&[&edit]).map_err(|e| e.to_string())?;
+    let window = Submenu::with_items(
+        catalog.t("tray.window_menu"),
+        true,
+        &[&PredefinedMenuItem::close_window(None)],
+    )
+    .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(&[&edit, &window]).map_err(|e| e.to_string())?;
     menu.init_for_nsapp();
     Ok(menu)
 }
@@ -384,16 +421,14 @@ struct Tray {
 }
 
 impl Tray {
-    fn new(catalog: &Catalog) -> Result<Tray, String> {
+    fn new(catalog: &Catalog, theme: Theme) -> Result<Tray, String> {
         let menu = TrayMenu::new(catalog)?;
         let png = if cfg!(target_os = "macos") {
             icons::TRAY_TEMPLATE
         } else {
-            icons::TRAY
+            icons::tray(theme)
         };
-        let rgba = icons::decode(png)?;
-        let image = tray_icon::Icon::from_rgba(rgba.pixels, rgba.width, rgba.height)
-            .map_err(|e| e.to_string())?;
+        let image = tray_image(png)?;
         let builder = TrayIconBuilder::new()
             .with_tooltip(catalog.t("tray.tooltip"))
             .with_menu(Box::new(menu.menu.clone()))
@@ -417,6 +452,22 @@ impl Tray {
     }
 }
 
+fn tray_image(png: &[u8]) -> Result<tray_icon::Icon, String> {
+    let rgba = icons::decode(png)?;
+    tray_icon::Icon::from_rgba(rgba.pixels, rgba.width, rgba.height).map_err(|e| e.to_string())
+}
+
+/// Gives the window the app icon that suits the system appearance.
+#[cfg(target_os = "linux")]
+fn set_window_icon(window: &Window, theme: Theme) {
+    match icons::decode(icons::app(theme)).and_then(|i| {
+        tao::window::Icon::from_rgba(i.pixels, i.width, i.height).map_err(|e| e.to_string())
+    }) {
+        Ok(icon) => window.set_window_icon(Some(icon)),
+        Err(e) => tracing::warn!(error = %e, "no window icon"),
+    }
+}
+
 struct App {
     control: Arc<dyn Control>,
     language: String,
@@ -426,6 +477,10 @@ struct App {
     tray: Option<Tray>,
     settings: Surface,
     panel: Surface,
+    /// The panel's height, as its page last asked.
+    panel_height: f64,
+    /// Where the panel was last opened from, to keep it there as it resizes.
+    panel_anchor: Option<Rect>,
     toggle: Toggle,
     next_relabel: Instant,
     exiting: bool,
@@ -439,16 +494,18 @@ impl App {
     fn handle(&mut self, event: Event<'_, UserEvent>, target: &EventLoopWindowTarget<UserEvent>) {
         let now = Instant::now();
         match event {
-            Event::NewEvents(StartCause::Init) => match Tray::new(&self.catalog) {
-                Ok(tray) => {
-                    self.tray = Some(tray);
-                    self.show_settings();
+            Event::NewEvents(StartCause::Init) => {
+                match Tray::new(&self.catalog, self.settings.window.theme()) {
+                    Ok(tray) => {
+                        self.tray = Some(tray);
+                        self.show_settings();
+                    }
+                    Err(e) => {
+                        self.failure = Some(DesktopError::NoWindow(format!("tray icon: {e}")));
+                        self.exiting = true;
+                    }
                 }
-                Err(e) => {
-                    self.failure = Some(DesktopError::NoWindow(format!("tray icon: {e}")));
-                    self.exiting = true;
-                }
-            },
+            }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 self.relabel();
                 self.next_relabel = now + RELABEL_EVERY;
@@ -468,6 +525,12 @@ impl App {
             } if window_id == self.panel.window.id() && self.toggle.blur(now) == Action::Hide => {
                 self.panel.window.set_visible(false);
             }
+            // The system appearance changed; the event names no real window.
+            #[cfg(target_os = "linux")]
+            Event::WindowEvent {
+                event: WindowEvent::ThemeChanged(theme),
+                ..
+            } => self.retheme(theme),
             Event::UserEvent(UserEvent::Tray(TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -488,6 +551,7 @@ impl App {
             },
             Event::UserEvent(UserEvent::Menu(event)) => self.menu(&event, target),
             Event::UserEvent(UserEvent::ShowSettings) => self.show_settings(),
+            Event::UserEvent(UserEvent::PanelHeight(height)) => self.fit_panel(target, height),
             Event::UserEvent(UserEvent::Quit) => {
                 self.control.quit();
                 self.exiting = true;
@@ -531,11 +595,33 @@ impl App {
     /// Shows the panel by `anchor` (physical pixels), where it is known.
     fn show_panel(&mut self, target: &EventLoopWindowTarget<UserEvent>, anchor: Option<Rect>) {
         self.relabel();
-        if let Some(position) = anchor.and_then(|a| panel_position(target, a)) {
-            self.panel.window.set_outer_position(position);
-        }
+        self.panel_anchor = anchor;
+        self.place_panel(target);
         self.panel.window.set_visible(true);
         self.panel.window.set_focus();
+    }
+
+    /// Gives the panel the height its page needs, staying by its anchor.
+    fn fit_panel(&mut self, target: &EventLoopWindowTarget<UserEvent>, height: f64) {
+        let height = height.clamp(PANEL_HEIGHTS.0, PANEL_HEIGHTS.1).ceil();
+        if (height - self.panel_height).abs() < 1.0 {
+            return;
+        }
+        self.panel_height = height;
+        self.panel
+            .window
+            .set_inner_size(LogicalSize::new(PANEL_WIDTH, height));
+        self.place_panel(target);
+    }
+
+    fn place_panel(&self, target: &EventLoopWindowTarget<UserEvent>) {
+        let size = (PANEL_WIDTH, self.panel_height);
+        if let Some(position) = self
+            .panel_anchor
+            .and_then(|a| panel_position(target, a, size))
+        {
+            self.panel.window.set_outer_position(position);
+        }
     }
 
     /// Opens the file dialog over the settings window without blocking the
@@ -583,6 +669,18 @@ impl App {
         window.set_focus();
     }
 
+    /// Swaps the window and tray icons for the new system appearance.
+    #[cfg(target_os = "linux")]
+    fn retheme(&self, theme: Theme) {
+        set_window_icon(&self.settings.window, theme);
+        let Some(tray) = &self.tray else { return };
+        if let Err(e) = tray_image(icons::tray(theme))
+            .and_then(|image| tray.icon.set_icon(Some(image)).map_err(|e| e.to_string()))
+        {
+            tracing::warn!(error = %e, "tray icon not updated");
+        }
+    }
+
     /// Follows a changed `[ui] language` in the tray and the window titles.
     fn relabel(&mut self) {
         let language = self.control.config().ui.language;
@@ -609,6 +707,7 @@ impl App {
 fn panel_position(
     target: &EventLoopWindowTarget<UserEvent>,
     anchor: Rect,
+    panel: (f64, f64),
 ) -> Option<LogicalPosition<f64>> {
     let center = (
         anchor.x + anchor.width / 2.0,
@@ -633,7 +732,7 @@ fn panel_position(
             width: anchor.width / scale,
             height: anchor.height / scale,
         };
-        let (x, y) = placement::place(logical, PANEL_SIZE, screen, PANEL_GAP);
+        let (x, y) = placement::place(logical, panel, screen, PANEL_GAP);
         Some(LogicalPosition::new(x, y))
     })
 }

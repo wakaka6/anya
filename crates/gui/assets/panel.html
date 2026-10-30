@@ -9,35 +9,31 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body class="panel">
-  <header class="panel-head">
-    <img class="logo" src="icon.svg" alt="">
-    <strong data-i18n="common.app_name"></strong>
-    <div id="status" class="status" data-state="idle">
-      <span class="dot"></span>
-      <span id="statusLabel" class="pill-label"></span>
-    </div>
-  </header>
+  <div id="wrap" class="panel-wrap">
+    <header class="panel-head">
+      <img class="logo" src="icon.svg" alt="">
+      <strong data-i18n="common.app_name"></strong>
+      <span id="status" class="status"><i id="statusDot" class="dot"></i><span id="statusLabel"></span></span>
+    </header>
 
-  <section class="panel-body">
-    <div id="last" class="last">
-      <span class="muted" data-i18n="gui.panel.last"></span>
-      <p id="lastText" class="last-text"></p>
-    </div>
+    <div id="top"></div>
+    <div id="switches" class="switches"></div>
 
-    <div class="stats panel-stats" data-i18n-aria="gui.stats.label">
-      <div class="stat"><span class="muted" data-i18n="gui.stats.sessions"></span><b id="statSessions">0</b><span class="muted" data-i18n="gui.stats.sessions_unit"></span></div>
-      <div class="stat"><span class="muted" data-i18n="gui.stats.chars"></span><b id="statChars">0</b></div>
-      <div class="stat"><span class="muted" data-i18n="gui.stats.avg"></span><b id="statAvg">0</b><span class="muted" data-i18n="gui.stats.cpm_short"></span></div>
-      <div class="stat"><span class="muted" data-i18n="gui.stats.last"></span><b id="statLast">0</b><span class="muted" data-i18n="gui.stats.cpm_short"></span></div>
-    </div>
+    <section id="recentBox" class="recent">
+      <div class="recent-head">
+        <h2 data-i18n="gui.panel.recent"></h2>
+        <span id="totals" class="totals"></span>
+      </div>
+      <ul id="recent"></ul>
+    </section>
 
-    <div id="summary" class="group summary"></div>
-  </section>
-
-  <footer id="panelFoot" class="panel-foot">
-    <button type="button" id="quit" class="ghost" data-i18n="gui.panel.quit"></button>
-    <button type="button" id="settings" data-i18n="gui.panel.open_settings"></button>
-  </footer>
+    <nav id="panelFoot" class="panel-tools">
+      <button type="button" id="history" class="tool" data-i18n-title="gui.panel.history" data-i18n-aria="gui.panel.history"></button>
+      <button type="button" id="settings" class="tool" data-i18n-title="gui.panel.settings" data-i18n-aria="gui.panel.settings"></button>
+      <span class="spacer"></span>
+      <button type="button" id="quit" class="tool quit" data-i18n-title="gui.panel.quit" data-i18n-aria="gui.panel.quit"></button>
+    </nav>
+  </div>
 
   <script src="common.js"></script>
   <script src="panel.js"></script>

@@ -11,12 +11,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anya_config::{Config, Problem};
+use anya_config::{Config, EngineRole, Problem};
 use anya_core::audio::{Device, DeviceKind};
-use anya_protocol::{ErrorCode, Field, FieldKind, Manifest, Source, Text};
+use anya_protocol::{ErrorCode, Field, FieldKind, Manifest, PairingOffer, Scope, Source, Text};
 use anya_runtime::{
-    Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info, Invalid, Notice, SaveError,
-    Saved, Stats, Status, Subscription,
+    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
+    InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient, Pairing,
+    PluginIssue, PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status,
+    Subscription,
 };
 
 /// A running Anya that exists only in memory.
@@ -24,6 +26,13 @@ pub(crate) struct FakeControl {
     pub(crate) config: Mutex<Config>,
     pub(crate) status: Mutex<Status>,
     pub(crate) activity: Mutex<Vec<Entry>>,
+    /// Paired apps; pairing adds none, tests and the example put them here.
+    pub(crate) clients: Mutex<Vec<PairedClient>>,
+    /// Fails every client change with this write error.
+    pub(crate) clients_write_error: Mutex<Option<String>>,
+    /// Installed plugins; installing from `market` adds one, disabled.
+    pub(crate) plugins: Mutex<Vec<InstalledPlugin>>,
+    pub(crate) market: Mutex<Result<Vec<MarketPlugin>, PluginIssue>>,
     pub(crate) devices: Mutex<Result<Vec<Device>, String>>,
     pub(crate) engines: Vec<Manifest>,
     /// Answers every valid save with this error.
@@ -34,6 +43,8 @@ pub(crate) struct FakeControl {
     pub(crate) record: Mutex<Result<Option<String>, String>>,
     pub(crate) record_delay: Mutex<Duration>,
     pub(crate) copy_error: Mutex<Option<String>>,
+    /// Refuses every overlay preview with this.
+    pub(crate) preview_error: Mutex<Option<PreviewIssue>>,
     /// Every call that changes something, in order.
     pub(crate) calls: Mutex<Vec<String>>,
     /// Every config saved.
@@ -53,12 +64,14 @@ fn now_ms() -> u64 {
 }
 
 impl FakeControl {
-    /// Two engines (`cloud` needs an API key, `whisper` needs nothing), one
-    /// microphone, a few activity lines, English UI.
+    /// Three engines (`cloud` needs an API key, `whisper` and the plugin's
+    /// `sherpa` need nothing), one microphone, a few activity lines, English UI.
     pub(crate) fn sample() -> FakeControl {
         let mut config = Config::default();
         config.ui.language = "en".to_owned();
-        config.recognition.engine = "cloud".to_owned();
+        for role in EngineRole::ALL {
+            config.recognition.set_engine(role, "cloud");
+        }
         config.dictation.hotkeys = "F13".to_owned();
         let now = now_ms();
         FakeControl {
@@ -67,15 +80,17 @@ impl FakeControl {
                 dictation: Dictation::Idle,
                 finishing: 0,
                 live_text: None,
+                level: None,
                 continuous_on: false,
                 subscription: Subscription::Listening {
                     url: "ws://127.0.0.1:7590/asr".to_owned(),
                     subscribers: 2,
                 },
+                lan: Lan::Off,
                 stats: Stats {
-                    sessions: 42,
-                    chars: 5_300,
-                    audio_ms: 1_060_000,
+                    sessions: 128,
+                    chars: 5_320,
+                    audio_ms: 2_460_000,
                     last_chars: 120,
                     last_audio_ms: 24_000,
                 },
@@ -105,17 +120,56 @@ impl FakeControl {
                     delivered: Delivered::Kept,
                 },
             ]),
+            clients: Mutex::new(Vec::new()),
+            clients_write_error: Mutex::new(None),
+            plugins: Mutex::new(Vec::new()),
+            market: Mutex::new(Ok(vec![
+                MarketPlugin {
+                    id: "echo".to_owned(),
+                    name: Text::localized([("en", "Echo"), ("zh-CN", "回声")]),
+                    description: Text::localized([
+                        ("en", "Answers with byte counts"),
+                        ("zh-CN", "回报字节数"),
+                    ]),
+                    version: "1.0.0".to_owned(),
+                    streaming: true,
+                    permissions: vec!["network:example.com".to_owned()],
+                },
+                MarketPlugin {
+                    id: "whisper-local".to_owned(),
+                    name: Text::localized([("en", "Local Whisper"), ("zh-CN", "本地 Whisper")]),
+                    description: Text::localized([
+                        ("en", "Recognizes on this computer; audio never leaves it"),
+                        ("zh-CN", "在本机识别，音频不会离开这台电脑"),
+                    ]),
+                    version: "0.4.2".to_owned(),
+                    streaming: false,
+                    permissions: Vec::new(),
+                },
+                MarketPlugin {
+                    id: "deepgram".to_owned(),
+                    name: "Deepgram".into(),
+                    description: Text::localized([
+                        ("en", "Streaming recognition in English and more"),
+                        ("zh-CN", "流式识别，支持英语等多种语言"),
+                    ]),
+                    version: "2.1.0".to_owned(),
+                    streaming: true,
+                    permissions: vec!["network:api.deepgram.com".to_owned()],
+                },
+            ])),
             devices: Mutex::new(Ok(vec![Device {
                 id: "BuiltInMic".to_owned(),
                 name: "MacBook Pro Microphone".to_owned(),
                 kind: DeviceKind::Microphone,
             }])),
-            engines: vec![cloud(), whisper()],
+            engines: vec![cloud(), whisper(), sherpa()],
             save_error: Mutex::new(None),
             hotkeys_failed: Mutex::new(None),
             record: Mutex::new(Ok(Some("F9".to_owned()))),
             record_delay: Mutex::new(Duration::ZERO),
             copy_error: Mutex::new(None),
+            preview_error: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
             saved: Mutex::new(Vec::new()),
             copied: Mutex::new(Vec::new()),
@@ -166,7 +220,7 @@ impl FakeControl {
             out.push(match problem {
                 Problem::UnknownPosition(value) => Invalid::UnknownPosition { value },
                 Problem::BadScale => Invalid::BadScale,
-                Problem::UnknownEngine(id) => Invalid::UnknownEngine { id },
+                Problem::UnknownEngine(role, id) => Invalid::UnknownEngine { role, id },
             });
         }
         let address = config.subscription.address();
@@ -205,7 +259,6 @@ impl Control for FakeControl {
             .to_owned(),
             version: "0.0.0".to_owned(),
             config_path: PathBuf::from("/home/me/.config/anya/config.toml"),
-            debug: false,
         }
     }
 
@@ -243,6 +296,10 @@ impl Control for FakeControl {
             .map(|m| EngineInfo {
                 manifest: m.clone(),
                 ready: self.ready(&m.id, &config.recognition.settings(&m.id)),
+                // `cloud` and `whisper` stand for built-in engines with a switch; `sherpa`
+                // for a plugin's, which has its switch on the Plugins page.
+                enabled: (m.id != "sherpa")
+                    .then(|| config.plugins.builtin.get(&m.id) != Some(&false)),
             })
             .collect()
     }
@@ -261,6 +318,114 @@ impl Control for FakeControl {
 
     fn activity(&self) -> Vec<Entry> {
         lock(&self.activity).clone()
+    }
+
+    fn plugins(&self) -> Vec<InstalledPlugin> {
+        lock(&self.plugins).clone()
+    }
+
+    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
+        self.call("plugin_market".to_owned());
+        lock(&self.market).clone()
+    }
+
+    fn install_plugin(&self, id: &str) -> Result<(), PluginIssue> {
+        self.call(format!("install_plugin {id}"));
+        let release = lock(&self.market)
+            .clone()?
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| PluginIssue::NotInIndex {
+                id: id.to_owned(),
+                version: "latest".to_owned(),
+            })?;
+        let mut plugins = lock(&self.plugins);
+        plugins.retain(|p| p.id != id);
+        plugins.push(InstalledPlugin {
+            id: id.to_owned(),
+            version: release.version,
+            enabled: false,
+            load: PluginLoad::Off,
+            title: Some(release.name),
+            description: Some(release.description),
+        });
+        Ok(())
+    }
+
+    fn set_plugin_enabled(&self, id: &str, on: bool) -> Result<(), PluginIssue> {
+        self.call(format!("set_plugin_enabled {id} {on}"));
+        let mut plugins = lock(&self.plugins);
+        let plugin = plugins
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| PluginIssue::NotInstalled { id: id.to_owned() })?;
+        plugin.enabled = on;
+        plugin.load = if on {
+            PluginLoad::Ready
+        } else {
+            PluginLoad::Off
+        };
+        Ok(())
+    }
+
+    fn remove_plugin(&self, id: &str) -> Result<(), PluginIssue> {
+        self.call(format!("remove_plugin {id}"));
+        let mut plugins = lock(&self.plugins);
+        let before = plugins.len();
+        plugins.retain(|p| p.id != id);
+        if plugins.len() == before {
+            return Err(PluginIssue::NotInstalled { id: id.to_owned() });
+        }
+        Ok(())
+    }
+
+    fn clients(&self) -> Vec<PairedClient> {
+        lock(&self.clients).clone()
+    }
+
+    fn start_pairing(&self) -> Result<Pairing, PairError> {
+        self.call("start_pairing".to_owned());
+        match lock(&self.status).lan.clone() {
+            Lan::Off => Err(PairError::LanOff),
+            Lan::Down { detail } => Err(PairError::LanDown { detail }),
+            Lan::Listening { url, fingerprint } => Ok(Pairing {
+                code: "123456".to_owned(),
+                expires_at: now_ms() + 120_000,
+                offer: PairingOffer {
+                    url,
+                    code: "123456".to_owned(),
+                    fingerprint,
+                },
+            }),
+        }
+    }
+
+    fn set_client_scopes(&self, id: &str, scopes: Vec<Scope>) -> Result<(), ClientIssue> {
+        self.call(format!("set_client_scopes {id} {scopes:?}"));
+        if let Some(detail) = lock(&self.clients_write_error).clone() {
+            return Err(ClientIssue::Write { detail });
+        }
+        let mut clients = lock(&self.clients);
+        let client = clients
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or_else(|| ClientIssue::UnknownClient { id: id.to_owned() })?;
+        client.scopes = scopes;
+        Ok(())
+    }
+
+    fn remove_client(&self, id: &str) -> Result<(), ClientIssue> {
+        self.call(format!("remove_client {id}"));
+        if let Some(detail) = lock(&self.clients_write_error).clone() {
+            return Err(ClientIssue::Write { detail });
+        }
+        let mut clients = lock(&self.clients);
+        let before = clients.len();
+        clients.retain(|c| c.id != id);
+        if clients.len() == before {
+            return Err(ClientIssue::UnknownClient { id: id.to_owned() });
+        }
+        Ok(())
     }
 
     fn set_dictation(&self, on: bool) -> Result<Saved, SaveError> {
@@ -300,6 +465,30 @@ impl Control for FakeControl {
         self.call(format!("record_hotkey {timeout:?}"));
         std::thread::sleep(*lock(&self.record_delay));
         lock(&self.record).clone()
+    }
+
+    fn preview_overlay(&self, view: PreviewView) -> Result<(), PreviewIssue> {
+        self.call(format!("preview_overlay {view:?}"));
+        match *lock(&self.preview_error) {
+            Some(issue) => Err(issue),
+            None => Ok(()),
+        }
+    }
+
+    fn retry_dictation(&self) {
+        self.call("retry_dictation".to_owned());
+        let mut status = lock(&self.status);
+        if matches!(status.dictation, Dictation::Failed { .. }) {
+            status.dictation = Dictation::Recording;
+        }
+    }
+
+    fn dismiss_dictation(&self) {
+        self.call("dismiss_dictation".to_owned());
+        let mut status = lock(&self.status);
+        if matches!(status.dictation, Dictation::Failed { .. }) {
+            status.dictation = Dictation::Idle;
+        }
     }
 
     fn copy(&self, text: &str) -> Result<(), String> {
@@ -371,6 +560,30 @@ fn cloud() -> Manifest {
                 true,
             ),
         ],
+    }
+}
+
+fn sherpa() -> Manifest {
+    Manifest {
+        id: "sherpa".to_owned(),
+        title: Text::localized([("en", "Local Sherpa"), ("zh-CN", "本地 Sherpa")]),
+        blurb: Text::localized([
+            ("en", "Streaming recognition on this computer"),
+            ("zh-CN", "在本机流式识别，音频不会离开这台电脑"),
+        ]),
+        docs: None,
+        streaming: true,
+        fields: vec![field(
+            "model",
+            Text::localized([("en", "Model"), ("zh-CN", "模型")]),
+            Text::localized([
+                ("en", "A model folder under ~/.cache/sherpa"),
+                ("zh-CN", "~/.cache/sherpa 下的模型目录"),
+            ]),
+            FieldKind::Text,
+            false,
+            false,
+        )],
     }
 }
 

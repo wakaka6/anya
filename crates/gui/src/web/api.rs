@@ -4,11 +4,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anya_config::{Config, DEFAULT_ADDRESS, expand_home};
+use anya_config::{Config, DEFAULT_ADDRESS, DEFAULT_LAN_PORT, EngineRole, expand_home};
 use anya_i18n::Catalog;
-use anya_runtime::{HotkeyRole, Invalid, SaveError, Saved};
+use anya_protocol::{PairingOffer, Scope};
+use anya_runtime::{
+    ClientIssue, HotkeyRole, Invalid, PairError, PluginIssue, PreviewView, SaveError, Saved,
+};
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::body::Incoming;
 use hyper::{Method, Request, StatusCode};
@@ -18,7 +21,7 @@ use serde_json::{Value, json};
 
 use super::reply::{self, Reply};
 use super::{Page, assets, auth, view};
-use crate::ShellKind;
+use crate::{PRIVACY_SETTINGS_URL, ShellKind};
 
 /// The largest settings or copy body.
 const LARGE: usize = 1 << 20;
@@ -48,6 +51,22 @@ pub(super) async fn handle(page: &Arc<Page>, req: Request<Incoming>) -> Reply {
         (false, "/api/settings") => Some(save(page, &catalog, req).await),
         (false, "/api/dictation") => Some(switch(page, &catalog, req, Switch::Dictation).await),
         (false, "/api/continuous") => Some(switch(page, &catalog, req, Switch::Continuous).await),
+        (false, "/api/dictation/retry") => {
+            page.control.retry_dictation();
+            Some(reply::empty())
+        }
+        (false, "/api/dictation/dismiss") => {
+            page.control.dismiss_dictation();
+            Some(reply::empty())
+        }
+        (false, "/api/overlay/preview") => Some(preview(page, &catalog, req).await),
+        (false, "/api/pairing") => Some(start_pairing(page, &catalog)),
+        (false, "/api/clients/scopes") => Some(set_scopes(page, &catalog, req).await),
+        (false, "/api/clients/remove") => Some(remove_client(page, &catalog, req).await),
+        (false, "/api/plugins/market") => Some(plugin_market(page, &catalog).await),
+        (false, "/api/plugins/install") => Some(install_plugin(page, &catalog, req).await),
+        (false, "/api/plugins/enable") => Some(enable_plugin(page, &catalog, req).await),
+        (false, "/api/plugins/remove") => Some(remove_plugin(page, &catalog, req).await),
         (false, "/api/engine/ready") => Some(engine_ready(page, &catalog, req).await),
         (false, "/api/hotkey/check") => Some(check_hotkey(page, &catalog, req).await),
         (false, "/api/hotkey/record") => Some(record_hotkey(page, &catalog).await),
@@ -146,6 +165,13 @@ fn message(invalid: &Invalid, catalog: &Catalog) -> String {
     catalog.tf(key, &args)
 }
 
+/// A coded message (`PluginIssue`, `PairError`) in the catalog's language.
+fn coded(parts: (&'static str, Vec<(&'static str, String)>), catalog: &Catalog) -> String {
+    let (key, args) = parts;
+    let args: Vec<(&str, &str)> = args.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    catalog.tf(key, &args)
+}
+
 /// The config keys `invalid` is about, as the page names its fields.
 fn fields(page: &Page, invalid: &Invalid, config: &Config) -> Vec<&'static str> {
     let hotkey = |field: &'static str, value: &str, role| {
@@ -176,7 +202,11 @@ fn fields(page: &Page, invalid: &Invalid, config: &Config) -> Vec<&'static str> 
         Invalid::HotkeyTaken { .. } => vec!["continuous.hotkey"],
         Invalid::UnknownPosition { .. } => vec!["overlay.position"],
         Invalid::BadScale => vec!["overlay.scale"],
-        Invalid::UnknownEngine { .. } => vec!["recognition.engine"],
+        Invalid::UnknownEngine { role, .. } => match role {
+            EngineRole::Dictation => vec!["recognition.dictation"],
+            EngineRole::Continuous => vec!["recognition.continuous"],
+            EngineRole::Remote => vec!["recognition.remote"],
+        },
         Invalid::BadAddress { .. } => vec!["subscription.address"],
     }
 }
@@ -193,12 +223,17 @@ fn normalize(mut c: Config) -> Config {
     trim(&mut c.dictation.device);
     trim(&mut c.continuous.hotkey);
     trim(&mut c.continuous.device);
-    trim(&mut c.recognition.engine);
+    trim(&mut c.recognition.dictation);
+    trim(&mut c.recognition.continuous);
+    trim(&mut c.recognition.remote);
     trim(&mut c.recognition.language);
     trim(&mut c.recognition.hotwords_file);
     trim(&mut c.subscription.address);
     if c.subscription.address.is_empty() {
         c.subscription.address = DEFAULT_ADDRESS.to_owned();
+    }
+    if c.subscription.lan_port == 0 {
+        c.subscription.lan_port = DEFAULT_LAN_PORT;
     }
     let mut words: Vec<String> = Vec::new();
     for word in c
@@ -263,6 +298,22 @@ async fn switch(page: &Page, catalog: &Catalog, req: Request<Incoming>, which: S
     match result {
         Ok(saved) => applied(page, saved),
         Err(e) => refused(page, catalog, e, &page.control.config()),
+    }
+}
+
+#[derive(Deserialize)]
+struct Preview {
+    view: PreviewView,
+}
+
+async fn preview(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
+    let Preview { view } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    match page.control.preview_overlay(view) {
+        Ok(()) => reply::empty(),
+        Err(issue) => reply::error(StatusCode::CONFLICT, catalog.t(issue.message())),
     }
 }
 
@@ -441,14 +492,23 @@ struct Action {
     action: String,
 }
 
+/// What a window action asks of the shell.
+#[derive(Clone, Copy)]
+enum Act {
+    Settings,
+    Quit,
+    Privacy,
+}
+
 async fn window(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
     let Action { action } = match body(req, SMALL, catalog).await {
         Ok(b) => b,
         Err(refusal) => return refusal,
     };
-    let quit = match action.as_str() {
-        "settings" => false,
-        "quit" => true,
+    let act = match action.as_str() {
+        "settings" => Act::Settings,
+        "quit" => Act::Quit,
+        "privacy" => Act::Privacy,
         _ => return reply::error(StatusCode::NOT_FOUND, catalog.t("gui.api.unsupported")),
     };
     if page.shell.kind() != ShellKind::App {
@@ -458,10 +518,13 @@ async fn window(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply
     tokio::spawn(async move {
         tokio::time::sleep(WINDOW_DELAY).await;
         let _ = tokio::task::spawn_blocking(move || {
-            if quit {
-                shell.quit();
-            } else {
-                shell.show_settings();
+            match act {
+                Act::Settings => shell.show_settings(),
+                Act::Quit => shell.quit(),
+                Act::Privacy => {
+                    // The answer is long gone, so a failure has nowhere to go.
+                    let _ = shell.open_url(PRIVACY_SETTINGS_URL);
+                }
             }
         })
         .await;
@@ -485,5 +548,205 @@ async fn copy_text(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Re
             StatusCode::INTERNAL_SERVER_ERROR,
             &catalog.tf("gui.api.copy_failed", &[("detail", &detail)]),
         ),
+    }
+}
+
+/// A pairing code, and the QR code of what an app needs to use it.
+fn start_pairing(page: &Page, catalog: &Catalog) -> Reply {
+    let pairing = match page.control.start_pairing() {
+        Ok(p) => p,
+        Err(refusal) => {
+            let detail = coded(PairError::message(&refusal), catalog);
+            return reply::error(
+                StatusCode::CONFLICT,
+                &catalog.tf("gui.pairing.refused", &[("detail", &detail)]),
+            );
+        }
+    };
+    let Some(qr) = qr_svg(&pairing.offer) else {
+        return reply::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            catalog.t("gui.pairing.qr_failed"),
+        );
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    reply::json(
+        StatusCode::OK,
+        &json!({
+            "code": pairing.code,
+            "expires_in": pairing.expires_at.saturating_sub(now).div_ceil(1000),
+            "url": pairing.offer.url,
+            "fingerprint": pairing.offer.fingerprint,
+            "qr": qr,
+        }),
+    )
+}
+
+/// `offer` as JSON in a QR code, drawn as an SVG that scales to its box.
+fn qr_svg(offer: &PairingOffer) -> Option<String> {
+    use qrcode::render::svg;
+    let json = serde_json::to_string(offer).ok()?;
+    let code = qrcode::QrCode::new(json.as_bytes()).ok()?;
+    Some(
+        code.render::<svg::Color>()
+            .quiet_zone(true)
+            .min_dimensions(200, 200)
+            .build(),
+    )
+}
+
+#[derive(Deserialize)]
+struct ClientScopes {
+    id: String,
+    scopes: Vec<Scope>,
+}
+
+async fn set_scopes(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
+    let ClientScopes { id, mut scopes } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    if scopes.contains(&Scope::Unknown) {
+        return reply::error(StatusCode::BAD_REQUEST, catalog.t("gui.api.bad_request"));
+    }
+    scopes.sort();
+    scopes.dedup();
+    if !page.control.clients().iter().any(|c| c.id == id) {
+        return reply::error(StatusCode::NOT_FOUND, catalog.t("gui.clients.unknown"));
+    }
+    match page.control.set_client_scopes(&id, scopes) {
+        Ok(()) => reply::json(
+            StatusCode::OK,
+            &json!({ "clients": page.control.clients() }),
+        ),
+        Err(issue) => reply::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &catalog.tf(
+                "gui.clients.failed",
+                &[("detail", &coded(ClientIssue::message(&issue), catalog))],
+            ),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct ClientId {
+    id: String,
+}
+
+async fn remove_client(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
+    let ClientId { id } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    if !page.control.clients().iter().any(|c| c.id == id) {
+        return reply::error(StatusCode::NOT_FOUND, catalog.t("gui.clients.unknown"));
+    }
+    match page.control.remove_client(&id) {
+        Ok(()) => reply::json(
+            StatusCode::OK,
+            &json!({ "clients": page.control.clients() }),
+        ),
+        Err(issue) => reply::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &catalog.tf(
+                "gui.clients.failed",
+                &[("detail", &coded(ClientIssue::message(&issue), catalog))],
+            ),
+        ),
+    }
+}
+
+/// The installed plugins, shaped for the page.
+fn installed(page: &Page, catalog: &Catalog) -> Reply {
+    reply::json(
+        StatusCode::OK,
+        &json!({ "plugins": view::plugins(&page.control.plugins(), catalog) }),
+    )
+}
+
+/// What a plugin route does once it knows the plugin exists.
+fn plugin_failed(catalog: &Catalog, detail: &str) -> Reply {
+    reply::error(
+        StatusCode::CONFLICT,
+        &catalog.tf("gui.plugins.failed", &[("detail", detail)]),
+    )
+}
+
+async fn plugin_market(page: &Page, catalog: &Catalog) -> Reply {
+    let control = page.control.clone();
+    let fetched = tokio::task::spawn_blocking(move || control.plugin_market()).await;
+    match fetched {
+        Ok(Ok(list)) => reply::json(
+            StatusCode::OK,
+            &json!({ "plugins": view::market(&list, catalog) }),
+        ),
+        Ok(Err(issue)) => reply::error(
+            StatusCode::BAD_GATEWAY,
+            &catalog.tf(
+                "gui.plugins.market_failed",
+                &[("detail", &coded(PluginIssue::message(&issue), catalog))],
+            ),
+        ),
+        Err(e) => reply::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &catalog.tf("gui.plugins.market_failed", &[("detail", &e.to_string())]),
+        ),
+    }
+}
+
+async fn install_plugin(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
+    let ClientId { id } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    let control = page.control.clone();
+    let done = tokio::task::spawn_blocking(move || control.install_plugin(&id)).await;
+    match done {
+        Ok(Ok(())) => installed(page, catalog),
+        Ok(Err(issue)) => plugin_failed(catalog, &coded(issue.message(), catalog)),
+        Err(e) => plugin_failed(catalog, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct PluginSwitch {
+    id: String,
+    on: bool,
+}
+
+async fn enable_plugin(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
+    let PluginSwitch { id, on } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    if !page.control.plugins().iter().any(|p| p.id == id) {
+        return reply::error(StatusCode::NOT_FOUND, catalog.t("gui.plugins.unknown"));
+    }
+    let control = page.control.clone();
+    let done = tokio::task::spawn_blocking(move || control.set_plugin_enabled(&id, on)).await;
+    match done {
+        Ok(Ok(())) => installed(page, catalog),
+        Ok(Err(issue)) => plugin_failed(catalog, &coded(issue.message(), catalog)),
+        Err(e) => plugin_failed(catalog, &e.to_string()),
+    }
+}
+
+async fn remove_plugin(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
+    let ClientId { id } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    if !page.control.plugins().iter().any(|p| p.id == id) {
+        return reply::error(StatusCode::NOT_FOUND, catalog.t("gui.plugins.unknown"));
+    }
+    let control = page.control.clone();
+    let done = tokio::task::spawn_blocking(move || control.remove_plugin(&id)).await;
+    match done {
+        Ok(Ok(())) => installed(page, catalog),
+        Ok(Err(issue)) => plugin_failed(catalog, &coded(issue.message(), catalog)),
+        Err(e) => plugin_failed(catalog, &e.to_string()),
     }
 }

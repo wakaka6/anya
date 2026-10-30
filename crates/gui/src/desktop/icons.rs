@@ -1,14 +1,34 @@
-//! Anya's icons, rendered from `icons/*.svg` (rsvg-convert -w 64 / -w 256).
+//! Anya's icons. The app and tray icons come in a light and a dark variant,
+//! picked by the system appearance; the menu bar template is rendered from
+//! `icons/tray-template.svg` (rsvg-convert -w 64).
+
+use tao::window::Theme;
 
 /// The macOS menu bar icon: black on transparent, tinted by the system.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) const TRAY_TEMPLATE: &[u8] = include_bytes!("../../icons/tray-template.png");
-/// The coloured tray icon for Linux panels.
+const TRAY_LIGHT: &[u8] = include_bytes!("../../icons/tray-light.png");
+const TRAY_DARK: &[u8] = include_bytes!("../../icons/tray-dark.png");
+const APP_LIGHT: &[u8] = include_bytes!("../../icons/app-light.png");
+const APP_DARK: &[u8] = include_bytes!("../../icons/app-dark.png");
+
+/// The coloured tray icon for Linux panels, 64 px.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-pub(crate) const TRAY: &[u8] = include_bytes!("../../icons/tray.png");
-/// The window icon.
+pub(crate) fn tray(theme: Theme) -> &'static [u8] {
+    match theme {
+        Theme::Dark => TRAY_DARK,
+        _ => TRAY_LIGHT,
+    }
+}
+
+/// The window icon, 256 px.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-pub(crate) const APP: &[u8] = include_bytes!("../../icons/app.png");
+pub(crate) fn app(theme: Theme) -> &'static [u8] {
+    match theme {
+        Theme::Dark => APP_DARK,
+        _ => APP_LIGHT,
+    }
+}
 
 /// An icon decoded to 8-bit RGBA.
 pub(crate) struct Rgba {
@@ -47,7 +67,13 @@ mod tests {
 
     #[test]
     fn every_icon_decodes_at_its_size() {
-        for (bytes, side) in [(TRAY_TEMPLATE, 64), (TRAY, 64), (APP, 256)] {
+        for (bytes, side) in [
+            (TRAY_TEMPLATE, 64),
+            (TRAY_LIGHT, 64),
+            (TRAY_DARK, 64),
+            (APP_LIGHT, 256),
+            (APP_DARK, 256),
+        ] {
             let icon = decode(bytes);
             assert!(icon.is_ok(), "{:?}", icon.err());
             let Ok(icon) = icon else { return };

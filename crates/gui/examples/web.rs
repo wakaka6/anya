@@ -14,9 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anya_config::EngineRole;
 use anya_gui::{Shell, ShellKind, web};
-use anya_protocol::Source;
-use anya_runtime::{Delivered, Dictation, Entry};
+use anya_protocol::{Scope, Source};
+use anya_runtime::{Delivered, Dictation, Entry, Lan, PairedClient};
 
 #[path = "../src/web/fake.rs"]
 mod fake;
@@ -122,6 +123,58 @@ fn main() {
     };
     runtime.block_on(async {
         let control = Arc::new(FakeControl::sample());
+        // Share on the LAN with one app paired, so the Apps section has content.
+        {
+            let mut config = lock(&control.config);
+            config.subscription.lan = true;
+            // Each use on a service that needs no key; `cloud` is left without one.
+            config
+                .recognition
+                .set_engine(EngineRole::Dictation, "whisper");
+            config
+                .recognition
+                .set_engine(EngineRole::Continuous, "sherpa");
+            config.recognition.set_engine(EngineRole::Remote, "whisper");
+            lock(&control.status).lan = Lan::Listening {
+                url: "wss://192.168.1.20:7591/asr".to_owned(),
+                fingerprint: "3f:a9:0c:51".to_owned(),
+            };
+            lock(&control.clients).push(PairedClient {
+                id: "c1".to_owned(),
+                name: "Kitchen iPad".to_owned(),
+                scopes: vec![Scope::Dictate],
+                paired_at: 0,
+                last_seen: None,
+                connections: 1,
+            });
+        }
+        // A few lines debug mode would have recorded.
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            let mut activity = lock(&control.activity);
+            activity.push(Entry::Debug {
+                at: now - 5_000,
+                event: anya_runtime::DebugEvent::KeyDown {
+                    combo: "Fn".to_owned(),
+                },
+            });
+            activity.push(Entry::Debug {
+                at: now - 4_200,
+                event: anya_runtime::DebugEvent::KeyUp {
+                    combo: "Fn".to_owned(),
+                },
+            });
+            activity.push(Entry::Debug {
+                at: now - 3_700,
+                event: anya_runtime::DebugEvent::Timing {
+                    connect_ms: Some(210),
+                    first_text_ms: Some(830),
+                    final_ms: Some(480),
+                },
+            });
+        }
         let server = match web::serve(control.clone(), Arc::new(BrowserShell), addr).await {
             Ok(s) => s,
             Err(e) => {

@@ -10,9 +10,12 @@ use tao::event_loop::EventLoopProxy;
 use super::UserEvent;
 use crate::{Shell, ShellKind};
 
-/// Whether `url` may go to the system opener: a web page, nothing that
-/// runs a program or opens a local file.
+/// Whether `url` may go to the system opener: a web page or the privacy
+/// settings pane, nothing that runs a program or opens a local file.
 pub(crate) fn openable(url: &str) -> bool {
+    if url == crate::PRIVACY_SETTINGS_URL {
+        return true;
+    }
     let lower = url.to_ascii_lowercase();
     let rest = lower
         .strip_prefix("https://")
@@ -71,7 +74,7 @@ impl AppShell {
     }
 
     /// Whether the event loop took `event`; it is gone once the app ends.
-    fn send(&self, event: UserEvent) -> bool {
+    pub(super) fn send(&self, event: UserEvent) -> bool {
         let proxy = self.proxy.lock().unwrap_or_else(PoisonError::into_inner);
         proxy.send_event(event).is_ok()
     }
@@ -165,6 +168,7 @@ mod tests {
             "https://www.volcengine.com/docs/6561/1395867",
             "http://127.0.0.1:7590/",
             "HTTPS://platform.openai.com/docs",
+            crate::PRIVACY_SETTINGS_URL,
         ] {
             assert!(openable(ok), "{ok}");
         }
