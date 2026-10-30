@@ -97,7 +97,7 @@ async fn it_prints_everything_until_the_server_closes() {
 async fn it_stops_at_the_timeout() {
     let hub = hub();
     hub.set_source(Source::Continuous, SourceState::Listening, None);
-    let server = Server::start(hub, tcp(), None).await.expect("start");
+    let server = Server::start(hub, tcp(), None, None).await.expect("start");
     let run = capture(address_of(&server), None, Some(Duration::from_millis(300))).await;
     let exit = run.exit.expect("connected");
     assert_eq!(exit.reason, ExitReason::Timeout);

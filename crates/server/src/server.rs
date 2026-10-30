@@ -1,42 +1,47 @@
 //! The server: accepts subscribers and hands each the frames it is granted.
 
-use std::collections::HashSet;
 use std::fmt;
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anya_core::audio::CHUNK_MS;
 use anya_core::hub::{BUFFER, Hub};
-use anya_protocol::{Frame, PROTOCOL_VERSION, SessionId, Source};
+use anya_protocol::{Frame, PROTOCOL_VERSION, SUBPROTOCOL, TOKEN_SUBPROTOCOL_PREFIX};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
-use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::task::{JoinHandle, JoinSet};
+use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
-use tokio_tungstenite::tungstenite::http::header::ORIGIN;
+use tokio_tungstenite::tungstenite::http::header::{
+    AUTHORIZATION, HeaderValue, ORIGIN, SEC_WEBSOCKET_PROTOCOL,
+};
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::address::Address;
+use crate::clients::Clients;
+use crate::connection::{self, Live};
 use crate::discovery::DiscoveryFile;
+use crate::gateway::Gateway;
 use crate::socket::{self, SocketFile};
+use crate::tls::{TlsIdentity, lan_address};
 
 /// How long a connection gets to finish its WebSocket handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long closing a connection may take before the socket is dropped.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a LAN connection gets to finish its TLS handshake.
+const TLS_TIMEOUT: Duration = Duration::from_secs(5);
 /// Messages written before the socket is flushed.
 const BATCH: usize = 64;
 /// Realtime replay: the pause before each `result`.
@@ -89,6 +94,14 @@ pub enum ServerError {
         /// Why it is not a frame.
         reason: String,
     },
+    /// The TLS identity could not be made or loaded; existing files are left alone.
+    #[error("TLS identity {}: {reason}", .path.display())]
+    Tls {
+        /// The file or directory.
+        path: PathBuf,
+        /// What went wrong.
+        reason: String,
+    },
 }
 
 /// A running server. Dropping it stops accepting and disconnects every
@@ -114,10 +127,14 @@ impl fmt::Debug for Server {
 impl Server {
     /// Serves `hub`'s frames on `address`. With `discovery`, writes
     /// `{url, version, protocol, pid}` there (0600) and removes it on stop.
+    /// A connection without a token receives continuous transcription. With
+    /// a `gateway`, paired clients may also connect with their token and
+    /// dictate (docs/decisions/0009).
     pub async fn start(
         hub: Hub,
         address: Address,
         discovery: Option<PathBuf>,
+        gateway: Option<Gateway>,
     ) -> Result<Server, ServerError> {
         let (version, protocol) = match hub.subscribe().snapshot.first() {
             Some(Frame::Hello {
@@ -125,7 +142,12 @@ impl Server {
             }) => (version.clone(), *protocol),
             _ => (String::new(), PROTOCOL_VERSION),
         };
-        let mut server = launch(Feed::Live(hub), address).await?;
+        let live = Live {
+            hub,
+            gateway,
+            lan: false,
+        };
+        let mut server = launch(Feed::Live(live), address).await?;
         if let Some(path) = discovery {
             let file = DiscoveryFile::write(&path, &server.url, &version, protocol)
                 .map_err(|source| ServerError::Discovery { path, source })?;
@@ -134,8 +156,41 @@ impl Server {
         Ok(server)
     }
 
+    /// Serves the gateway to the local network: TLS on every interface at
+    /// `port` (0 for an ephemeral one), `wss://<lan address>:<port>/asr`.
+    /// Every connection needs a paired client's token, except one that
+    /// pairs; it receives nothing before it has one.
+    pub async fn start_lan(
+        hub: Hub,
+        gateway: Gateway,
+        port: u16,
+        identity: &TlsIdentity,
+    ) -> Result<Server, ServerError> {
+        let live = Live {
+            hub,
+            gateway: Some(gateway),
+            lan: true,
+        };
+        let any = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+        let listen_error = |source| ServerError::Listen {
+            address: any.to_string(),
+            source,
+        };
+        let listener = TcpListener::bind(any).await.map_err(listen_error)?;
+        let bound = listener.local_addr().map_err(listen_error)?;
+        let host = lan_address().map_or_else(|| "localhost".to_owned(), |ip| ip.to_string());
+        let url = format!("wss://{host}:{}{}", bound.port(), crate::PATH);
+        Ok(spawn(
+            Feed::Live(live),
+            Listener::Tcp(listener),
+            url,
+            None,
+            Some(identity.acceptor()),
+        ))
+    }
+
     /// What subscribers connect to: `ws://127.0.0.1:7590/asr` with the port
-    /// actually bound, or `unix:<path>`.
+    /// actually bound, `unix:<path>`, or for the LAN `wss://<address>:<port>/asr`.
     pub fn url(&self) -> String {
         self.url.clone()
     }
@@ -217,7 +272,7 @@ fn pace(kind: Option<&str>, preamble: &mut bool) -> Duration {
 #[derive(Clone)]
 enum Feed {
     /// The hub's snapshot, then its live frames.
-    Live(Hub),
+    Live(Live),
     /// Fixed messages, each after its pause.
     Replay(Arc<[(Message, Duration)]>),
 }
@@ -257,23 +312,42 @@ async fn launch(feed: Feed, address: Address) -> Result<Server, ServerError> {
             (Listener::Unix(listener), address.url(), Some(file))
         }
     };
+    Ok(spawn(feed, listener, url, socket, None))
+}
+
+/// Starts accepting on `listener`; with `tls`, every connection is wrapped
+/// in TLS first.
+fn spawn(
+    feed: Feed,
+    listener: Listener,
+    url: String,
+    socket: Option<SocketFile>,
+    tls: Option<TlsAcceptor>,
+) -> Server {
     let subscribers = Arc::new(AtomicUsize::new(0));
     let (stop, stopped) = watch::channel(false);
-    let task = tokio::spawn(accept(listener, feed, Arc::clone(&subscribers), stopped));
+    let task = tokio::spawn(accept(
+        listener,
+        feed,
+        tls,
+        Arc::clone(&subscribers),
+        stopped,
+    ));
     tracing::info!(%url, "serving subscribers");
-    Ok(Server {
+    Server {
         url,
         subscribers,
         stop,
         task: Some(task),
         socket,
         discovery: None,
-    })
+    }
 }
 
 async fn accept(
     listener: Listener,
     feed: Feed,
+    tls: Option<TlsAcceptor>,
     subscribers: Arc<AtomicUsize>,
     mut stop: watch::Receiver<bool>,
 ) {
@@ -287,9 +361,14 @@ async fn accept(
         };
         let (feed, subscribers, stop) = (feed.clone(), Arc::clone(&subscribers), stop.clone());
         match accepted {
-            Ok(Conn::Tcp(s)) => {
-                conns.spawn(serve(s, feed, subscribers, stop));
-            }
+            Ok(Conn::Tcp(s)) => match tls.clone() {
+                Some(acceptor) => {
+                    conns.spawn(secure(s, acceptor, feed, subscribers, stop));
+                }
+                None => {
+                    conns.spawn(serve(s, feed, subscribers, stop));
+                }
+            },
             Ok(Conn::Unix(s)) => {
                 conns.spawn(serve(s, feed, subscribers, stop));
             }
@@ -329,12 +408,12 @@ impl Drop for Counted {
     }
 }
 
-type Sink<S> = SplitSink<WebSocketStream<S>, Message>;
-type Inbound<S> = SplitStream<WebSocketStream<S>>;
+pub(crate) type Sink<S> = SplitSink<WebSocketStream<S>, Message>;
+pub(crate) type Inbound<S> = SplitStream<WebSocketStream<S>>;
 
 /// How a connection's run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum End {
+pub(crate) enum End {
     /// Everything was sent (replay).
     Done,
     /// The subscriber closed or the socket broke.
@@ -343,8 +422,39 @@ enum End {
     TooSlow,
     /// The server is stopping.
     Stopping,
+    /// The client this connection belongs to was removed.
+    Removed,
 }
 
+/// Finishes TLS on a LAN connection, then serves it.
+async fn secure(
+    stream: TcpStream,
+    acceptor: TlsAcceptor,
+    feed: Feed,
+    subscribers: Arc<AtomicUsize>,
+    mut stop: watch::Receiver<bool>,
+) {
+    let tls = tokio::select! {
+        _ = stop.wait_for(|s| *s) => return,
+        tls = tokio::time::timeout(TLS_TIMEOUT, acceptor.accept(stream)) => match tls {
+            Ok(Ok(tls)) => tls,
+            Ok(Err(e)) => {
+                tracing::debug!(error = %e, "TLS handshake failed");
+                return;
+            }
+            Err(_) => {
+                tracing::debug!("TLS handshake timed out");
+                return;
+            }
+        },
+    };
+    serve(tls, feed, subscribers, stop).await;
+}
+
+#[allow(
+    clippy::result_large_err,
+    reason = "the signature of tungstenite's handshake callback"
+)]
 async fn serve<S>(
     stream: S,
     feed: Feed,
@@ -353,9 +463,13 @@ async fn serve<S>(
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    let admission = feed.admission();
+    let mut client = None;
     let handshake = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
-        tokio_tungstenite::accept_hdr_async(stream, check_request),
+        tokio_tungstenite::accept_hdr_async(stream, |request: &Request, response: Response| {
+            check_request(request, response, &admission, &mut client)
+        }),
     );
     let ws = tokio::select! {
         _ = stop.wait_for(|s| *s) => return,
@@ -374,7 +488,7 @@ async fn serve<S>(
     let mut counted = Counted::new(subscribers);
     tracing::debug!("subscriber connected");
     let (mut sink, mut inbound) = ws.split();
-    let end = run(&mut sink, &mut inbound, feed, &mut stop).await;
+    let end = run(&mut sink, &mut inbound, feed, client, &mut stop).await;
     // From here on the subscriber receives nothing more.
     counted.release();
     let frame = |code, reason: String| {
@@ -390,29 +504,104 @@ async fn serve<S>(
         ),
         End::Stopping => frame(CloseCode::Away, "Anya is stopping".to_owned()),
         End::Done => frame(CloseCode::Normal, "end of replay".to_owned()),
+        End::Removed => frame(CloseCode::Policy, "client removed".to_owned()),
         End::Gone => None,
     };
     close(sink, inbound, close_frame).await;
     tracing::debug!(?end, "subscriber disconnected");
 }
 
-/// Refuses everything but `/asr`, and browser pages not served from
-/// loopback: a page on another site could otherwise read what Anya hears.
+/// What a handshake is checked against.
+struct Admission {
+    /// Whether a browser page from any site may connect: on the LAN the
+    /// token or pairing code is the guard, not the origin.
+    any_origin: bool,
+    /// The paired clients whose tokens are accepted; none without a gateway.
+    clients: Option<Clients>,
+}
+
+impl Feed {
+    fn admission(&self) -> Admission {
+        match self {
+            Feed::Live(live) => Admission {
+                any_origin: live.lan,
+                clients: live.gateway.as_ref().map(|g| g.clients.clone()),
+            },
+            Feed::Replay(_) => Admission {
+                any_origin: false,
+                clients: None,
+            },
+        }
+    }
+}
+
+/// Refuses everything but `/asr`; browser pages not served from loopback,
+/// unless the listener accepts any origin (a page on another site could
+/// otherwise read what Anya hears); and a token no paired client holds.
 /// A request without `Origin` comes from a local program and is accepted.
+/// The client a token names is left in `client`, and the subprotocol
+/// [`SUBPROTOCOL`] is selected when offered, never the one carrying the token.
 #[allow(
     clippy::result_large_err,
     reason = "the signature of tungstenite's handshake callback"
 )]
-fn check_request(request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+fn check_request(
+    request: &Request,
+    mut response: Response,
+    admission: &Admission,
+    client: &mut Option<String>,
+) -> Result<Response, ErrorResponse> {
     if request.uri().path() != crate::PATH {
         return Err(refuse(StatusCode::NOT_FOUND));
     }
-    if let Some(origin) = request.headers().get(ORIGIN)
+    if !admission.any_origin
+        && let Some(origin) = request.headers().get(ORIGIN)
         && !origin.to_str().is_ok_and(origin_is_loopback)
     {
         return Err(refuse(StatusCode::FORBIDDEN));
     }
+    if let Some(token) = token_of(request) {
+        let id = admission
+            .clients
+            .as_ref()
+            .and_then(|clients| clients.authenticate(&token));
+        *client = Some(id.ok_or_else(|| refuse(StatusCode::UNAUTHORIZED))?);
+    }
+    if subprotocols(request).any(|p| p == SUBPROTOCOL) {
+        response.headers_mut().insert(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static(SUBPROTOCOL),
+        );
+    }
     Ok(response)
+}
+
+/// The subprotocols a request offers.
+fn subprotocols(request: &Request) -> impl Iterator<Item = &str> {
+    request
+        .headers()
+        .get_all(SEC_WEBSOCKET_PROTOCOL)
+        .into_iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+}
+
+/// The token a request carries: `Authorization: Bearer <token>`, or a
+/// subprotocol `anya.token.<token>`.
+fn token_of(request: &Request) -> Option<String> {
+    let bearer = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, token)| token.trim().to_owned());
+    bearer.or_else(|| {
+        subprotocols(request)
+            .find_map(|p| p.strip_prefix(TOKEN_SUBPROTOCOL_PREFIX))
+            .map(str::to_owned)
+    })
 }
 
 fn refuse(status: StatusCode) -> ErrorResponse {
@@ -442,34 +631,19 @@ async fn run<S>(
     sink: &mut Sink<S>,
     inbound: &mut Inbound<S>,
     feed: Feed,
+    client: Option<String>,
     stop: &mut watch::Receiver<bool>,
 ) -> End
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    let (mut feeder, queued): (Pin<Box<dyn Future<Output = End> + Send>>, _) = match feed {
-        Feed::Live(hub) => {
-            let subscription = hub.subscribe();
-            let mut grant = Grant::default();
-            let snapshot: Vec<Message> = subscription
-                .snapshot
-                .iter()
-                .filter(|f| grant.admits(f))
-                .filter_map(encode)
-                .collect();
-            // Room for the snapshot on top of the frames a subscriber may
-            // fall behind (docs/protocol.md, promise 10).
-            let (queue, queued) = mpsc::channel(BUFFER + snapshot.len());
-            for message in snapshot {
-                let _ = queue.try_send(message);
-            }
-            (Box::pin(live(subscription.frames, grant, queue)), queued)
-        }
-        Feed::Replay(frames) => {
-            let (queue, queued) = mpsc::channel(BUFFER);
-            (Box::pin(replay(frames, queue)), queued)
-        }
+    let frames = match feed {
+        Feed::Live(live) => return connection::run(sink, inbound, live, client, stop).await,
+        Feed::Replay(frames) => frames,
     };
+    let (queue, queued) = mpsc::channel(BUFFER);
+    let feeder = replay(frames, queue);
+    tokio::pin!(feeder);
     let writer = write_queue(sink, queued);
     tokio::pin!(writer);
     loop {
@@ -478,7 +652,7 @@ where
             _ = stop.wait_for(|s| *s) => return End::Stopping,
             end = &mut feeder => return end,
             end = &mut writer => return end,
-            // Subscribers only listen: whatever they send is read and ignored.
+            // A replay only plays: whatever a subscriber sends is read and ignored.
             message = inbound.next() => match message {
                 Some(Ok(Message::Close(_)) | Err(_)) | None => return End::Gone,
                 Some(Ok(_)) => {}
@@ -488,7 +662,7 @@ where
 }
 
 /// Writes queued messages, flushing after each burst.
-async fn write_queue<S>(sink: &mut Sink<S>, mut queued: mpsc::Receiver<Message>) -> End
+pub(crate) async fn write_queue<S>(sink: &mut Sink<S>, mut queued: mpsc::Receiver<Message>) -> End
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -510,34 +684,6 @@ where
         }
     }
     End::Done
-}
-
-/// Moves granted live frames to the write queue. Never waits on the
-/// subscriber: a full queue means it is more than [`BUFFER`] frames behind.
-async fn live(
-    mut frames: broadcast::Receiver<Frame>,
-    mut grant: Grant,
-    queue: mpsc::Sender<Message>,
-) -> End {
-    loop {
-        match frames.recv().await {
-            Ok(frame) => {
-                if !grant.admits(&frame) {
-                    continue;
-                }
-                let Some(message) = encode(&frame) else {
-                    continue;
-                };
-                match queue.try_send(message) {
-                    Ok(()) => {}
-                    Err(TrySendError::Full(_)) => return End::TooSlow,
-                    Err(TrySendError::Closed(_)) => return End::Gone,
-                }
-            }
-            Err(RecvError::Lagged(_)) => return End::TooSlow,
-            Err(RecvError::Closed) => return End::Stopping,
-        }
-    }
 }
 
 /// Queues the replay's messages after their pauses, then lets the writer
@@ -576,45 +722,12 @@ where
     let _ = tokio::time::timeout(CLOSE_TIMEOUT, closing).await;
 }
 
-fn encode(frame: &Frame) -> Option<Message> {
+pub(crate) fn encode(frame: &Frame) -> Option<Message> {
     match serde_json::to_string(frame) {
         Ok(json) => Some(Message::text(json)),
         Err(e) => {
             tracing::warn!(error = %e, "a frame could not be encoded");
             None
-        }
-    }
-}
-
-/// The sources a subscriber receives, and its sessions of those sources.
-///
-/// Every subscriber is granted `continuous` only: dictation sessions, their
-/// levels and the dictation source never leave. How an app identifies itself
-/// and gets the user's grant for dictation is still open
-/// (docs/decisions/0007-downstream-apps.md, "Open"); the grant is per
-/// subscriber so that decision lands here.
-#[derive(Default)]
-struct Grant {
-    sessions: HashSet<SessionId>,
-}
-
-impl Grant {
-    fn granted(source: Source) -> bool {
-        source == Source::Continuous
-    }
-
-    fn admits(&mut self, frame: &Frame) -> bool {
-        match frame {
-            Frame::Hello { .. } => true,
-            Frame::Source { source, .. } => Grant::granted(*source),
-            Frame::SessionStart {
-                session, source, ..
-            } => Grant::granted(*source) && self.sessions.insert(session.clone()),
-            Frame::Result { session, .. } | Frame::Level { session, .. } => {
-                self.sessions.contains(session)
-            }
-            Frame::SessionEnd { session, .. } => self.sessions.remove(session),
-            Frame::Unknown => false,
         }
     }
 }

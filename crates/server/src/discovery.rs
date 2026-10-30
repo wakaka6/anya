@@ -1,9 +1,7 @@
 //! The discovery file: where this instance listens, so an app finds it
 //! instead of guessing a port (docs/decisions/0007).
 
-use std::fs::{DirBuilder, OpenOptions, Permissions};
-use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// A discovery file this server wrote, removed on stop only while it still
@@ -31,28 +29,7 @@ impl DiscoveryFile {
         });
         let mut contents = json.to_string().into_bytes();
         contents.push(b'\n');
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-        }
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(format!(".{}.tmp", std::process::id()));
-        let tmp = PathBuf::from(tmp);
-        let written = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .and_then(|mut f| {
-                f.set_permissions(Permissions::from_mode(0o600))?;
-                f.write_all(&contents)?;
-                f.sync_all()
-            })
-            .and_then(|()| std::fs::rename(&tmp, path));
-        if let Err(e) = written {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
+        crate::private::write(path, &contents)?;
         Ok(DiscoveryFile {
             path: path.to_path_buf(),
             contents,

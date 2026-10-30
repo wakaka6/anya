@@ -9,14 +9,22 @@
 //! client behind `anya subscribe`: it prints what it receives as NDJSON.
 
 mod address;
+mod clients;
+mod connection;
 mod discovery;
+mod gateway;
+mod private;
 mod server;
 mod socket;
 mod subscribe;
+mod tls;
 
 pub use address::{Address, AddressError, DEFAULT_ADDRESS, parse_address};
+pub use clients::{ClientInfo, Clients, ClientsError, PairingCode};
+pub use gateway::Gateway;
 pub use server::{Server, ServerError, start_replay};
 pub use subscribe::{ExitReason, SubscribeError, SubscribeExit, subscribe};
+pub use tls::{TlsIdentity, lan_address};
 
 /// The WebSocket path subscribers connect to: `ws://127.0.0.1:7590/asr`.
 pub const PATH: &str = "/asr";

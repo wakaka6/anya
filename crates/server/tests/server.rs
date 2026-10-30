@@ -26,7 +26,7 @@ async fn snapshot_then_live(address: Address) {
     hub.set_source(Source::Continuous, SourceState::Listening, device());
     let session = open(&hub, &engine, Source::Continuous).await;
     session.push(rec(&[("Hello", false)], false)).await;
-    let server = Server::start(hub.clone(), address, None)
+    let server = Server::start(hub.clone(), address, None, None)
         .await
         .expect("start");
     let mut client = connect(&server).await;
@@ -44,7 +44,7 @@ async fn snapshot_then_live(address: Address) {
         }
     );
     assert!(
-        matches!(&got[2], Frame::SessionStart { session: s, source: Source::Continuous, engine } if s == session.live.id() && engine == "fake")
+        matches!(&got[2], Frame::SessionStart { session: s, source: Source::Continuous, engine, .. } if s == session.live.id() && engine == "fake")
     );
     assert!(matches!(&got[3], Frame::Result { recognition, .. } if recognition.text == "Hello"));
     assert_eq!(server.subscribers(), 1);
@@ -78,7 +78,7 @@ async fn snapshot_then_live(address: Address) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tcp_subscriber_gets_the_snapshot_then_live_frames() {
     let hub = hub();
-    let server = Server::start(hub, tcp(), None).await.expect("start");
+    let server = Server::start(hub, tcp(), None, None).await.expect("start");
     let url = server.url();
     let port = url
         .strip_prefix("ws://127.0.0.1:")
@@ -110,7 +110,7 @@ async fn dictation_never_reaches_a_subscriber() {
     let dictation = open(&hub, &engine, Source::Dictation).await;
     dictation.push(rec(&[("secret", false)], false)).await;
     let continuous = open(&hub, &engine, Source::Continuous).await;
-    let server = Server::start(hub.clone(), tcp(), None)
+    let server = Server::start(hub.clone(), tcp(), None, None)
         .await
         .expect("start");
     let mut client = connect(&server).await;
@@ -181,7 +181,7 @@ async fn a_slow_subscriber_is_dropped_without_stalling_others() {
     let engine = FakeEngine::new();
     hub.set_source(Source::Continuous, SourceState::Listening, device());
     let session = open(&hub, &engine, Source::Continuous).await;
-    let server = Server::start(hub.clone(), tcp(), None)
+    let server = Server::start(hub.clone(), tcp(), None, None)
         .await
         .expect("start");
     let mut fast = connect(&server).await;
@@ -238,7 +238,7 @@ async fn a_slow_subscriber_is_dropped_without_stalling_others() {
 async fn subscribers_are_invisible_to_each_other() {
     let hub = hub();
     hub.set_source(Source::Continuous, SourceState::Listening, device());
-    let server = Server::start(hub.clone(), tcp(), None)
+    let server = Server::start(hub.clone(), tcp(), None, None)
         .await
         .expect("start");
     let mut a = connect(&server).await;
@@ -273,7 +273,9 @@ fn status(result: Result<Client, tungstenite::Error>) -> Option<u16> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn browser_pages_off_loopback_and_other_paths_are_refused() {
-    let server = Server::start(hub(), tcp(), None).await.expect("start");
+    let server = Server::start(hub(), tcp(), None, None)
+        .await
+        .expect("start");
     let url = server.url();
     for origin in [
         "https://example.com",
@@ -307,7 +309,7 @@ async fn browser_pages_off_loopback_and_other_paths_are_refused() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn what_a_subscriber_sends_is_ignored() {
     let hub = hub();
-    let server = Server::start(hub.clone(), tcp(), None)
+    let server = Server::start(hub.clone(), tcp(), None, None)
         .await
         .expect("start");
     let mut client = connect(&server).await;
@@ -338,7 +340,9 @@ async fn what_a_subscriber_sends_is_ignored() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stopping_disconnects_everyone_and_refuses_new_subscribers() {
-    let server = Server::start(hub(), tcp(), None).await.expect("start");
+    let server = Server::start(hub(), tcp(), None, None)
+        .await
+        .expect("start");
     let url = server.url();
     let mut client = connect(&server).await;
     assert!(matches!(next_frame(&mut client).await, Frame::Hello { .. }));

@@ -26,7 +26,7 @@ async fn a_path_that_is_not_a_socket_is_never_touched() {
     let link = dir.path().join("link");
     std::os::unix::fs::symlink(&file, &link).expect("symlink");
     for path in [&file, &sub, &link] {
-        let err = Server::start(hub(), Address::Unix(path.clone()), None)
+        let err = Server::start(hub(), Address::Unix(path.clone()), None, None)
             .await
             .expect_err("refused");
         assert!(
@@ -50,7 +50,7 @@ async fn a_stale_socket_is_replaced() {
     let path = dir.path().join("a.sock");
     drop(std::os::unix::net::UnixListener::bind(&path).expect("bind"));
     assert!(path.exists(), "the dead listener left its socket behind");
-    let server = Server::start(hub(), Address::Unix(path.clone()), None)
+    let server = Server::start(hub(), Address::Unix(path.clone()), None, None)
         .await
         .expect("a stale socket is replaced");
     let mut client = connect(&server).await;
@@ -62,10 +62,10 @@ async fn a_stale_socket_is_replaced() {
 async fn a_live_socket_is_refused_and_keeps_serving() {
     let dir = TempDir::new("live");
     let path = dir.path().join("a.sock");
-    let first = Server::start(hub(), Address::Unix(path.clone()), None)
+    let first = Server::start(hub(), Address::Unix(path.clone()), None, None)
         .await
         .expect("start");
-    let err = Server::start(hub(), Address::Unix(path.clone()), None)
+    let err = Server::start(hub(), Address::Unix(path.clone()), None, None)
         .await
         .expect_err("a second instance is refused");
     assert!(matches!(err, ServerError::InUse(_)), "{err}");
@@ -78,7 +78,7 @@ async fn a_live_socket_is_refused_and_keeps_serving() {
 async fn a_missing_directory_is_an_error() {
     let dir = TempDir::new("nodir");
     let missing = dir.path().join("missing");
-    let err = Server::start(hub(), Address::Unix(missing.join("a.sock")), None)
+    let err = Server::start(hub(), Address::Unix(missing.join("a.sock")), None, None)
         .await
         .expect_err("refused");
     assert!(
@@ -92,7 +92,7 @@ async fn a_missing_directory_is_an_error() {
 async fn the_socket_is_owner_only_and_removed_on_stop() {
     let dir = TempDir::new("mode");
     let path = dir.path().join("a.sock");
-    let server = Server::start(hub(), Address::Unix(path.clone()), None)
+    let server = Server::start(hub(), Address::Unix(path.clone()), None, None)
         .await
         .expect("start");
     assert_eq!(server.url(), format!("unix:{}", path.display()));
@@ -109,6 +109,7 @@ async fn the_discovery_file_says_where_anya_listens_until_it_stops() {
         hub(),
         parse_address("127.0.0.1:0").expect("address"),
         Some(file.clone()),
+        None,
     )
     .await
     .expect("start");
@@ -139,6 +140,7 @@ async fn a_discovery_file_that_cannot_be_written_stops_the_start() {
         hub(),
         Address::Unix(socket.clone()),
         Some(blocker.join("discovery.json")),
+        None,
     )
     .await
     .expect_err("refused");

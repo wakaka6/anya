@@ -13,9 +13,14 @@ use common::*;
 async fn a_signal_ends_the_run() {
     let hub = hub();
     hub.set_source(Source::Continuous, SourceState::Listening, None);
-    let server = Server::start(hub, parse_address("127.0.0.1:0").expect("address"), None)
-        .await
-        .expect("start");
+    let server = Server::start(
+        hub,
+        parse_address("127.0.0.1:0").expect("address"),
+        None,
+        None,
+    )
+    .await
+    .expect("start");
     for signal in ["-INT", "-TERM"] {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let send = async {
