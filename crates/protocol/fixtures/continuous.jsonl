@@ -1,11 +1,11 @@
 {"type":"hello","name":"anya","version":"0.1.0","protocol":0}
 {"type":"source","source":"continuous","state":"listening","device":"BlackHole 2ch"}
-{"type":"session_start","session":"anya-20261030T101500-2","source":"continuous","engine":"example"}
+{"type":"session_start","session":"anya-20261030T101500-2","source":"continuous","engine":"example","streaming":true}
 {"type":"result","session":"anya-20261030T101500-2","text":"Let's start","utterances":[{"text":"Let's start","definite":false}],"final":false}
 {"type":"result","session":"anya-20261030T101500-2","text":"Let's start with the roadmap. Anya","utterances":[{"text":"Let's start with the roadmap.","definite":true},{"text":" Anya","definite":false}],"final":false}
 {"type":"result","session":"anya-20261030T101500-2","text":"Let's start with the roadmap. Anya ships in May.","utterances":[{"text":"Let's start with the roadmap.","definite":true},{"text":" Anya ships in May.","definite":true}],"final":true}
 {"type":"session_end","session":"anya-20261030T101500-2","reason":"final"}
-{"type":"session_start","session":"anya-20261030T101500-3","source":"continuous","engine":"example"}
+{"type":"session_start","session":"anya-20261030T101500-3","source":"continuous","engine":"example","streaming":true}
 {"type":"result","session":"anya-20261030T101500-3","text":"Questions?","utterances":[{"text":"Questions?","definite":true}],"final":true}
 {"type":"session_end","session":"anya-20261030T101500-3","reason":"final"}
 {"type":"source","source":"continuous","state":"idle","device":"BlackHole 2ch"}

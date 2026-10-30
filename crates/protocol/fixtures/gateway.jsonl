@@ -1,0 +1,16 @@
+{"type":"hello","name":"anya","version":"0.1.0","protocol":0}
+{"type":"dictation_accepted","request_id":"ios-1","session":"anya-20261030T101500-8","streaming":true}
+{"type":"session_start","session":"anya-20261030T101500-8","source":"dictation","engine":"example","streaming":true}
+{"type":"level","session":"anya-20261030T101500-8","level":0.5}
+{"type":"result","session":"anya-20261030T101500-8","text":"明天","utterances":[{"text":"明天","definite":false}],"final":false}
+{"type":"level","session":"anya-20261030T101500-8","level":0.375}
+{"type":"refused","request_id":"ios-2","reason":"busy"}
+{"type":"result","session":"anya-20261030T101500-8","text":"明天下午三点开会","utterances":[{"text":"明天下午三点开会","definite":false}],"final":false}
+{"type":"result","session":"anya-20261030T101500-8","text":"明天下午三点开会。","utterances":[{"text":"明天下午三点开会。","definite":true}],"final":true}
+{"type":"session_end","session":"anya-20261030T101500-8","reason":"final"}
+{"type":"dictation_accepted","request_id":"ios-3","session":"anya-20261030T101500-9","streaming":false}
+{"type":"session_start","session":"anya-20261030T101500-9","source":"dictation","engine":"batch-example","streaming":false}
+{"type":"level","session":"anya-20261030T101500-9","level":0.625}
+{"type":"level","session":"anya-20261030T101500-9","level":0.25}
+{"type":"result","session":"anya-20261030T101500-9","text":"Send it tonight.","utterances":[{"text":"Send it tonight.","definite":true}],"final":true}
+{"type":"session_end","session":"anya-20261030T101500-9","reason":"final"}

@@ -57,9 +57,26 @@ fn session_start() {
             session: session(),
             source: Source::Dictation,
             engine: "example".to_owned(),
+            streaming: true,
         },
-        json!({"type": "session_start", "session": "anya-20261030T101500-1", "source": "dictation", "engine": "example"}),
+        json!({"type": "session_start", "session": "anya-20261030T101500-1", "source": "dictation", "engine": "example", "streaming": true}),
     );
+}
+
+// An older Anya sent no `streaming`; its sessions read as batch ones.
+#[test]
+fn session_start_without_streaming_reads_as_batch() {
+    let read: Frame = serde_json::from_value(
+        json!({"type": "session_start", "session": "s", "source": "dictation", "engine": "e"}),
+    )
+    .expect("decode");
+    assert!(matches!(
+        read,
+        Frame::SessionStart {
+            streaming: false,
+            ..
+        }
+    ));
 }
 
 #[test]

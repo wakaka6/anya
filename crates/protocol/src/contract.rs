@@ -125,6 +125,7 @@ mod tests {
             session: id(n),
             source: Source::Continuous,
             engine: "example".into(),
+            streaming: true,
         }
     }
 

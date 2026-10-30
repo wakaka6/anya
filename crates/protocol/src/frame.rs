@@ -127,6 +127,11 @@ pub enum Frame {
         source: Source,
         /// The engine's manifest id.
         engine: String,
+        /// Partial results arrive while audio is still being sent. False for
+        /// a batch engine: its only result is the final one, after the audio
+        /// ends. An older Anya omits it; it reads as false.
+        #[serde(default)]
+        streaming: bool,
     },
     /// A recognition result.
     Result {
