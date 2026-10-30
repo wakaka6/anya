@@ -24,6 +24,8 @@ pub use hotwords::{HotwordsFile, read_hotwords};
 pub const DEFAULT_ENGINE: &str = "doubao";
 /// The subscription address used when the config names none.
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:7590";
+/// The LAN sharing port used when the config names none.
+pub const DEFAULT_LAN_PORT: u16 = 7591;
 /// Recognition languages the UIs offer, BCP-47; empty is auto-detect. A
 /// configured tag outside the list is kept and shown as itself.
 pub const LANGUAGES: &[&str] = &[
@@ -38,7 +40,7 @@ pub struct Config {
     pub ui: Ui,
     /// Hotkey dictation into the focused field.
     pub dictation: Dictation,
-    /// Transcribing a device, usually a loopback one, for subscribers.
+    /// Transcribing what the computer plays, or another device, for subscribers.
     pub continuous: Continuous,
     /// Which engine recognizes, and what it is told.
     pub recognition: Recognition,
@@ -46,6 +48,8 @@ pub struct Config {
     pub audio: Audio,
     /// The subscriber server.
     pub subscription: Subscription,
+    /// Engine plugins.
+    pub plugins: Plugins,
     /// The recording overlay.
     pub overlay: Overlay,
     /// Development aids.
@@ -137,7 +141,8 @@ pub struct Continuous {
     pub enabled: bool,
     /// A hotkey that switches the service on and off; empty for none.
     pub hotkey: String,
-    /// Input device id or name, usually a loopback device; empty is the default.
+    /// Input device id or name; empty is system sound, what the computer plays
+    /// through its default output.
     pub device: String,
     /// Cut speech into sessions at silences, uploading nothing while quiet.
     pub silence_gate: bool,
@@ -158,8 +163,12 @@ impl Default for Continuous {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Recognition {
-    /// The engine's manifest id.
-    pub engine: String,
+    /// The engine id dictation sessions open on.
+    pub dictation: String,
+    /// The engine id continuous transcription opens on.
+    pub continuous: String,
+    /// The engine id paired apps' remote dictation opens on.
+    pub remote: String,
     /// BCP-47 tag; empty leaves it to the engine.
     pub language: String,
     /// Words to favour.
@@ -174,7 +183,9 @@ pub struct Recognition {
 impl Default for Recognition {
     fn default() -> Recognition {
         Recognition {
-            engine: DEFAULT_ENGINE.to_owned(),
+            dictation: DEFAULT_ENGINE.to_owned(),
+            continuous: DEFAULT_ENGINE.to_owned(),
+            remote: DEFAULT_ENGINE.to_owned(),
             language: "zh-CN".to_owned(),
             hotwords: Vec::new(),
             hotwords_file: String::new(),
@@ -184,12 +195,39 @@ impl Default for Recognition {
 }
 
 impl Recognition {
-    /// The chosen engine id; the default when blank.
-    pub fn engine_id(&self) -> &str {
-        match self.engine.trim() {
+    /// The engine id chosen for `role`; the default when blank.
+    pub fn engine_id(&self, role: EngineRole) -> &str {
+        let id = match role {
+            EngineRole::Dictation => &self.dictation,
+            EngineRole::Continuous => &self.continuous,
+            EngineRole::Remote => &self.remote,
+        };
+        match id.trim() {
             "" => DEFAULT_ENGINE,
             id => id,
         }
+    }
+
+    /// Sets the engine for `role`.
+    pub fn set_engine(&mut self, role: EngineRole, id: &str) {
+        let slot = match role {
+            EngineRole::Dictation => &mut self.dictation,
+            EngineRole::Continuous => &mut self.continuous,
+            EngineRole::Remote => &mut self.remote,
+        };
+        id.clone_into(slot);
+    }
+
+    /// Every engine id in use, each once, in role order.
+    pub fn engines_in_use(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = Vec::new();
+        for role in EngineRole::ALL {
+            let id = self.engine_id(role);
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        ids
     }
 
     /// The settings of engine `id`; empty when it has none.
@@ -200,6 +238,36 @@ impl Recognition {
     /// The language as a session wants it.
     pub fn language(&self) -> Option<String> {
         Some(self.language.trim().to_owned()).filter(|l| !l.is_empty())
+    }
+}
+
+/// What a session is for; each picks its own engine under `[recognition]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineRole {
+    /// Hotkey dictation on this computer.
+    Dictation,
+    /// Continuous transcription for subscribers.
+    Continuous,
+    /// Dictation sent by paired apps over the gateway.
+    Remote,
+}
+
+impl EngineRole {
+    /// Every role, in the order UIs list them.
+    pub const ALL: [EngineRole; 3] = [
+        EngineRole::Dictation,
+        EngineRole::Continuous,
+        EngineRole::Remote,
+    ];
+
+    /// The key under `[recognition]`, also the field name UIs report.
+    pub fn key(self) -> &'static str {
+        match self {
+            EngineRole::Dictation => "dictation",
+            EngineRole::Continuous => "continuous",
+            EngineRole::Remote => "remote",
+        }
     }
 }
 
@@ -217,12 +285,19 @@ pub struct Audio {
 pub struct Subscription {
     /// Loopback `host:port` or `unix:<path>`; empty is the default.
     pub address: String,
+    /// LAN sharing: also accept paired apps on the local network over TLS.
+    /// Off by default; the loopback address above is unaffected.
+    pub lan: bool,
+    /// The TCP port of the LAN listener.
+    pub lan_port: u16,
 }
 
 impl Default for Subscription {
     fn default() -> Subscription {
         Subscription {
             address: DEFAULT_ADDRESS.to_owned(),
+            lan: false,
+            lan_port: DEFAULT_LAN_PORT,
         }
     }
 }
@@ -234,6 +309,27 @@ impl Subscription {
             "" => DEFAULT_ADDRESS,
             a => a,
         }
+    }
+}
+
+/// `[plugins]`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct Plugins {
+    /// URL (`https://` or `file://`) of the registry index; empty is the
+    /// anyahq-plugins registry.
+    pub index: String,
+    /// The user's choice per built-in plugin id: `false` turns it off. A
+    /// plugin with no row is on, and one in use stays on whatever its row says
+    /// (docs/decisions/0012).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub builtin: BTreeMap<String, bool>,
+}
+
+impl Plugins {
+    /// The index URL when the config names one.
+    pub fn index(&self) -> Option<&str> {
+        Some(self.index.trim()).filter(|u| !u.is_empty())
     }
 }
 
@@ -286,7 +382,10 @@ impl Default for Overlay {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Debug {
-    /// Extra hotkeys whose edges are logged with `--debug`.
+    /// The activity log also records hotkey edges and the timing of each
+    /// dictation session.
+    pub enabled: bool,
+    /// Extra hotkeys whose edges are recorded while `enabled`.
     pub hotkeys: Vec<String>,
 }
 
@@ -298,8 +397,8 @@ pub enum Problem {
     UnknownPosition(String),
     /// `[overlay] scale` is not a positive number.
     BadScale,
-    /// `[recognition] engine` names no engine Anya has.
-    UnknownEngine(String),
+    /// The engine for a role names no engine Anya has.
+    UnknownEngine(EngineRole, String),
 }
 
 impl Config {
@@ -313,9 +412,11 @@ impl Config {
         if !(self.overlay.scale.is_finite() && self.overlay.scale > 0.0) {
             out.push(Problem::BadScale);
         }
-        let engine = self.recognition.engine_id();
-        if !engines.contains(&engine) {
-            out.push(Problem::UnknownEngine(engine.to_owned()));
+        for role in EngineRole::ALL {
+            let engine = self.recognition.engine_id(role);
+            if !engines.contains(&engine) {
+                out.push(Problem::UnknownEngine(role, engine.to_owned()));
+            }
         }
         out
     }
@@ -369,6 +470,12 @@ pub fn default_path() -> Result<PathBuf, ConfigError> {
 /// `$XDG_STATE_HOME/anya`, else `~/.local/state/anya`.
 pub fn state_dir() -> Result<PathBuf, ConfigError> {
     xdg("XDG_STATE_HOME", ".local/state").ok_or(ConfigError::NoHome)
+}
+
+/// Where plugins and the runtime that runs them live:
+/// `$XDG_DATA_HOME/anya`, else `~/.local/share/anya`.
+pub fn data_dir() -> Result<PathBuf, ConfigError> {
+    xdg("XDG_DATA_HOME", ".local/share").ok_or(ConfigError::NoHome)
 }
 
 /// Where a running instance says where it listens: `$XDG_RUNTIME_DIR/anya`,
@@ -519,6 +626,32 @@ mod tests {
     }
 
     #[test]
+    fn lan_sharing_is_off_until_asked_for() {
+        let dir = temp();
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("lan.toml");
+        let cfg = Config::default();
+        assert!(!cfg.subscription.lan);
+        assert_eq!(cfg.subscription.lan_port, 7591);
+        std::fs::write(&path, "[subscription]\nlan = true\nlan_port = 9000\n").expect("write");
+        let cfg = load(&path).expect("load");
+        assert!(cfg.subscription.lan);
+        assert_eq!(cfg.subscription.lan_port, 9000);
+        assert_eq!(cfg.subscription.address(), DEFAULT_ADDRESS);
+    }
+
+    #[test]
+    fn the_plugin_index_is_the_registry_unless_named() {
+        let dir = temp();
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("plugins.toml");
+        assert_eq!(Config::default().plugins.index(), None);
+        std::fs::write(&path, "[plugins]\nindex = \" file:///i.json \"\n").expect("write");
+        let cfg = load(&path).expect("load");
+        assert_eq!(cfg.plugins.index(), Some("file:///i.json"));
+    }
+
+    #[test]
     fn a_typo_is_an_error_with_its_place() {
         let dir = temp();
         std::fs::create_dir_all(&dir).expect("dir");
@@ -562,13 +695,13 @@ mod tests {
         assert_eq!(cfg.problems(&["doubao"]), []);
         cfg.overlay.position = "middle".into();
         cfg.overlay.scale = 0.0;
-        cfg.recognition.engine = "nope".into();
+        cfg.recognition.continuous = "nope".into();
         assert_eq!(
             cfg.problems(&["doubao"]),
             [
                 Problem::UnknownPosition("middle".into()),
                 Problem::BadScale,
-                Problem::UnknownEngine("nope".into())
+                Problem::UnknownEngine(EngineRole::Continuous, "nope".into())
             ]
         );
     }
