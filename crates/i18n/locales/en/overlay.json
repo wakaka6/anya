@@ -1,9 +1,10 @@
 {
   "overlay.listening": "Listening",
   "overlay.recognizing": "Recognizing",
+  "overlay.idle": "Idle",
   "overlay.copied": "Copied",
   "overlay.pasted": "Pasted",
   "overlay.transcribed": "Transcribed",
   "overlay.cancelled": "Cancelled",
-  "overlay.retry_hint": "Press R to retry"
+  "overlay.sample_text": "Meet at three tomorrow, remember"
 }

@@ -1,9 +1,10 @@
 {
   "overlay.listening": "正在聆听",
   "overlay.recognizing": "识别中",
+  "overlay.idle": "空闲",
   "overlay.copied": "已复制",
   "overlay.pasted": "已上屏",
   "overlay.transcribed": "已转写",
   "overlay.cancelled": "已取消",
-  "overlay.retry_hint": "按 R 重试"
+  "overlay.sample_text": "明天下午三点开会，记得"
 }

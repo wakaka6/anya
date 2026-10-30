@@ -4,5 +4,7 @@
   "tray.show_panel": "Show Panel",
   "tray.open_settings": "Open Settings",
   "tray.quit": "Quit",
-  "tray.pick_file": "Choose a File"
+  "tray.pick_file": "Choose a File",
+  "tray.edit": "Edit",
+  "tray.window_menu": "Window"
 }
