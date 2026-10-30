@@ -479,7 +479,7 @@ fn check_takes_an_api_key_or_an_app_id_with_an_access_key() {
     );
     assert_eq!(
         engine.check(&settings(&[("api_key", "k"), ("model_version", "3.0")])),
-        missing("model_version")
+        Err(EngineError::Invalid("model_version".to_owned()))
     );
 }
 
