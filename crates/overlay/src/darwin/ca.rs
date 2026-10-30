@@ -8,16 +8,19 @@ use std::time::Duration;
 use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly, Message, sel};
+use objc2::{
+    AllocAnyThread, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSEvent, NSFont, NSFontAttributeName, NSPanel, NSScreen,
     NSStringDrawing, NSStringDrawingOptions, NSStringNSExtendedStringDrawing, NSView,
     NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowLevel, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGColor, CGMutablePath, CGPath};
+use objc2_core_graphics::{CGColor, CGContext, CGMutablePath, CGPath};
 use objc2_foundation::{
-    NSArray, NSAttributedStringKey, NSDictionary, NSNumber, NSObjectProtocol, NSString, NSValue,
+    NSArray, NSAttributedStringKey, NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString,
+    NSValue,
 };
 use objc2_quartz_core::{
     CABasicAnimation, CAGradientLayer, CALayer, CAMediaTiming, CAMediaTimingFunction, CAShapeLayer,
@@ -310,15 +313,46 @@ pub(super) fn text_height(attrs: &Attrs, text: &str, width: f64) -> f64 {
     r.size.height
 }
 
-/// A text layer drawing at the screen's backing scale.
-pub(super) fn text_layer(font: &NSFont) -> Retained<CATextLayer> {
-    let layer = CATextLayer::new();
+define_class!(
+    /// A text layer whose bitmap is opaque: it paints its background colour
+    /// before the glyphs, since Core Animation does not clear an opaque
+    /// layer's bitmap between draws.
+    // SAFETY: CATextLayer may be subclassed; the one override calls the
+    // superclass and draws only into the context it is handed.
+    #[unsafe(super(CATextLayer, CALayer, NSObject))]
+    #[name = "AnyaOpaqueTextLayer"]
+    struct OpaqueTextLayer;
+
+    impl OpaqueTextLayer {
+        #[unsafe(method(drawInContext:))]
+        fn draw_in_context(&self, ctx: &CGContext) {
+            CGContext::set_fill_color_with_color(Some(ctx), self.backgroundColor().as_deref());
+            CGContext::fill_rect(Some(ctx), self.bounds());
+            CGContext::set_allows_font_smoothing(Some(ctx), true);
+            CGContext::set_should_smooth_fonts(Some(ctx), true);
+            // SAFETY: CATextLayer's own drawInContext:, with the context
+            // Core Animation passed in.
+            let () = unsafe { msg_send![super(self), drawInContext: ctx] };
+        }
+    }
+);
+
+/// A text layer on `backdrop`, the colour behind it. Core Text smooths
+/// glyphs only in an opaque bitmap; on a clear layer they draw thinner and
+/// fainter than AppKit's text.
+pub(super) fn text_layer(font: &NSFont, backdrop: (f64, f64, f64)) -> Retained<CATextLayer> {
+    // SAFETY: `init` is NSObject's designated initializer, which
+    // OpaqueTextLayer inherits unchanged.
+    let layer: Retained<OpaqueTextLayer> = unsafe { msg_send![OpaqueTextLayer::alloc(), init] };
+    let layer = Retained::into_super(layer);
     // SAFETY: NSFont is toll-free bridged with CTFont, one of the types
     // `font` takes.
     let cf: &CFType = unsafe { &*ptr::from_ref(font).cast::<CFType>() };
     // SAFETY: as above.
     unsafe { layer.setFont(Some(cf)) };
     layer.setFontSize(font.pointSize());
+    layer.setBackgroundColor(Some(&rgb(backdrop.0, backdrop.1, backdrop.2, 1.0)));
+    layer.setOpaque(true);
     layer
 }
 

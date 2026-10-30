@@ -15,6 +15,8 @@ const RED: (f64, f64, f64) = (1.0, 0.27, 0.23);
 const ORANGE: (f64, f64, f64) = (1.0, 0.58, 0.0);
 const GREEN: (f64, f64, f64) = (0.20, 0.78, 0.35);
 const GREY: (f64, f64, f64) = (0.57, 0.57, 0.57);
+/// The pill's colour, opaque so its text layers can fill behind their glyphs.
+const PILL: (f64, f64, f64) = (0.08, 0.08, 0.08);
 
 pub(super) struct Capsule {
     mtm: MainThreadMarker,
@@ -37,14 +39,14 @@ impl Capsule {
         let s = scale;
         let (panel, root) = ca::panel(mtm, NSFloatingWindowLevel, true);
         let pill = CALayer::new();
-        pill.setBackgroundColor(Some(&ca::rgb(0.08, 0.08, 0.08, 0.94)));
+        pill.setBackgroundColor(Some(&ca::rgb(PILL.0, PILL.1, PILL.2, 1.0)));
         root.addSublayer(&pill);
         let dot = CALayer::new();
         pill.addSublayer(&dot);
         let label_font = NSFont::boldSystemFontOfSize(13.0 * s);
         let detail_font = NSFont::systemFontOfSize(12.0 * s);
-        let label = ca::text_layer(&label_font);
-        let detail = ca::text_layer(&detail_font);
+        let label = ca::text_layer(&label_font, PILL);
+        let detail = ca::text_layer(&detail_font, PILL);
         detail.setForegroundColor(Some(&ca::rgb(0.96, 0.96, 0.96, 0.7)));
         pill.addSublayer(&label);
         pill.addSublayer(&detail);

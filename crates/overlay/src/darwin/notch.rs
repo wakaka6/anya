@@ -22,6 +22,8 @@ use crate::{Labels, Style, View};
 const RED: (f64, f64, f64) = (1.0, 0.27, 0.23);
 const ORANGE: (f64, f64, f64) = (1.0, 0.58, 0.0);
 const GREY: (f64, f64, f64) = (0.57, 0.57, 0.57);
+/// The notch's black, which its text layers fill behind their glyphs.
+const BODY: (f64, f64, f64) = (0.0, 0.0, 0.0);
 const FRAME: Duration = Duration::from_micros(16_667);
 const TYPE: Duration = Duration::from_millis(30);
 
@@ -161,7 +163,7 @@ impl Notch {
         let (panel, root) = ca::panel(mtm, NSMainMenuWindowLevel + 2, false);
 
         let body = CALayer::new();
-        body.setBackgroundColor(Some(&ca::rgb(0.0, 0.0, 0.0, 1.0)));
+        body.setBackgroundColor(Some(&ca::rgb(BODY.0, BODY.1, BODY.2, 1.0)));
         let mask = CAShapeLayer::new();
         mask.setFillColor(Some(&ca::rgb(0.0, 0.0, 0.0, 1.0)));
         let mask_layer: &CALayer = &mask;
@@ -202,15 +204,15 @@ impl Notch {
         let line_h = ca::text_size(&text_attrs, "测Ag").height.ceil();
         let label_h = ca::text_size(&label_attrs, "00:00").height.ceil();
 
-        let right = ca::text_layer(&label_font);
+        let right = ca::text_layer(&label_font, BODY);
         // SAFETY: as above.
         unsafe {
             right.setAlignmentMode(kCAAlignmentRight);
             right.setTruncationMode(kCATruncationEnd);
         }
         body.addSublayer(&right);
-        let text = ca::text_layer(&text_font);
-        let hint = ca::text_layer(&text_font);
+        let text = ca::text_layer(&text_font, BODY);
+        let hint = ca::text_layer(&text_font, BODY);
         for layer in [&text, &hint] {
             // SAFETY: as above.
             unsafe {
