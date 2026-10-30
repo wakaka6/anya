@@ -213,6 +213,8 @@ impl Control for Pretend {
                 source: Source::Dictation,
                 text: "Hello from the pretend engine.".to_owned(),
                 delivered: Delivered::Pasted,
+                session: None,
+                engine: None,
             });
         }
         let done = u64::try_from(finals).unwrap_or(0);

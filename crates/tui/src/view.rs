@@ -4,22 +4,25 @@ use anya_config::DEFAULT_ADDRESS;
 use anya_core::audio::DeviceKind;
 use anya_protocol::{FieldKind, Manifest, Source};
 use anya_runtime::{
-    DebugEvent, Delivered, Dictation, Entry, Lan, Notice, PluginLoad, Subscription,
+    DebugEvent, Delivered, Dictation, Entry, Lan, Notice, PluginLoad, Subscription, UpdateState,
+    UpdateVia,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Group, Level, LineEdit, Screen, SettingEdit, choices};
-use crate::form::{FIELDS, Field, Kind};
+use crate::app::{App, Focus, Group, Level, LineEdit, Screen, SettingEdit, choices};
+use crate::form::{FIELDS, Field, Kind, Tab};
 use anya_config::EngineRole;
 
-const LOG_LINES: usize = 5;
-const LOG_LINES_EXPANDED: usize = 100;
 const MODAL_WIDTH: u16 = 84;
+/// Terminal width from which the panels sit side by side.
+const WIDE: u16 = 90;
+/// Cells of the input level bar.
+const METER: usize = 12;
 
 fn title() -> Style {
     Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
@@ -43,74 +46,65 @@ fn error() -> Style {
         .fg(Color::LightRed)
         .add_modifier(Modifier::BOLD)
 }
+/// The row under the cursor.
+fn selected() -> Style {
+    Style::new().bg(Color::Indexed(237))
+}
 fn dim() -> Style {
     Style::new().fg(Color::DarkGray)
 }
 
-/// Draws the whole screen.
+/// Draws the whole screen: the status and the activity on the left, the
+/// settings on the right, what the selected setting is for below.
 pub(crate) fn draw(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
-    // Title, stats, settings header, status header and its three lines, log
-    // header, footer.
-    let fixed = 9usize;
-    let log_rows = if app.log_expanded {
-        usize::from(area.height)
-            .saturating_sub(fixed + 8)
-            .clamp(LOG_LINES, LOG_LINES_EXPANDED)
-    } else {
-        LOG_LINES
-    };
-    let [
-        head,
-        stats,
-        form_head,
-        form,
-        status_head,
-        status,
-        log_head,
-        log,
-        foot,
-    ] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
+    let about = about_lines(app, area.width.saturating_sub(4));
+    let about_rows = u16::try_from(about.len() + 2).unwrap_or(u16::MAX);
+    let [head, body, desc, foot] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Length(1),
-        Constraint::Length(u16::try_from(log_rows).unwrap_or(u16::MAX)),
+        Constraint::Length(about_rows),
         Constraint::Length(1),
     ])
     .areas(area);
 
-    let c = &app.catalog;
+    frame.render_widget(Paragraph::new(header(app, head.width)), head);
+    let c = app.catalog.clone();
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(c.t("common.app_name"), title()),
-            Span::raw("  "),
-            Span::styled(c.t("tui.tagline"), dim()),
-        ])),
-        head,
+        Paragraph::new(framed(
+            c.t("tui.section.about"),
+            padded(about, usize::from(about_rows) - 2),
+            desc.width,
+            false,
+        )),
+        desc,
     );
-    frame.render_widget(Paragraph::new(stats_line(app)), stats);
-    frame.render_widget(
-        Paragraph::new(section(c.t("tui.section.settings"))),
-        form_head,
-    );
-    draw_form(app, frame, form);
-    let c = &app.catalog;
-    frame.render_widget(
-        Paragraph::new(section(c.t("tui.section.status"))),
-        status_head,
-    );
-    frame.render_widget(Paragraph::new(status_lines(app)), status);
-    let log_title = if app.log_expanded {
-        "tui.section.log_expanded"
+    if app.log_expanded {
+        draw_activity(app, frame, body);
+    } else if body.width >= WIDE {
+        let left_width = (body.width * 2 / 5).clamp(48, 64);
+        let [left, right] =
+            Layout::horizontal([Constraint::Length(left_width), Constraint::Min(30)]).areas(body);
+        let status_rows = status_body(app, usize::from(left_width).saturating_sub(4)).len() + 2;
+        let [top, bottom] = Layout::vertical([
+            Constraint::Length(
+                u16::try_from(status_rows)
+                    .unwrap_or(u16::MAX)
+                    .min(left.height / 2),
+            ),
+            Constraint::Min(3),
+        ])
+        .areas(left);
+        draw_status(app, frame, top);
+        draw_form(app, frame, bottom);
+        draw_activity(app, frame, right);
     } else {
-        "tui.section.log"
-    };
-    frame.render_widget(Paragraph::new(section(c.t(log_title))), log_head);
-    frame.render_widget(Paragraph::new(log_lines(app, log_rows)), log);
+        match app.focus {
+            Focus::Status => draw_status(app, frame, body),
+            Focus::Activity => draw_activity(app, frame, body),
+            Focus::Settings => draw_form(app, frame, body),
+        }
+    }
     frame.render_widget(Paragraph::new(footer(app)), foot);
 
     match app.screen.clone() {
@@ -122,8 +116,170 @@ pub(crate) fn draw(app: &mut App, frame: &mut Frame) {
     }
 }
 
-fn section(name: &str) -> Line<'static> {
-    Line::styled(format!("── {name} ──"), dim())
+/// The app name, and what dictation is doing at the right edge.
+fn header(app: &App, width: u16) -> Line<'static> {
+    let c = &app.catalog;
+    let mut left = vec![Span::styled(
+        format!("◆ {}", c.t("common.app_name")),
+        title(),
+    )];
+    let (key, style) = match &app.status.dictation {
+        Dictation::Idle if app.status.finishing > 0 => ("tui.status.finishing", warn()),
+        Dictation::Idle if app.base.dictation.enabled => ("tui.status.idle", ok()),
+        Dictation::Idle => ("tui.status.idle", dim()),
+        Dictation::Recording => ("tui.status.recording", ok()),
+        Dictation::Stopping => ("tui.status.stopping", warn()),
+        Dictation::Failed { .. } => ("tui.status.failed", error()),
+    };
+    let pill = Span::styled(format!("● {}", c.t(key)), style);
+    let used: usize = left.iter().map(Span::width).sum();
+    let gap = usize::from(width)
+        .saturating_sub(used + pill.width())
+        .max(2);
+    left.push(Span::raw(" ".repeat(gap)));
+    left.push(pill);
+    Line::from(left)
+}
+
+/// A panel's top rule: `╭ Title ────╮`; the focused panel's rules are lit.
+fn card_top(name: &str, width: u16, focused: bool) -> Line<'static> {
+    let rule = usize::from(width).saturating_sub(name.width() + 4);
+    let edge = if focused { title() } else { dim() };
+    let name_style = if focused {
+        title()
+    } else {
+        Style::new().add_modifier(Modifier::BOLD)
+    };
+    Line::from(vec![
+        Span::styled("╭ ", edge),
+        Span::styled(name.to_owned(), name_style),
+        Span::styled(format!(" {}╮", "─".repeat(rule)), edge),
+    ])
+}
+
+fn card_bottom(width: u16, focused: bool) -> Line<'static> {
+    Line::styled(
+        format!("╰{}╯", "─".repeat(usize::from(width).saturating_sub(2))),
+        if focused { title() } else { dim() },
+    )
+}
+
+/// `line` between a panel's side rules, `width` cells wide: padded to the
+/// right rule, or cut with `…` where it is too long for the panel.
+fn card_row(line: Line<'static>, width: u16, focused: bool) -> Line<'static> {
+    let edge = if focused { title() } else { dim() };
+    let inner = usize::from(width).saturating_sub(4);
+    let tint = line.style;
+    let mut spans = vec![Span::styled("│ ", edge)];
+    let mut used = 0;
+    for mut span in line.spans {
+        span.style = tint.patch(span.style);
+        let w = span.width();
+        if used + w <= inner {
+            used += w;
+            spans.push(span);
+            continue;
+        }
+        let room = inner - used;
+        if room > 0 {
+            let mut cut = String::new();
+            let mut cut_width = 0;
+            for ch in span.content.chars() {
+                let cw = ch.width().unwrap_or(0);
+                if cut_width + cw + 1 > room {
+                    break;
+                }
+                cut.push(ch);
+                cut_width += cw;
+            }
+            cut.push('…');
+            used += cut_width + 1;
+            spans.push(Span::styled(cut, span.style));
+        }
+        break;
+    }
+    spans.push(Span::styled(" ".repeat(inner.saturating_sub(used)), tint));
+    spans.push(Span::styled(" │", edge));
+    Line::from(spans)
+}
+
+/// `lines` followed by blank lines up to `rows`, so a panel keeps its height.
+fn padded(mut lines: Vec<Line<'static>>, rows: usize) -> Vec<Line<'static>> {
+    lines.resize(rows.max(lines.len()), Line::raw(""));
+    lines
+}
+
+/// `body` in a panel titled `name`, `width` cells wide.
+fn framed(name: &str, body: Vec<Line<'static>>, width: u16, focused: bool) -> Vec<Line<'static>> {
+    let mut lines = vec![card_top(name, width, focused)];
+    lines.extend(body.into_iter().map(|l| card_row(l, width, focused)));
+    lines.push(card_bottom(width, focused));
+    lines
+}
+
+/// `body` in a panel filling `area`, cut or padded to its height.
+fn panel(frame: &mut Frame, area: Rect, name: &str, mut body: Vec<Line<'static>>, focused: bool) {
+    let rows = usize::from(area.height.saturating_sub(2));
+    body.truncate(rows);
+    frame.render_widget(
+        Paragraph::new(framed(name, padded(body, rows), area.width, focused)),
+        area,
+    );
+}
+
+/// What the selected setting is for: its name and help, wrapped.
+fn about_lines(app: &App, inner: u16) -> Vec<Line<'static>> {
+    let c = &app.catalog;
+    let width = usize::from(inner);
+    let text = match app.field() {
+        Some(field) => {
+            let (label_key, help_key) = field.text();
+            format!("{}  {}", c.t(label_key), c.t(help_key))
+        }
+        None => c.t("tui.tagline").to_owned(),
+    };
+    let mut lines: Vec<Line<'static>> = wrap(&text, width)
+        .into_iter()
+        .map(|l| Line::styled(l, dim()))
+        .collect();
+    lines.truncate(3);
+    lines
+}
+
+/// The status panel's lines, wrapped to `inner` cells.
+fn status_body(app: &App, inner: usize) -> Vec<Line<'static>> {
+    let mut body: Vec<Line<'static>> = status_lines(app)
+        .into_iter()
+        .flat_map(|l| wrap_line(l, inner, 2))
+        .collect();
+    body.push(Line::raw(""));
+    body.extend(wrap_line(stats_line(app), inner, 2));
+    body
+}
+
+fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
+    let c = &app.catalog;
+    let body = status_body(app, usize::from(area.width).saturating_sub(4));
+    let name = format!("[1] {}", c.t("tui.section.status"));
+    panel(frame, area, &name, body, app.focus == Focus::Status);
+}
+
+fn draw_activity(app: &App, frame: &mut Frame, area: Rect) {
+    let c = &app.catalog;
+    let key = if app.log_expanded {
+        "tui.section.log_expanded"
+    } else {
+        "tui.section.log"
+    };
+    let name = format!("[3] {}", c.t(key));
+    let rows = usize::from(area.height.saturating_sub(2));
+    panel(
+        frame,
+        area,
+        &name,
+        log_lines(app, rows, usize::from(area.width).saturating_sub(4)),
+        app.focus == Focus::Activity,
+    );
 }
 
 /// Characters per minute of audio, 0 without audio.
@@ -259,6 +415,9 @@ fn value_spans(app: &App, field: Field, editing: bool) -> Vec<Span<'static>> {
             }
         },
         Kind::Action => {
+            if field == Field::UpdateNow {
+                return update_row(app);
+            }
             let Some(role) = field.role() else {
                 return vec![Span::styled(
                     c.t("tui.engine.settings_hint").to_owned(),
@@ -319,107 +478,141 @@ fn device_list(app: &App, field: Field) -> Vec<Line<'static>> {
     out
 }
 
-fn draw_form(app: &mut App, frame: &mut Frame, area: Rect) {
-    let width = usize::from(area.width);
+/// The form as lines, and the rows the cursor occupies.
+fn form_lines(app: &App, area_width: u16) -> (Vec<Line<'static>>, (usize, usize)) {
+    let width = usize::from(area_width).saturating_sub(4);
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut cursor_range = (0, 0);
     let c = app.catalog.clone();
-    for (i, &field) in FIELDS.iter().enumerate() {
-        let start = lines.len();
-        if let Some(group) = field.group() {
-            lines.push(Line::styled(
-                format!("  {}", c.t(group)),
-                Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD),
-            ));
+    // One value column for the whole tab, so the cards line up.
+    let label_width = app
+        .tab()
+        .cards()
+        .iter()
+        .flat_map(|card| card.fields)
+        .map(|f| c.t(f.text().0).width())
+        .max()
+        .unwrap_or(0);
+    for tab in Tab::ALL {
+        let open = tab == app.tab();
+        lines.push(Line::from(vec![
+            Span::styled(if open { "▾ " } else { "▹ " }, dim()),
+            Span::styled(
+                c.t(tab.title()).to_owned(),
+                if open { title() } else { dim() },
+            ),
+        ]));
+        if !open {
+            continue;
         }
-        let here = app.cursor == Some(i);
-        let editing = here && matches!(app.screen, Screen::Text(_) | Screen::Select);
-        let marker = match (here, editing) {
-            (true, true) => "▶ ",
-            (true, false) => "▸ ",
-            _ => "  ",
-        };
-        let (label_key, help_key) = field.text();
-        let mut spans = vec![
-            Span::styled(marker, ok()),
-            Span::styled(format!("{}: ", c.t(label_key)), label()),
-        ];
-        spans.extend(value_spans(app, field, editing));
-        lines.push(Line::from(spans));
+        for card in tab.cards() {
+            for &field in card.fields {
+                let i = FIELDS.iter().position(|f| *f == field);
+                let start = lines.len();
+                let here = i.is_some() && app.cursor == i;
+                let editing = here && matches!(app.screen, Screen::Text(_) | Screen::Select);
+                let marker = match (here, editing) {
+                    (true, true) => "  ▶ ",
+                    (true, false) => "  ▸ ",
+                    _ => "    ",
+                };
+                let name = c.t(field.text().0);
+                let name_style = if here { title() } else { Style::new() };
+                let mut spans = vec![
+                    Span::styled(marker, ok()),
+                    Span::styled(
+                        format!("{name}{}", " ".repeat(label_width - name.width() + 2)),
+                        name_style,
+                    ),
+                ];
+                spans.extend(value_spans(app, field, editing));
+                let first = Line::from(spans);
+                let mut rows = vec![if here { first.style(selected()) } else { first }];
 
-        if let Some(msg) = app.errors.get(&field) {
-            lines.extend(sub_lines(&msg.render(&c), width, "    ", error()));
-        }
-        if editing
-            && app.screen == Screen::Select
-            && matches!(field, Field::DictationDevice | Field::ContinuousDevice)
-        {
-            lines.extend(device_list(app, field));
-        }
-        if field == Field::Address {
-            let line = match &app.status.subscription {
-                Subscription::Listening { url, subscribers } => Line::styled(
-                    format!(
-                        "    {}",
-                        c.tf(
-                            "tui.subscription.listening",
-                            &[("url", url), ("count", &subscribers.to_string())],
-                        )
-                    ),
-                    Style::new().fg(Color::Green),
-                ),
-                Subscription::Down { detail } => Line::styled(
-                    format!(
-                        "    {}",
-                        c.tf("tui.subscription.down", &[("detail", detail)])
-                    ),
-                    warn(),
-                ),
-            };
-            lines.push(line);
-        }
-        if field == Field::LanPort {
-            let line = match &app.status.lan {
-                Lan::Off => None,
-                Lan::Listening { url, fingerprint } => Some(Line::styled(
-                    format!(
-                        "    {}",
-                        c.tf(
-                            "tui.lan.listening",
-                            &[("url", url), ("fingerprint", fingerprint)],
-                        )
-                    ),
-                    Style::new().fg(Color::Green),
-                )),
-                Lan::Down { detail } => Some(Line::styled(
-                    format!("    {}", c.tf("tui.lan.down", &[("detail", detail)])),
-                    warn(),
-                )),
-            };
-            lines.extend(line);
-        }
-        if cfg!(target_os = "macos")
-            && field == Field::ContinuousDevice
-            && (here || app.help)
-            && matches!(app.devices, Some(Ok(_)))
-            && !app.listed().iter().any(|d| d.kind == DeviceKind::Loopback)
-        {
-            lines.extend(sub_lines(
-                c.t("tui.device.no_loopback"),
-                width,
-                "    ",
-                dim(),
-            ));
-        }
-        if app.help {
-            lines.extend(sub_lines(c.t(help_key), width, "    ", dim()));
-        }
-        if here {
-            cursor_range = (start, lines.len());
+                if let Some(msg) = app.errors.get(&field) {
+                    rows.extend(sub_lines(&msg.render(&c), width, "    ", error()));
+                }
+                if editing
+                    && app.screen == Screen::Select
+                    && matches!(field, Field::DictationDevice | Field::ContinuousDevice)
+                {
+                    rows.extend(device_list(app, field));
+                }
+                if field == Field::Address {
+                    let line = match &app.status.subscription {
+                        Subscription::Listening { url, subscribers } => Line::styled(
+                            format!(
+                                "    {}",
+                                c.tf(
+                                    "tui.subscription.listening",
+                                    &[("url", url), ("count", &subscribers.to_string())],
+                                )
+                            ),
+                            Style::new().fg(Color::Green),
+                        ),
+                        Subscription::Down { detail } => Line::styled(
+                            format!(
+                                "    {}",
+                                c.tf("tui.subscription.down", &[("detail", detail)])
+                            ),
+                            warn(),
+                        ),
+                    };
+                    rows.push(line);
+                }
+                if field == Field::LanPort {
+                    let line = match &app.status.lan {
+                        Lan::Off => None,
+                        Lan::Listening { url, fingerprint } => Some(Line::styled(
+                            format!(
+                                "    {}",
+                                c.tf(
+                                    "tui.lan.listening",
+                                    &[("url", url), ("fingerprint", fingerprint)],
+                                )
+                            ),
+                            Style::new().fg(Color::Green),
+                        )),
+                        Lan::Down { detail } => Some(Line::styled(
+                            format!("    {}", c.tf("tui.lan.down", &[("detail", detail)])),
+                            warn(),
+                        )),
+                    };
+                    rows.extend(line);
+                }
+                if cfg!(target_os = "macos")
+                    && field == Field::ContinuousDevice
+                    && here
+                    && matches!(app.devices, Some(Ok(_)))
+                    && !app.listed().iter().any(|d| d.kind == DeviceKind::Loopback)
+                {
+                    rows.extend(sub_lines(
+                        c.t("tui.device.no_loopback"),
+                        width,
+                        "    ",
+                        dim(),
+                    ));
+                }
+                lines.extend(rows);
+                if here {
+                    // The group's first row scrolls the group's title in with it.
+                    let top = if tab.first() == i.unwrap_or(0) {
+                        start - 1
+                    } else {
+                        start
+                    };
+                    cursor_range = (top, lines.len());
+                }
+            }
         }
     }
+    (lines, cursor_range)
+}
 
-    let height = usize::from(area.height);
+fn draw_form(app: &mut App, frame: &mut Frame, area: Rect) {
+    let c = app.catalog.clone();
+    let (lines, cursor_range) = form_lines(app, area.width);
+    let height = usize::from(area.height.saturating_sub(2));
     if app.cursor.is_some() {
         let (start, end) = cursor_range;
         if start < app.scroll {
@@ -430,7 +623,8 @@ fn draw_form(app: &mut App, frame: &mut Frame, area: Rect) {
     }
     app.scroll = app.scroll.min(lines.len().saturating_sub(height));
     let shown: Vec<Line<'static>> = lines.into_iter().skip(app.scroll).collect();
-    frame.render_widget(Paragraph::new(shown), area);
+    let name = format!("[2] {}", c.t("tui.section.settings"));
+    panel(frame, area, &name, shown, app.focus == Focus::Settings);
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
@@ -498,6 +692,7 @@ fn status_lines(app: &App) -> Vec<Line<'static>> {
         ),
         _ => Line::raw(""),
     };
+    let live = (!live.spans.is_empty()).then_some(live);
     let continuous = if s.continuous_on {
         Line::styled(
             c.t("tui.status.continuous_on").to_owned(),
@@ -513,7 +708,55 @@ fn status_lines(app: &App) -> Vec<Line<'static>> {
             .spans
             .push(Span::styled(plugins_text(app), dim()));
     }
-    vec![Line::from(spans), live, continuous]
+    if let (Dictation::Recording, Some(level)) = (&s.dictation, s.level) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(meter(level), Style::new().fg(Color::Green)));
+    }
+    let mut lines = vec![Line::from(spans)];
+    lines.extend(live);
+    lines.push(continuous);
+    lines.extend(update_notice(app));
+    lines
+}
+
+/// A level from 0.0 to 1.0 as a bar of `METER` cells.
+fn meter(level: f32) -> String {
+    let on = (level.clamp(0.0, 1.0) * METER as f32).round() as usize;
+    format!("{}{}", "█".repeat(on), "░".repeat(METER - on))
+}
+
+/// The update line of the status area; a failed check is not announced here.
+pub(crate) fn update_notice(app: &App) -> Option<Line<'static>> {
+    let c = &app.catalog;
+    let (key, version, style) = match app.update() {
+        UpdateState::Available {
+            version,
+            via: UpdateVia::Homebrew,
+        } => ("tui.update.available_homebrew", version, warn()),
+        UpdateState::Available {
+            version,
+            via: UpdateVia::Other,
+        } => ("tui.update.available_other", version, warn()),
+        UpdateState::Upgrading { version } => ("tui.update.upgrading", version, warn()),
+        UpdateState::Restart { version } => ("tui.update.restart", version, ok()),
+        UpdateState::Unknown | UpdateState::Current | UpdateState::Failed { .. } => return None,
+    };
+    Some(Line::styled(c.tf(key, &[("version", &version)]), style))
+}
+
+/// The value of the update row: what the check knows, and how to ask again.
+fn update_row(app: &App) -> Vec<Span<'static>> {
+    let c = &app.catalog;
+    let (text, style) = match app.update() {
+        UpdateState::Unknown => (c.t("tui.update.state_unknown").to_owned(), dim()),
+        UpdateState::Current => (c.t("tui.update.state_current").to_owned(), ok()),
+        UpdateState::Failed { detail } => (
+            c.tf("tui.update.state_failed", &[("detail", &detail)]),
+            error(),
+        ),
+        _ => return update_notice(app).map_or_else(Vec::new, |l| l.spans),
+    };
+    vec![Span::styled(text, style)]
 }
 
 /// `Plugins: echo (ready), other (off)`, each in its own words.
@@ -536,13 +779,18 @@ fn plugins_text(app: &App) -> String {
     c.tf("tui.plugins.line", &[("list", &list.join(", "))])
 }
 
-fn source_label(app: &App, source: Source) -> String {
-    let key = match source {
-        Source::Dictation => "common.dictation",
-        Source::Continuous => "common.continuous",
-        Source::Unknown => "tui.source.unknown",
-    };
-    app.catalog.t(key).to_owned()
+/// Plain symbols every font has: how a log line ended, and a mark for
+/// what came from continuous transcription (dictation needs none).
+const MARK_DONE: &str = "✓";
+const MARK_KEPT: &str = "·";
+const MARK_FAILED: &str = "✗";
+
+fn source_mark(source: Source) -> &'static str {
+    match source {
+        Source::Dictation => "",
+        Source::Continuous => "♪ ",
+        Source::Unknown => "? ",
+    }
 }
 
 fn notice_key(notice: Notice) -> &'static str {
@@ -568,20 +816,14 @@ fn entry_line(app: &App, entry: &Entry) -> (u64, String, Style) {
             source,
             text,
             delivered,
+            ..
         } => {
             let delivered = match delivered {
-                Delivered::Pasted => "tui.delivered.pasted",
-                Delivered::Copied => "tui.delivered.copied",
-                Delivered::Kept => "tui.delivered.kept",
+                Delivered::Pasted => MARK_DONE,
+                Delivered::Copied => MARK_DONE,
+                Delivered::Kept => MARK_KEPT,
             };
-            let line = c.tf(
-                "tui.log.final",
-                &[
-                    ("source", &source_label(app, *source)),
-                    ("delivered", c.t(delivered)),
-                    ("text", text),
-                ],
-            );
+            let line = format!("{delivered} {}{text}", source_mark(*source));
             (*at, line, value())
         }
         Entry::Failed {
@@ -590,12 +832,10 @@ fn entry_line(app: &App, entry: &Entry) -> (u64, String, Style) {
             error: code,
             detail,
         } => {
-            let line = c.tf(
-                "tui.log.failed",
-                &[
-                    ("source", &source_label(app, *source)),
-                    ("error", &c.error(*code, detail.as_deref())),
-                ],
+            let line = format!(
+                "{MARK_FAILED} {}{}",
+                source_mark(*source),
+                c.error(*code, detail.as_deref())
             );
             (*at, line, Style::new().fg(Color::LightRed))
         }
@@ -638,7 +878,7 @@ fn entry_line(app: &App, entry: &Entry) -> (u64, String, Style) {
     }
 }
 
-fn log_lines(app: &App, rows: usize) -> Vec<Line<'static>> {
+fn log_lines(app: &App, rows: usize, width: usize) -> Vec<Line<'static>> {
     let c = &app.catalog;
     let mut all: Vec<(u64, String, Style)> =
         app.activity.iter().map(|e| entry_line(app, e)).collect();
@@ -660,16 +900,80 @@ fn log_lines(app: &App, rows: usize) -> Vec<Line<'static>> {
         all.push((note.at, text, style));
     }
     all.sort_by_key(|(at, _, _)| *at);
-    let skip = all.len().saturating_sub(rows);
-    all.into_iter()
-        .skip(skip)
-        .map(|(at, text, style)| {
-            Line::from(vec![
-                Span::styled(format!("  {}  ", clock(app, at)), dim()),
-                Span::styled(text, style),
-            ])
+    let rows_all: Vec<Line<'static>> = all
+        .into_iter()
+        .flat_map(|(at, text, style)| {
+            wrap_line(
+                Line::from(vec![
+                    Span::styled(format!("  {}  ", clock(app, at)), dim()),
+                    Span::styled(text, style),
+                ]),
+                width,
+                12,
+            )
         })
+        .collect();
+    let end = rows_all
+        .len()
+        .saturating_sub(app.activity_scroll.min(rows_all.len().saturating_sub(rows)));
+    rows_all
+        .into_iter()
+        .take(end)
+        .skip(end.saturating_sub(rows))
         .collect()
+}
+
+/// `line` cut into lines of at most `width` cells, at spaces where it can,
+/// each after the first indented by `indent` cells; styles are kept.
+fn wrap_line(line: Line<'static>, width: usize, indent: usize) -> Vec<Line<'static>> {
+    let cells: Vec<(char, Style)> = line
+        .spans
+        .iter()
+        .flat_map(|s| s.content.chars().map(|c| (c, s.style)))
+        .collect();
+    let width = width.max(indent + 8);
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < cells.len() {
+        let room = if out.is_empty() {
+            width
+        } else {
+            width - indent
+        };
+        let mut used = 0;
+        let mut end = at;
+        while end < cells.len() {
+            let w = cells[end].0.width().unwrap_or(0);
+            if used + w > room {
+                break;
+            }
+            used += w;
+            end += 1;
+        }
+        let mut next = end;
+        if end < cells.len()
+            && let Some(space) = cells[at + 1..end].iter().rposition(|(c, _)| *c == ' ')
+        {
+            end = at + 1 + space;
+            next = end + 1;
+        }
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        if !out.is_empty() {
+            spans.push(Span::raw(" ".repeat(indent)));
+        }
+        for &(ch, style) in &cells[at..end] {
+            match spans.last_mut() {
+                Some(last) if last.style == style => last.content.to_mut().push(ch),
+                _ => spans.push(Span::styled(ch.to_string(), style)),
+            }
+        }
+        out.push(Line::from(spans));
+        at = next.max(at + 1);
+    }
+    if out.is_empty() {
+        out.push(Line::raw(""));
+    }
+    out
 }
 
 /// `at` (Unix ms) as local `HH:MM:SS`.
@@ -824,8 +1128,8 @@ fn draw_settings(
         let current = settings.get(&field.key).cloned().unwrap_or_default();
         let editing = if here { edit.as_ref() } else { None };
         let marker = match (here, editing.is_some()) {
-            (true, true) => "▶ ",
-            (true, false) => "▸ ",
+            (true, true) => "  ▶ ",
+            (true, false) => "  ▸ ",
             _ => "  ",
         };
         let required = if field.required { "*" } else { "" };

@@ -13,6 +13,7 @@ use anya_runtime::{
     ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
     InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient, Pairing, PluginIssue,
     PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
+    UpdateIssue, UpdateState, UpdateVia,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -33,6 +34,9 @@ struct Fake {
     devices: Mutex<Result<Vec<Device>, String>>,
     switched: Mutex<Vec<(&'static str, bool)>>,
     recorded: Mutex<Result<Option<String>, String>>,
+    update: Mutex<UpdateState>,
+    upgrade_result: Mutex<Result<(), UpdateIssue>>,
+    update_checks: Mutex<u32>,
 }
 
 fn engine(id: &str, title: &str, streaming: bool, fields: Vec<EngineField>) -> EngineInfo {
@@ -103,6 +107,9 @@ impl Fake {
             }])),
             switched: Mutex::new(Vec::new()),
             recorded: Mutex::new(Ok(None)),
+            update: Mutex::new(UpdateState::Unknown),
+            upgrade_result: Mutex::new(Ok(())),
+            update_checks: Mutex::new(0),
         })
     }
 
@@ -285,6 +292,24 @@ impl Control for Fake {
     }
 
     fn quit(&self) {}
+
+    fn update(&self) -> UpdateState {
+        self.update.lock().expect("lock").clone()
+    }
+
+    fn check_update(&self) {
+        *self.update_checks.lock().expect("lock") += 1;
+    }
+
+    fn upgrade(&self) -> Result<(), UpdateIssue> {
+        let result = self.upgrade_result.lock().expect("lock").clone();
+        if result.is_ok() {
+            *self.update.lock().expect("lock") = UpdateState::Restart {
+                version: "0.9.0".into(),
+            };
+        }
+        result
+    }
 }
 
 fn app(fake: &Arc<Fake>, locale: &str) -> (App, Arc<Mutex<Vec<String>>>) {
@@ -355,9 +380,45 @@ fn screen(app: &mut App, width: u16, height: u16) -> String {
     out
 }
 
+/// `label` and then `value` on one row of the screen, whatever lies between.
+fn shows_row(app: &mut App, label: &str, value: &str) {
+    let s = screen(app, 160, 60);
+    let found = s.lines().any(|row| {
+        row.find(label)
+            .is_some_and(|at| row[at + label.len()..].contains(value))
+    });
+    assert!(found, "{label:?} then {value:?} not on one row:\n{s}");
+}
+
+/// What the two columns of panels say, their wrapped rows joined: once with
+/// a space between rows (English wraps at spaces) and once with none
+/// (Chinese wraps anywhere).
+fn column_text(screen: &str) -> Vec<String> {
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    for row in screen.lines() {
+        let (l, r) = row.split_once("││").unwrap_or((row, ""));
+        let trim = |t: &str| t.trim_matches(['│', ' ']).to_owned();
+        left.push(trim(l));
+        right.push(trim(r));
+    }
+    vec![
+        left.join(" "),
+        left.join(""),
+        right.join(" "),
+        right.join(""),
+    ]
+}
+
 fn shows(app: &mut App, text: &str) {
     let s = screen(app, 160, 60);
-    assert!(s.contains(text), "{text:?} not on screen:\n{s}");
+    let wrapped = column_text(&s);
+    let squeeze = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text_squeezed = squeeze(text);
+    assert!(
+        s.contains(text) || wrapped.iter().any(|w| squeeze(w).contains(&text_squeezed)),
+        "{text:?} not on screen:\n{s}"
+    );
 }
 
 #[test]
@@ -380,44 +441,57 @@ fn the_main_screen_reads_in_both_locales() {
         source: Source::Dictation,
         text: "hello world".into(),
         delivered: Delivered::Pasted,
+        session: None,
+        engine: None,
     });
     let cases = [
         (
             "en",
             [
                 "Sessions 3  |  Characters 120  |  Average 120 chars/min  |  Latest 60 chars/min",
-                "── Settings ──",
-                "Hotkeys: Alt+Super",
-                "Dictation engine: Stream [Streaming] Set up",
-                "Remote engine: Stream [Streaming] Set up",
-                "Engine settings: (Enter to pick an engine to set up)",
-                "Listening on ws://127.0.0.1:7590/ · subscribers: 2",
+                "Recognition",
                 "Recording",
                 "Recognizing: hello wor",
-                "Dictation · pasted: hello world",
+                "✓ hello world",
+            ],
+            "Listening on ws://127.0.0.1:7590/ · subscribers: 2",
+            ("Hotkeys", "Alt+Super"),
+            [
+                ("Dictation engine", "Stream [Streaming] Set up"),
+                ("Remote engine", "Stream [Streaming] Set up"),
+                ("Engine settings", "(Enter to pick an engine to set up)"),
             ],
         ),
         (
             "zh-CN",
             [
                 "历史 3 次  |  总字数 120  |  平均速度 120 字/分钟  |  最近速度 60 字/分钟",
-                "── 配置 ──",
-                "热键: Alt+Super",
-                "听写引擎: Stream [流式] 已配置",
-                "远程引擎: Stream [流式] 已配置",
-                "引擎配置: (回车选引擎并配置)",
-                "监听中 ws://127.0.0.1:7590/ · 2 个订阅者",
+                "识别",
                 "录音中",
                 "识别中：hello wor",
-                "听写 · 已上屏：hello world",
+                "✓ hello world",
+            ],
+            "监听中 ws://127.0.0.1:7590/ · 2 个订阅者",
+            ("热键", "Alt+Super"),
+            [
+                ("听写引擎", "Stream [流式] 已配置"),
+                ("远程引擎", "Stream [流式] 已配置"),
+                ("引擎配置", "(回车选引擎并配置)"),
             ],
         ),
     ];
-    for (locale, wanted) in cases {
+    for (locale, wanted, listening, hotkeys, engines) in cases {
         let (mut app, _) = app(&fake, locale);
         for text in wanted {
             shows(&mut app, text);
         }
+        shows_row(&mut app, hotkeys.0, hotkeys.1);
+        press(&mut app, KeyCode::Right);
+        for (label, value) in engines {
+            shows_row(&mut app, label, value);
+        }
+        press(&mut app, KeyCode::Right);
+        shows(&mut app, listening);
     }
 }
 
@@ -453,7 +527,7 @@ fn a_typed_field_is_checked_then_saved() {
     assert_eq!(saves[0].dictation.stop_delay_ms, 250);
     assert!(!app.dirty());
     shows(&mut app, "Saved to /home/u/.config/anya/config.toml");
-    shows(&mut app, "Stop delay (ms): 250");
+    shows_row(&mut app, "Stop delay (ms)", "250");
 }
 
 #[test]
@@ -531,14 +605,14 @@ fn a_select_saves_the_value_it_shows() {
     // Enter twice on a select with a value outside its list keeps that value.
     goto(&mut app, Field::Position);
     press(&mut app, KeyCode::Enter);
-    shows(&mut app, "Position: [middle ▲▼]");
+    shows_row(&mut app, "Position", "[middle ▲▼]");
     press(&mut app, KeyCode::Enter);
     assert_eq!(fake.saves()[0].overlay.position, "middle");
 
     goto(&mut app, Field::Mode);
     press(&mut app, KeyCode::Enter);
     ch(&mut app, 'j');
-    shows(&mut app, "Mode: [Hold ▲▼]");
+    shows_row(&mut app, "Mode", "[Hold ▲▼]");
     press(&mut app, KeyCode::Esc);
     shows(&mut app, "● Unsaved changes");
     ch(&mut app, 's');
@@ -615,7 +689,7 @@ fn an_unknown_engine_is_shown_beside_the_use_that_chose_it() {
     let (mut app, _) = app(&fake, "en");
     ch(&mut app, 's');
     assert_eq!(app.field(), Some(Field::RemoteEngine));
-    shows(&mut app, "Remote engine: Stream");
+    shows_row(&mut app, "Remote engine", "Stream");
     shows(&mut app, "Unknown recognition engine: nope");
 }
 
@@ -716,7 +790,7 @@ fn each_use_picks_its_own_engine_with_the_set_up_ones_first() {
     let (mut app, _) = app(&fake, "en");
     // Batch has no key yet, so Stream is offered first for every use.
     goto(&mut app, Field::RemoteEngine);
-    shows(&mut app, "Remote engine: Stream");
+    shows_row(&mut app, "Remote engine", "Stream");
     press(&mut app, KeyCode::Enter);
     let s = screen(&mut app, 160, 60);
     assert!(s.contains("Engine for remote dictation"), "{s}");
@@ -775,7 +849,7 @@ fn both_device_lists_follow_what_is_connected() {
     let (mut app, _) = app(&fake, "en");
     goto(&mut app, Field::DictationDevice);
     press(&mut app, KeyCode::Enter);
-    shows(&mut app, "Input device: [USB Mic (not detected) ▲▼]");
+    shows_row(&mut app, "Input device", "[USB Mic (not detected) ▲▼]");
     shows(&mut app, "Built-in Mic · Microphone");
     press(&mut app, KeyCode::Esc);
 
@@ -799,7 +873,7 @@ fn both_device_lists_follow_what_is_connected() {
     );
     ch(&mut app, 'j');
     ch(&mut app, 'j');
-    shows(&mut app, "Source device: [BlackHole 2ch · Loopback ▲▼]");
+    shows_row(&mut app, "Source device", "[BlackHole 2ch · Loopback ▲▼]");
     press(&mut app, KeyCode::Enter);
     let saved = &fake.saves()[0];
     assert_eq!(saved.continuous.device, "bh");
@@ -814,8 +888,10 @@ fn a_device_list_error_is_logged_once() {
     app.refresh();
     app.settle();
     let s = screen(&mut app, 160, 60);
+    let joined = column_text(&s).swap_remove(2);
     assert_eq!(
-        s.matches("Cannot list input devices: no audio server")
+        joined
+            .matches("Cannot list input devices: no audio server")
             .count(),
         1,
         "{s}"
@@ -839,7 +915,8 @@ fn changes_made_elsewhere_show_without_losing_edits() {
     app.refresh();
     assert_eq!(app.draft.overlay.position, "top-left");
     assert_eq!(app.draft.audio.gain, 3, "the edit in progress stays");
-    shows(&mut app, "Position: Top left");
+    goto(&mut app, Field::Position);
+    shows_row(&mut app, "Position", "Top left");
 }
 
 #[test]
@@ -850,7 +927,7 @@ fn the_dictation_switch_applies_at_once() {
     ch(&mut app, ' ');
     assert_eq!(*fake.switched.lock().expect("lock"), [("dictation", false)]);
     assert!(!app.dirty(), "nothing left to save");
-    shows(&mut app, "Voice input: ○ Off  (Space)");
+    shows_row(&mut app, "Voice input", "○ Off");
     shows(&mut app, "Dictation hotkeys are off");
 
     goto(&mut app, Field::ContinuousEnabled);
@@ -883,9 +960,202 @@ fn saving_another_interface_language_switches_the_screen() {
     press(&mut app, KeyCode::Enter);
     ch(&mut app, 'j');
     ch(&mut app, 'j');
-    shows(&mut app, "Interface language: [简体中文 ▲▼]");
+    shows_row(&mut app, "Interface language", "[简体中文 ▲▼]");
     press(&mut app, KeyCode::Enter);
     assert_eq!(fake.saves()[0].ui.language, "zh-CN");
     assert_eq!(app.catalog.locale(), "zh-CN");
-    shows(&mut app, "界面语言: 简体中文");
+    shows_row(&mut app, "界面语言", "简体中文");
+}
+
+fn available(via: UpdateVia) -> UpdateState {
+    UpdateState::Available {
+        version: "0.9.0".into(),
+        via,
+    }
+}
+
+#[test]
+fn each_update_state_shows_its_line_and_keys_in_both_locales() {
+    for (locale, brew, other, upgrading, restart) in [
+        (
+            "en",
+            "Anya 0.9.0 is available. Press u to upgrade.",
+            "Anya 0.9.0 is available. Update it where you installed Anya from.",
+            "Upgrading to Anya 0.9.0",
+            "Upgraded to Anya 0.9.0; restart Anya to use it.",
+        ),
+        (
+            "zh-CN",
+            "Anya 0.9.0 已发布。按 u 升级。",
+            "Anya 0.9.0 已发布。请到安装 Anya 的来源处更新。",
+            "正在升级到 Anya 0.9.0",
+            "已升级到 Anya 0.9.0；重启 Anya 后生效。",
+        ),
+    ] {
+        let fake = Fake::new();
+        let (mut app, _) = app(&fake, locale);
+        for state in [
+            UpdateState::Unknown,
+            UpdateState::Current,
+            UpdateState::Failed {
+                detail: "timed out".into(),
+            },
+        ] {
+            *fake.update.lock().expect("lock") = state;
+            app.refresh();
+            assert!(crate::view::update_notice(&app).is_none());
+        }
+        *fake.update.lock().expect("lock") = available(UpdateVia::Other);
+        app.refresh();
+        shows(&mut app, other);
+        ch(&mut app, 'u');
+        app.settle();
+        assert_eq!(
+            *fake.update.lock().expect("lock"),
+            available(UpdateVia::Other)
+        );
+        assert!(!screen(&mut app, 160, 60).contains(brew));
+
+        *fake.update.lock().expect("lock") = available(UpdateVia::Homebrew);
+        app.refresh();
+        shows(&mut app, brew);
+        *fake.update.lock().expect("lock") = UpdateState::Upgrading {
+            version: "0.9.0".into(),
+        };
+        app.refresh();
+        shows(&mut app, upgrading);
+        *fake.update.lock().expect("lock") = UpdateState::Restart {
+            version: "0.9.0".into(),
+        };
+        app.refresh();
+        shows(&mut app, restart);
+    }
+}
+
+#[test]
+fn a_failed_check_shows_in_the_update_row_and_check_now_asks_again() {
+    let fake = Fake::new();
+    *fake.update.lock().expect("lock") = UpdateState::Failed {
+        detail: "timed out".into(),
+    };
+    let (mut app, _) = app(&fake, "en");
+    goto(&mut app, Field::UpdateNow);
+    shows(&mut app, "Could not check: timed out");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(*fake.update_checks.lock().expect("lock"), 1);
+}
+
+#[test]
+fn the_upgrade_key_runs_brew_and_asks_for_a_restart() {
+    let fake = Fake::new();
+    *fake.update.lock().expect("lock") = available(UpdateVia::Homebrew);
+    let (mut app, _) = app(&fake, "en");
+    ch(&mut app, 'u');
+    shows(&mut app, "Upgrading to Anya 0.9.0");
+    app.settle();
+    shows(&mut app, "Upgraded to Anya 0.9.0; restart Anya to use it.");
+    assert!(!screen(&mut app, 160, 60).contains("Press u"));
+}
+
+#[test]
+fn a_refused_upgrade_says_why_in_each_locale() {
+    for (locale, issue, text) in [
+        (
+            "en",
+            UpdateIssue::NotHomebrew,
+            "This Anya was not installed with Homebrew, so it cannot upgrade itself.",
+        ),
+        (
+            "en",
+            UpdateIssue::BrewMissing,
+            "Homebrew was not found on this computer.",
+        ),
+        (
+            "en",
+            UpdateIssue::NothingToInstall,
+            "There is no newer version to install.",
+        ),
+        (
+            "en",
+            UpdateIssue::Failed {
+                detail: "Error: locked".into(),
+            },
+            "The upgrade failed: Error: locked",
+        ),
+        (
+            "zh-CN",
+            UpdateIssue::BrewMissing,
+            "在这台电脑上找不到 Homebrew。",
+        ),
+        (
+            "zh-CN",
+            UpdateIssue::Failed {
+                detail: "Error: locked".into(),
+            },
+            "升级失败：Error: locked",
+        ),
+    ] {
+        let fake = Fake::new();
+        *fake.update.lock().expect("lock") = available(UpdateVia::Homebrew);
+        *fake.upgrade_result.lock().expect("lock") = Err(issue);
+        let (mut app, _) = app(&fake, locale);
+        ch(&mut app, 'u');
+        app.settle();
+        shows(&mut app, text);
+    }
+}
+
+#[test]
+fn the_update_check_switch_saves_and_says_what_it_sends() {
+    let fake = Fake::new();
+    let (mut app, _) = app(&fake, "en");
+    goto(&mut app, Field::UpdateCheck);
+    shows(&mut app, "Check for updates");
+    shows(&mut app, "The request carries only Anya's");
+    ch(&mut app, ' ');
+    ch(&mut app, 's');
+    let saves = fake.saves();
+    assert!(!saves[0].updates.check);
+}
+
+#[test]
+fn the_recording_line_shows_the_input_level_and_the_cursor_row_is_tinted() {
+    use ratatui::style::Color;
+    let fake = Fake::new();
+    {
+        let mut status = fake.status.lock().expect("lock");
+        status.dictation = Dictation::Recording;
+        status.level = Some(0.5);
+    }
+    let (mut app, _) = app(&fake, "en");
+    shows(&mut app, "██████░░░░░░");
+    status_level(&fake, None);
+    app.refresh();
+    assert!(!screen(&mut app, 160, 60).contains('█'), "no level, no bar");
+
+    goto(&mut app, Field::Mode);
+    let mut terminal = Terminal::new(TestBackend::new(160, 60)).expect("terminal");
+    terminal
+        .draw(|frame| view::draw(&mut app, frame))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let tinted = |text: &str| {
+        (0..60).any(|y| {
+            let row: String = (0..160)
+                .map(|x| buffer.cell((x, y)).map_or(" ", |c| c.symbol()))
+                .collect();
+            row.contains(text)
+                && (0..160).any(|x| {
+                    buffer
+                        .cell((x, y))
+                        .is_some_and(|c| c.bg == Color::Indexed(237))
+                })
+        })
+    };
+    assert!(tinted("Mode"), "the cursor's row has the tint");
+    assert!(!tinted("Hotkeys"), "other rows do not");
+}
+
+fn status_level(fake: &Fake, level: Option<f32>) {
+    fake.status.lock().expect("lock").level = level;
 }

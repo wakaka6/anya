@@ -66,18 +66,18 @@ pub(crate) enum Field {
     IdleVisible,
     ShowText,
     Scale,
+    UpdateCheck,
+    UpdateNow,
     DebugMode,
 }
 
-/// Every field, in the order the form lists them.
+/// Every field, in the order the form lists them: tab by tab, card by card.
 pub(crate) const FIELDS: &[Field] = &[
-    Field::UiLanguage,
-    Field::Gain,
     Field::DictationEnabled,
-    Field::DictationDevice,
     Field::Hotkeys,
     Field::Mode,
     Field::StopDelay,
+    Field::DictationDevice,
     Field::Output,
     Field::DictationEngine,
     Field::ContinuousEngine,
@@ -98,8 +98,123 @@ pub(crate) const FIELDS: &[Field] = &[
     Field::IdleVisible,
     Field::ShowText,
     Field::Scale,
+    Field::UiLanguage,
+    Field::Gain,
+    Field::UpdateCheck,
+    Field::UpdateNow,
     Field::DebugMode,
 ];
+
+/// A run of fields shown together.
+pub(crate) struct Card {
+    pub(crate) fields: &'static [Field],
+}
+
+/// One page of the form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tab {
+    Dictation,
+    Recognition,
+    Continuous,
+    Overlay,
+    General,
+}
+
+impl Tab {
+    /// In the order the tab bar lists them.
+    pub(crate) const ALL: [Tab; 5] = [
+        Tab::Dictation,
+        Tab::Recognition,
+        Tab::Continuous,
+        Tab::Overlay,
+        Tab::General,
+    ];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Tab::Dictation => "tui.group.dictation",
+            Tab::Recognition => "tui.group.recognition",
+            Tab::Continuous => "tui.tab.continuous",
+            Tab::Overlay => "tui.group.overlay",
+            Tab::General => "tui.group.general",
+        }
+    }
+
+    pub(crate) fn cards(self) -> &'static [Card] {
+        use Field::*;
+        match self {
+            Tab::Dictation => &[
+                Card {
+                    fields: &[DictationEnabled, Hotkeys, Mode, StopDelay],
+                },
+                Card {
+                    fields: &[DictationDevice, Output],
+                },
+            ],
+            Tab::Recognition => &[
+                Card {
+                    fields: &[
+                        DictationEngine,
+                        ContinuousEngine,
+                        RemoteEngine,
+                        EngineSettings,
+                    ],
+                },
+                Card {
+                    fields: &[Language, Hotwords, HotwordsFile],
+                },
+            ],
+            Tab::Continuous => &[
+                Card {
+                    fields: &[
+                        ContinuousEnabled,
+                        ContinuousDevice,
+                        ContinuousHotkey,
+                        SilenceGate,
+                    ],
+                },
+                Card {
+                    fields: &[Address, LanEnabled, LanPort],
+                },
+            ],
+            Tab::Overlay => &[Card {
+                fields: &[OverlayEnabled, Position, IdleVisible, ShowText, Scale],
+            }],
+            Tab::General => &[
+                Card {
+                    fields: &[UiLanguage, Gain],
+                },
+                Card {
+                    fields: &[UpdateCheck, UpdateNow],
+                },
+                Card {
+                    fields: &[DebugMode],
+                },
+            ],
+        }
+    }
+
+    /// The tab that shows `field`.
+    pub(crate) fn of(field: Field) -> Tab {
+        Tab::ALL
+            .into_iter()
+            .find(|t| t.cards().iter().any(|c| c.fields.contains(&field)))
+            .unwrap_or(Tab::Dictation)
+    }
+
+    /// The index in [`FIELDS`] of the tab's first field.
+    pub(crate) fn first(self) -> usize {
+        let field = self.cards()[0].fields[0];
+        FIELDS.iter().position(|f| *f == field).unwrap_or(0)
+    }
+
+    /// The next tab along the bar, or the previous, wrapping.
+    pub(crate) fn step(self, forward: bool) -> Tab {
+        let at = Tab::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        let n = Tab::ALL.len();
+        Tab::ALL[(at + if forward { 1 } else { n - 1 }) % n]
+    }
+}
 
 /// How a field is edited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,12 +234,14 @@ impl Field {
         use Field::*;
         match self {
             DictationEnabled | ContinuousEnabled | SilenceGate | LanEnabled | OverlayEnabled
-            | IdleVisible | ShowText | DebugMode => Kind::Switch,
+            | IdleVisible | ShowText | UpdateCheck | DebugMode => Kind::Switch,
             UiLanguage | DictationDevice | Mode | Output | Language | ContinuousDevice
             | Position => Kind::Select,
             Gain | Hotkeys | StopDelay | Hotwords | HotwordsFile | ContinuousHotkey | Address
             | LanPort | Scale => Kind::Text,
-            DictationEngine | ContinuousEngine | RemoteEngine | EngineSettings => Kind::Action,
+            DictationEngine | ContinuousEngine | RemoteEngine | EngineSettings | UpdateNow => {
+                Kind::Action
+            }
         }
     }
 
@@ -144,19 +261,6 @@ impl Field {
             EngineRole::Dictation => Field::DictationEngine,
             EngineRole::Continuous => Field::ContinuousEngine,
             EngineRole::Remote => Field::RemoteEngine,
-        }
-    }
-
-    /// The group header shown above this field when it opens a group.
-    pub(crate) fn group(self) -> Option<&'static str> {
-        match self {
-            Field::UiLanguage => Some("tui.group.general"),
-            Field::DictationEnabled => Some("tui.group.dictation"),
-            Field::DictationEngine => Some("tui.group.recognition"),
-            Field::ContinuousEnabled => Some("tui.group.continuous"),
-            Field::OverlayEnabled => Some("tui.group.overlay"),
-            Field::DebugMode => Some("tui.group.debug"),
-            _ => None,
         }
     }
 
@@ -194,6 +298,8 @@ impl Field {
             IdleVisible => ("tui.field.idle_visible", "tui.help.idle_visible"),
             ShowText => ("tui.field.show_text", "tui.help.show_text"),
             Scale => ("tui.field.scale", "tui.help.scale"),
+            UpdateCheck => ("tui.field.update_check", "tui.help.update_check"),
+            UpdateNow => ("tui.field.update_now", "tui.help.update_now"),
             DebugMode => ("tui.field.debug_mode", "tui.help.debug_mode"),
         }
     }
@@ -239,6 +345,8 @@ impl Field {
             IdleVisible => c.overlay.idle_visible.to_string(),
             ShowText => c.overlay.show_text.to_string(),
             Scale => c.overlay.scale.to_string(),
+            UpdateCheck => c.updates.check.to_string(),
+            UpdateNow => String::new(),
             DebugMode => c.debug.enabled.to_string(),
         }
     }
@@ -282,6 +390,8 @@ impl Field {
             Position => c.overlay.position = value.to_owned(),
             IdleVisible => c.overlay.idle_visible = on,
             ShowText => c.overlay.show_text = on,
+            UpdateCheck => c.updates.check = on,
+            UpdateNow => {}
             DebugMode => c.debug.enabled = on,
             Gain | StopDelay | Hotwords | HotwordsFile | Address | LanPort | Scale => {
                 // Typed fields go through `parse`; a value that does not
@@ -374,6 +484,8 @@ impl Field {
             IdleVisible => to.overlay.idle_visible = from.overlay.idle_visible,
             ShowText => to.overlay.show_text = from.overlay.show_text,
             Scale => to.overlay.scale = from.overlay.scale,
+            UpdateCheck => to.updates.check = from.updates.check,
+            UpdateNow => {}
             DebugMode => to.debug.enabled = from.debug.enabled,
         }
     }
@@ -472,6 +584,19 @@ pub(crate) fn ui_language_key(tag: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tabs_show_every_field_once_in_the_order_j_walks_them() {
+        let shown: Vec<Field> = Tab::ALL
+            .into_iter()
+            .flat_map(|t| t.cards().iter().flat_map(|c| c.fields.iter().copied()))
+            .collect();
+        assert_eq!(shown, FIELDS);
+        for (i, tab) in Tab::ALL.into_iter().enumerate() {
+            assert_eq!(Tab::of(FIELDS[tab.first()]), tab);
+            assert_eq!(Tab::ALL[(i + 1) % Tab::ALL.len()], tab.step(true));
+        }
+    }
 
     #[test]
     fn lists_split_like_the_user_typed_them() {

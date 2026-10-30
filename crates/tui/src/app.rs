@@ -11,12 +11,12 @@ use anya_i18n::{Catalog, LOCALES};
 use anya_protocol::{FieldKind, Manifest};
 use anya_runtime::{
     Control, EngineInfo, Entry, HotkeyRole, Info, InstalledPlugin, Invalid, SaveError, Saved,
-    Status,
+    Status, UpdateIssue, UpdateState, UpdateVia,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::form::{
-    FIELDS, Field, Kind, Msg, language_key, mode_key, output_key, position_key, split_hotkeys,
+    FIELDS, Field, Kind, Msg, Tab, language_key, mode_key, output_key, position_key, split_hotkeys,
     ui_language_key,
 };
 
@@ -101,6 +101,14 @@ impl LineEdit {
     }
 }
 
+/// The panel that has the keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Focus {
+    Status,
+    Activity,
+    Settings,
+}
+
 /// An engine setting being changed in the engine modal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SettingEdit {
@@ -156,6 +164,7 @@ pub(crate) struct Opt {
 enum Done {
     Devices(Result<Vec<Device>, String>),
     Recorded(Field, Result<Option<String>, String>),
+    Upgraded(Result<(), UpdateIssue>),
 }
 
 /// The whole TUI.
@@ -173,6 +182,10 @@ pub(crate) struct App {
     /// Why a field's value cannot be used.
     pub(crate) errors: BTreeMap<Field, Msg>,
     pub(crate) status: Status,
+    /// What the update check knows, polled with the status.
+    update: UpdateState,
+    /// `brew upgrade` was started here and has not returned.
+    upgrading: bool,
     /// Installed plugins and whether they loaded, polled with the status.
     pub(crate) plugins: Vec<InstalledPlugin>,
     pub(crate) activity: Vec<Entry>,
@@ -188,7 +201,9 @@ pub(crate) struct App {
     pub(crate) scroll: usize,
     /// First engine-settings line shown.
     pub(crate) settings_scroll: usize,
-    pub(crate) help: bool,
+    pub(crate) focus: Focus,
+    /// How many entries the activity panel is scrolled back.
+    pub(crate) activity_scroll: usize,
     pub(crate) log_expanded: bool,
     quit_armed: bool,
     done: bool,
@@ -205,6 +220,16 @@ pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Why an upgrade did not happen, in words; brew's own `detail` stays as it was.
+fn upgrade_issue(issue: &UpdateIssue) -> Msg {
+    match issue {
+        UpdateIssue::NotHomebrew => Msg::new("tui.update.issue.not_homebrew"),
+        UpdateIssue::BrewMissing => Msg::new("tui.update.issue.brew_missing"),
+        UpdateIssue::NothingToInstall => Msg::new("tui.update.issue.nothing_to_install"),
+        UpdateIssue::Failed { detail } => Msg::new("tui.update.issue.failed").arg("detail", detail),
+    }
 }
 
 /// A device setting that means the system default.
@@ -243,6 +268,8 @@ impl App {
             draft: base.clone(),
             base,
             status: control.status(),
+            update: control.update(),
+            upgrading: false,
             plugins: control.plugins(),
             activity: control.activity(),
             engines: control.engines(),
@@ -258,7 +285,8 @@ impl App {
             cursor: None,
             scroll: 0,
             settings_scroll: 0,
-            help: false,
+            focus: Focus::Settings,
+            activity_scroll: 0,
             log_expanded: false,
             quit_armed: false,
             done: false,
@@ -288,6 +316,7 @@ impl App {
             self.last_status = Instant::now();
             self.status = self.control.status();
             self.plugins = self.control.plugins();
+            self.update = self.control.update();
         }
         if self.last_activity.elapsed() >= ACTIVITY_EVERY {
             self.last_activity = Instant::now();
@@ -321,7 +350,10 @@ impl App {
             while let Ok(done) = self.rx.try_recv() {
                 self.finish(done);
             }
-            if !self.devices_pending && !matches!(self.screen, Screen::Recording(_)) {
+            if !self.devices_pending
+                && !self.upgrading
+                && !matches!(self.screen, Screen::Recording(_))
+            {
                 return;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -359,6 +391,13 @@ impl App {
                 }
                 self.devices = Some(listed);
             }
+            Done::Upgraded(done) => {
+                self.upgrading = false;
+                self.update = self.control.update();
+                if let Err(issue) = done {
+                    self.note(Level::Error, None, upgrade_issue(&issue));
+                }
+            }
             Done::Recorded(field, got) => {
                 if self.screen == Screen::Recording(field) {
                     self.screen = Screen::Nav;
@@ -393,6 +432,11 @@ impl App {
         if self.notes.len() > NOTES_KEPT * 2 {
             self.notes.drain(..self.notes.len() - NOTES_KEPT);
         }
+    }
+
+    /// The tab the form shows: the cursor's, the first before it has moved.
+    pub(crate) fn tab(&self) -> Tab {
+        self.field().map_or(Tab::ALL[0], Tab::of)
     }
 
     /// The field under the cursor.
@@ -614,12 +658,55 @@ impl App {
     fn nav_key(&mut self, key: KeyEvent, armed: bool) {
         let last = FIELDS.len() - 1;
         match key.code {
+            KeyCode::Char('1') => {
+                self.focus = Focus::Status;
+                self.log_expanded = false;
+                return;
+            }
+            KeyCode::Char('2') => {
+                self.focus = Focus::Settings;
+                self.log_expanded = false;
+                return;
+            }
+            KeyCode::Char('3') => {
+                self.focus = Focus::Activity;
+                return;
+            }
+            _ => {}
+        }
+        if self.focus != Focus::Settings
+            && matches!(
+                key.code,
+                KeyCode::Char('j' | 'k' | 'e' | 'i' | ' ' | 'r')
+                    | KeyCode::Down
+                    | KeyCode::Up
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Tab
+                    | KeyCode::BackTab
+                    | KeyCode::Enter
+            )
+        {
+            if self.focus == Focus::Activity {
+                match key.code {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        self.activity_scroll = self.activity_scroll.saturating_sub(1);
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => self.activity_scroll += 1,
+                    _ => {}
+                }
+            }
+            return;
+        }
+        match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
                 self.cursor = Some(self.cursor.map_or(0, |c| (c + 1).min(last)));
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.cursor = Some(self.cursor.map_or(0, |c| c.saturating_sub(1)));
             }
+            KeyCode::Right | KeyCode::Tab => self.cursor = Some(self.tab().step(true).first()),
+            KeyCode::Left | KeyCode::BackTab => self.cursor = Some(self.tab().step(false).first()),
             KeyCode::Enter | KeyCode::Char('e' | 'i') => {
                 let at = *self.cursor.get_or_insert(0);
                 self.act(FIELDS[at]);
@@ -637,8 +724,15 @@ impl App {
                 }
             }
             KeyCode::Char('s') => self.save(),
-            KeyCode::Char('h') => self.help = !self.help,
-            KeyCode::Char('l') => self.log_expanded = !self.log_expanded,
+            KeyCode::Char('u') => self.upgrade(),
+            KeyCode::Char('l') => {
+                self.log_expanded = !self.log_expanded;
+                self.focus = if self.log_expanded {
+                    Focus::Activity
+                } else {
+                    Focus::Settings
+                };
+            }
             KeyCode::Char('o') => {
                 let role = self
                     .field()
@@ -664,8 +758,41 @@ impl App {
             Kind::Switch => self.flip(field),
             Kind::Select => self.screen = Screen::Select,
             Kind::Text => self.screen = Screen::Text(LineEdit::new(&self.shown(field))),
+            Kind::Action if field == Field::UpdateNow => self.control.check_update(),
             Kind::Action => self.open_picker(field.role()),
         }
+    }
+
+    /// What the update notice and row show: a started upgrade reads as
+    /// running before the backend has said so.
+    pub(crate) fn update(&self) -> UpdateState {
+        match &self.update {
+            UpdateState::Available { version, .. } if self.upgrading => UpdateState::Upgrading {
+                version: version.clone(),
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// Runs `brew upgrade` off the input loop when the notice offers it.
+    fn upgrade(&mut self) {
+        if self.upgrading
+            || !matches!(
+                self.update,
+                UpdateState::Available {
+                    via: UpdateVia::Homebrew,
+                    ..
+                }
+            )
+        {
+            return;
+        }
+        self.upgrading = true;
+        let control = Arc::clone(&self.control);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Done::Upgraded(control.upgrade()));
+        });
     }
 
     fn flip(&mut self, field: Field) {
@@ -1097,6 +1224,7 @@ impl App {
             self.errors.insert(field, msg);
         }
         if let Some(first) = first {
+            self.focus = Focus::Settings;
             self.cursor = FIELDS.iter().position(|f| *f == first);
             if !matches!(self.screen, Screen::Settings(_)) {
                 self.screen = Screen::Nav;
