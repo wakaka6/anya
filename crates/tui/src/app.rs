@@ -5,12 +5,13 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anya_config::{Config, LANGUAGES, POSITIONS};
+use anya_config::{Config, EngineRole, LANGUAGES, POSITIONS};
 use anya_core::audio::{Device, DeviceKind};
 use anya_i18n::{Catalog, LOCALES};
 use anya_protocol::{FieldKind, Manifest};
 use anya_runtime::{
-    Control, EngineInfo, Entry, HotkeyRole, Info, Invalid, SaveError, Saved, Status,
+    Control, EngineInfo, Entry, HotkeyRole, Info, InstalledPlugin, Invalid, SaveError, Saved,
+    Status,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -127,8 +128,9 @@ pub(crate) enum Screen {
     Select,
     /// The OS is recording a hotkey for this field.
     Recording(Field),
-    /// The engine picker, its cursor.
-    Picker(usize),
+    /// The engine picker: the use it chooses for (none: any engine, to set
+    /// it up) and its cursor over [`App::picker_order`].
+    Picker(Option<EngineRole>, usize),
     /// An engine's settings.
     Settings(SettingsState),
 }
@@ -171,6 +173,8 @@ pub(crate) struct App {
     /// Why a field's value cannot be used.
     pub(crate) errors: BTreeMap<Field, Msg>,
     pub(crate) status: Status,
+    /// Installed plugins and whether they loaded, polled with the status.
+    pub(crate) plugins: Vec<InstalledPlugin>,
     pub(crate) activity: Vec<Entry>,
     pub(crate) engines: Vec<EngineInfo>,
     /// `None` until the first listing arrives.
@@ -239,6 +243,7 @@ impl App {
             draft: base.clone(),
             base,
             status: control.status(),
+            plugins: control.plugins(),
             activity: control.activity(),
             engines: control.engines(),
             control,
@@ -282,6 +287,7 @@ impl App {
         if self.last_status.elapsed() >= STATUS_EVERY {
             self.last_status = Instant::now();
             self.status = self.control.status();
+            self.plugins = self.control.plugins();
         }
         if self.last_activity.elapsed() >= ACTIVITY_EVERY {
             self.last_activity = Instant::now();
@@ -600,7 +606,7 @@ impl App {
             Screen::Select => self.select_key(key),
             // The OS has the keyboard; it ends on its own (Esc or timeout).
             Screen::Recording(_) => {}
-            Screen::Picker(at) => self.picker_key(key, at),
+            Screen::Picker(role, at) => self.picker_key(key, role, at),
             Screen::Settings(state) => self.settings_key(key, state),
         }
     }
@@ -634,8 +640,12 @@ impl App {
             KeyCode::Char('h') => self.help = !self.help,
             KeyCode::Char('l') => self.log_expanded = !self.log_expanded,
             KeyCode::Char('o') => {
-                let id = self.draft.recognition.engine_id().to_owned();
-                self.open_docs(&id);
+                let role = self
+                    .field()
+                    .and_then(Field::role)
+                    .unwrap_or(EngineRole::Dictation);
+                let id = self.draft.recognition.engine_id(role).to_owned();
+                self.open_docs(&id, Some(Field::of_role(role)));
             }
             KeyCode::Char('q') => {
                 if self.dirty() && !armed {
@@ -654,8 +664,7 @@ impl App {
             Kind::Switch => self.flip(field),
             Kind::Select => self.screen = Screen::Select,
             Kind::Text => self.screen = Screen::Text(LineEdit::new(&self.shown(field))),
-            Kind::Action if field == Field::Engine => self.open_picker(),
-            Kind::Action => self.open_settings(),
+            Kind::Action => self.open_picker(field.role()),
         }
     }
 
@@ -824,26 +833,37 @@ impl App {
 
     // ---- engines -------------------------------------------------------
 
-    fn open_picker(&mut self) {
+    /// The engines in the order the picker lists them: those whose settings
+    /// are complete first, the others after, each group in the engines' order.
+    pub(crate) fn picker_order(&self) -> Vec<usize> {
+        let (ready, rest): (Vec<usize>, Vec<usize>) =
+            (0..self.engines.len()).partition(|&i| self.ready(&self.engines[i].manifest.id));
+        [ready, rest].concat()
+    }
+
+    fn open_picker(&mut self, role: Option<EngineRole>) {
         if self.engines.is_empty() {
             self.note(Level::Error, None, Msg::new("tui.log.no_engines"));
             return;
         }
-        let id = self.draft.recognition.engine_id();
+        let current = self
+            .draft
+            .recognition
+            .engine_id(role.unwrap_or(EngineRole::Dictation));
         let at = self
-            .engines
+            .picker_order()
             .iter()
-            .position(|e| e.manifest.id == id)
+            .position(|&i| self.engines[i].manifest.id == current)
             .unwrap_or(0);
-        self.screen = Screen::Picker(at);
+        self.screen = Screen::Picker(role, at);
     }
 
-    fn open_settings(&mut self) {
-        let id = self.draft.recognition.engine_id().to_owned();
-        let Some(engine) = self.engine(&id) else {
+    /// Opens engine `id`'s settings; `field` is where an unknown id is reported.
+    fn open_settings(&mut self, id: &str, field: Option<Field>) {
+        let Some(engine) = self.engine(id) else {
             self.note(
                 Level::Error,
-                Some(Field::Engine),
+                field,
                 Msg::new("tui.engine.unknown").arg("id", id),
             );
             return;
@@ -859,7 +879,7 @@ impl App {
         }
         self.settings_scroll = 0;
         self.screen = Screen::Settings(SettingsState {
-            engine: id,
+            engine: id.to_owned(),
             cursor: 0,
             edit: None,
         });
@@ -869,11 +889,11 @@ impl App {
         manifest.title.get(self.catalog.locale()).to_owned()
     }
 
-    fn open_docs(&mut self, id: &str) {
+    fn open_docs(&mut self, id: &str, field: Option<Field>) {
         let Some(engine) = self.engine(id) else {
             self.note(
                 Level::Error,
-                Some(Field::Engine),
+                field,
                 Msg::new("tui.engine.unknown").arg("id", id),
             );
             return;
@@ -901,25 +921,35 @@ impl App {
         }
     }
 
-    fn picker_key(&mut self, key: KeyEvent, at: usize) {
-        let n = self.engines.len();
+    fn picker_key(&mut self, key: KeyEvent, role: Option<EngineRole>, at: usize) {
+        let order = self.picker_order();
+        let n = order.len();
         if n == 0 {
             self.screen = Screen::Nav;
             return;
         }
+        let field = role.map(Field::of_role);
+        let id = self.engines[order[at % n]].manifest.id.clone();
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => self.screen = Screen::Picker((at + 1) % n),
-            KeyCode::Char('k') | KeyCode::Up => self.screen = Screen::Picker((at + n - 1) % n),
-            KeyCode::Char('o') => {
-                let id = self.engines[at % n].manifest.id.clone();
-                self.open_docs(&id);
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.screen = Screen::Picker(role, (at + 1) % n);
             }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.screen = Screen::Picker(role, (at + n - 1) % n);
+            }
+            KeyCode::Char('o') => self.open_docs(&id, field),
             KeyCode::Enter | KeyCode::Char('e' | 'i') => {
-                let id = self.engines[at % n].manifest.id.clone();
-                self.draft.recognition.engine.clone_from(&id);
-                self.errors.remove(&Field::Engine);
                 self.screen = Screen::Nav;
-                self.open_settings();
+                match (role, field) {
+                    (Some(role), Some(field)) => {
+                        self.draft.recognition.set_engine(role, &id);
+                        self.errors.remove(&field);
+                        if !self.ready(&id) {
+                            self.open_settings(&id, Some(field));
+                        }
+                    }
+                    _ => self.open_settings(&id, None),
+                }
             }
             KeyCode::Esc | KeyCode::Char('q') => self.screen = Screen::Nav,
             _ => {}
@@ -973,7 +1003,7 @@ impl App {
                 KeyCode::Char('o') => {
                     let id = state.engine.clone();
                     self.screen = Screen::Settings(state);
-                    self.open_docs(&id);
+                    self.open_docs(&id, None);
                     return;
                 }
                 KeyCode::Esc | KeyCode::Char('q') => {
@@ -1051,7 +1081,7 @@ impl App {
             | Invalid::HotkeyFnFunctionKey { .. } => Field::Hotkeys,
             Invalid::UnknownPosition { .. } => Field::Position,
             Invalid::BadScale => Field::Scale,
-            Invalid::UnknownEngine { .. } => Field::Engine,
+            Invalid::UnknownEngine { role, .. } => Field::of_role(*role),
             Invalid::BadAddress { .. } => Field::Address,
         }
     }

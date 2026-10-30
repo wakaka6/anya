@@ -1,7 +1,7 @@
 //! The settings form: which config values it shows, in what order, and how
 //! each one reads, writes and parses.
 
-use anya_config::{Config, DEFAULT_ADDRESS};
+use anya_config::{Config, DEFAULT_ADDRESS, EngineRole};
 use anya_i18n::Catalog;
 use anya_runtime::Invalid;
 
@@ -47,7 +47,9 @@ pub(crate) enum Field {
     Mode,
     StopDelay,
     Output,
-    Engine,
+    DictationEngine,
+    ContinuousEngine,
+    RemoteEngine,
     EngineSettings,
     Language,
     Hotwords,
@@ -57,11 +59,14 @@ pub(crate) enum Field {
     ContinuousHotkey,
     SilenceGate,
     Address,
+    LanEnabled,
+    LanPort,
     OverlayEnabled,
     Position,
     IdleVisible,
     ShowText,
     Scale,
+    DebugMode,
 }
 
 /// Every field, in the order the form lists them.
@@ -74,7 +79,9 @@ pub(crate) const FIELDS: &[Field] = &[
     Field::Mode,
     Field::StopDelay,
     Field::Output,
-    Field::Engine,
+    Field::DictationEngine,
+    Field::ContinuousEngine,
+    Field::RemoteEngine,
     Field::EngineSettings,
     Field::Language,
     Field::Hotwords,
@@ -84,11 +91,14 @@ pub(crate) const FIELDS: &[Field] = &[
     Field::ContinuousHotkey,
     Field::SilenceGate,
     Field::Address,
+    Field::LanEnabled,
+    Field::LanPort,
     Field::OverlayEnabled,
     Field::Position,
     Field::IdleVisible,
     Field::ShowText,
     Field::Scale,
+    Field::DebugMode,
 ];
 
 /// How a field is edited.
@@ -108,13 +118,32 @@ impl Field {
     pub(crate) fn kind(self) -> Kind {
         use Field::*;
         match self {
-            DictationEnabled | ContinuousEnabled | SilenceGate | OverlayEnabled | IdleVisible
-            | ShowText => Kind::Switch,
+            DictationEnabled | ContinuousEnabled | SilenceGate | LanEnabled | OverlayEnabled
+            | IdleVisible | ShowText | DebugMode => Kind::Switch,
             UiLanguage | DictationDevice | Mode | Output | Language | ContinuousDevice
             | Position => Kind::Select,
             Gain | Hotkeys | StopDelay | Hotwords | HotwordsFile | ContinuousHotkey | Address
-            | Scale => Kind::Text,
-            Engine | EngineSettings => Kind::Action,
+            | LanPort | Scale => Kind::Text,
+            DictationEngine | ContinuousEngine | RemoteEngine | EngineSettings => Kind::Action,
+        }
+    }
+
+    /// The use whose engine this field chooses.
+    pub(crate) fn role(self) -> Option<EngineRole> {
+        match self {
+            Field::DictationEngine => Some(EngineRole::Dictation),
+            Field::ContinuousEngine => Some(EngineRole::Continuous),
+            Field::RemoteEngine => Some(EngineRole::Remote),
+            _ => None,
+        }
+    }
+
+    /// The field that chooses the engine for `role`.
+    pub(crate) fn of_role(role: EngineRole) -> Field {
+        match role {
+            EngineRole::Dictation => Field::DictationEngine,
+            EngineRole::Continuous => Field::ContinuousEngine,
+            EngineRole::Remote => Field::RemoteEngine,
         }
     }
 
@@ -123,9 +152,10 @@ impl Field {
         match self {
             Field::UiLanguage => Some("tui.group.general"),
             Field::DictationEnabled => Some("tui.group.dictation"),
-            Field::Engine => Some("tui.group.recognition"),
+            Field::DictationEngine => Some("tui.group.recognition"),
             Field::ContinuousEnabled => Some("tui.group.continuous"),
             Field::OverlayEnabled => Some("tui.group.overlay"),
+            Field::DebugMode => Some("tui.group.debug"),
             _ => None,
         }
     }
@@ -142,7 +172,9 @@ impl Field {
             Mode => ("tui.field.mode", "tui.help.mode"),
             StopDelay => ("tui.field.stop_delay", "tui.help.stop_delay"),
             Output => ("tui.field.output", "tui.help.output"),
-            Engine => ("tui.field.engine", "tui.help.engine"),
+            DictationEngine => ("tui.field.engine_dictation", "tui.help.engine_dictation"),
+            ContinuousEngine => ("tui.field.engine_continuous", "tui.help.engine_continuous"),
+            RemoteEngine => ("tui.field.engine_remote", "tui.help.engine_remote"),
             EngineSettings => ("tui.field.engine_settings", "tui.help.engine_settings"),
             Language => ("tui.field.language", "tui.help.language"),
             Hotwords => ("tui.field.hotwords", "tui.help.hotwords"),
@@ -155,11 +187,14 @@ impl Field {
             ContinuousHotkey => ("tui.field.continuous_hotkey", "tui.help.continuous_hotkey"),
             SilenceGate => ("tui.field.silence_gate", "tui.help.silence_gate"),
             Address => ("tui.field.address", "tui.help.address"),
+            LanEnabled => ("tui.field.lan_enabled", "tui.help.lan_enabled"),
+            LanPort => ("tui.field.lan_port", "tui.help.lan_port"),
             OverlayEnabled => ("tui.field.overlay_enabled", "tui.help.overlay_enabled"),
             Position => ("tui.field.position", "tui.help.position"),
             IdleVisible => ("tui.field.idle_visible", "tui.help.idle_visible"),
             ShowText => ("tui.field.show_text", "tui.help.show_text"),
             Scale => ("tui.field.scale", "tui.help.scale"),
+            DebugMode => ("tui.field.debug_mode", "tui.help.debug_mode"),
         }
     }
 
@@ -184,7 +219,11 @@ impl Field {
                 anya_config::Output::None => "none",
             }
             .to_owned(),
-            Engine | EngineSettings => c.recognition.engine.clone(),
+            DictationEngine | ContinuousEngine | RemoteEngine => c
+                .recognition
+                .engine_id(self.role().unwrap_or(EngineRole::Dictation))
+                .to_owned(),
+            EngineSettings => String::new(),
             Language => c.recognition.language.clone(),
             Hotwords => c.recognition.hotwords.join(", "),
             HotwordsFile => c.recognition.hotwords_file.clone(),
@@ -193,11 +232,14 @@ impl Field {
             ContinuousHotkey => c.continuous.hotkey.clone(),
             SilenceGate => c.continuous.silence_gate.to_string(),
             Address => c.subscription.address.clone(),
+            LanEnabled => c.subscription.lan.to_string(),
+            LanPort => c.subscription.lan_port.to_string(),
             OverlayEnabled => c.overlay.enabled.to_string(),
             Position => c.overlay.position.clone(),
             IdleVisible => c.overlay.idle_visible.to_string(),
             ShowText => c.overlay.show_text.to_string(),
             Scale => c.overlay.scale.to_string(),
+            DebugMode => c.debug.enabled.to_string(),
         }
     }
 
@@ -224,17 +266,24 @@ impl Field {
                     _ => anya_config::Output::Paste,
                 }
             }
-            Engine | EngineSettings => c.recognition.engine = value.to_owned(),
+            DictationEngine | ContinuousEngine | RemoteEngine => {
+                if let Some(role) = self.role() {
+                    c.recognition.set_engine(role, value);
+                }
+            }
+            EngineSettings => {}
             Language => c.recognition.language = value.to_owned(),
             ContinuousEnabled => c.continuous.enabled = on,
             ContinuousDevice => c.continuous.device = value.to_owned(),
             ContinuousHotkey => c.continuous.hotkey = value.to_owned(),
             SilenceGate => c.continuous.silence_gate = on,
+            LanEnabled => c.subscription.lan = on,
             OverlayEnabled => c.overlay.enabled = on,
             Position => c.overlay.position = value.to_owned(),
             IdleVisible => c.overlay.idle_visible = on,
             ShowText => c.overlay.show_text = on,
-            Gain | StopDelay | Hotwords | HotwordsFile | Address | Scale => {
+            DebugMode => c.debug.enabled = on,
+            Gain | StopDelay | Hotwords | HotwordsFile | Address | LanPort | Scale => {
                 // Typed fields go through `parse`; a value that does not
                 // parse leaves the config as it was.
                 let _ = self.parse(c, value);
@@ -253,6 +302,10 @@ impl Field {
                 c.dictation.stop_delay_ms =
                     text.parse().map_err(|_| Msg::new("tui.error.stop_delay"))?;
             }
+            Field::LanPort => match text.parse::<u16>() {
+                Ok(port) if port != 0 => c.subscription.lan_port = port,
+                _ => return Err(Msg::new("tui.error.lan_port")),
+            },
             Field::Scale => match text.parse::<f64>() {
                 Ok(s) if s.is_finite() && s > 0.0 => c.overlay.scale = s,
                 _ => return Err(Msg::invalid(&Invalid::BadScale)),
@@ -284,7 +337,15 @@ impl Field {
             Mode => to.dictation.mode = from.dictation.mode,
             StopDelay => to.dictation.stop_delay_ms = from.dictation.stop_delay_ms,
             Output => to.dictation.output = from.dictation.output,
-            Engine => to.recognition.engine.clone_from(&from.recognition.engine),
+            DictationEngine => to
+                .recognition
+                .dictation
+                .clone_from(&from.recognition.dictation),
+            ContinuousEngine => to
+                .recognition
+                .continuous
+                .clone_from(&from.recognition.continuous),
+            RemoteEngine => to.recognition.remote.clone_from(&from.recognition.remote),
             EngineSettings => to.recognition.engines.clone_from(&from.recognition.engines),
             Language => to
                 .recognition
@@ -306,11 +367,14 @@ impl Field {
                 .subscription
                 .address
                 .clone_from(&from.subscription.address),
+            LanEnabled => to.subscription.lan = from.subscription.lan,
+            LanPort => to.subscription.lan_port = from.subscription.lan_port,
             OverlayEnabled => to.overlay.enabled = from.overlay.enabled,
             Position => to.overlay.position.clone_from(&from.overlay.position),
             IdleVisible => to.overlay.idle_visible = from.overlay.idle_visible,
             ShowText => to.overlay.show_text = from.overlay.show_text,
             Scale => to.overlay.scale = from.overlay.scale,
+            DebugMode => to.debug.enabled = from.debug.enabled,
         }
     }
 }
@@ -434,6 +498,11 @@ mod tests {
         assert_eq!(c.audio.gain, -6);
         assert!(Field::Address.parse(&mut c, "  ").is_ok());
         assert_eq!(c.subscription.address, DEFAULT_ADDRESS);
+        assert!(Field::LanPort.parse(&mut c, "0").is_err());
+        assert!(Field::LanPort.parse(&mut c, "70000").is_err());
+        assert_eq!(c.subscription.lan_port, 7591);
+        assert!(Field::LanPort.parse(&mut c, " 9000 ").is_ok());
+        assert_eq!(c.subscription.lan_port, 9000);
     }
 
     #[test]

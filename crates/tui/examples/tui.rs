@@ -15,10 +15,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anya_config::Config;
 use anya_core::audio::{Device, DeviceKind};
 use anya_i18n::Catalog;
-use anya_protocol::{Field, FieldKind, Manifest, Source, Text};
+use anya_protocol::{Field, FieldKind, Manifest, Scope, Source, Text};
 use anya_runtime::{
-    Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info, Invalid, Notice, SaveError,
-    Saved, Stats, Status, Subscription,
+    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
+    InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient, Pairing,
+    PluginIssue, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
 };
 
 struct Pretend {
@@ -48,7 +49,9 @@ fn field(key: &str, en: &str, zh: &str, kind: FieldKind, required: bool) -> Fiel
 impl Pretend {
     fn new() -> Pretend {
         let mut config = Config::default();
-        config.recognition.engine = "stream".to_owned();
+        for role in anya_config::EngineRole::ALL {
+            config.recognition.set_engine(role, "stream");
+        }
         config.recognition.engines.insert(
             "stream".to_owned(),
             [("api_key".to_owned(), "sk-pretend-0123456789".to_owned())].into(),
@@ -77,7 +80,6 @@ impl Control for Pretend {
             desktop: "pretend".to_owned(),
             version: "0.0.0".to_owned(),
             config_path: PathBuf::from("/tmp/anya-example/config.toml"),
-            debug: false,
         }
     }
 
@@ -160,6 +162,7 @@ impl Control for Pretend {
             .into_iter()
             .map(|m| EngineInfo {
                 ready: self.engine_ready(&m.id, &config.recognition.settings(&m.id)),
+                enabled: None,
                 manifest: m,
             })
             .collect()
@@ -217,6 +220,7 @@ impl Control for Pretend {
             dictation,
             finishing,
             live_text: live,
+            level: None,
             continuous_on: *self
                 .continuous
                 .lock()
@@ -225,6 +229,7 @@ impl Control for Pretend {
                 url: "ws://127.0.0.1:7590/".to_owned(),
                 subscribers: 1,
             },
+            lan: Lan::Off,
             stats: Stats {
                 sessions: done,
                 chars: done * 30,
@@ -233,6 +238,54 @@ impl Control for Pretend {
                 last_audio_ms: 3000,
             },
         }
+    }
+
+    fn clients(&self) -> Vec<PairedClient> {
+        Vec::new()
+    }
+
+    fn start_pairing(&self) -> Result<Pairing, PairError> {
+        Err(PairError::LanOff)
+    }
+
+    fn set_client_scopes(&self, _id: &str, _scopes: Vec<Scope>) -> Result<(), ClientIssue> {
+        Err(ClientIssue::Write {
+            detail: "no paired clients".to_owned(),
+        })
+    }
+
+    fn remove_client(&self, _id: &str) -> Result<(), ClientIssue> {
+        Err(ClientIssue::Write {
+            detail: "no paired clients".to_owned(),
+        })
+    }
+
+    fn plugins(&self) -> Vec<InstalledPlugin> {
+        Vec::new()
+    }
+
+    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no registry".to_owned(),
+        })
+    }
+
+    fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no registry".to_owned(),
+        })
+    }
+
+    fn set_plugin_enabled(&self, _id: &str, _on: bool) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no plugins".to_owned(),
+        })
+    }
+
+    fn remove_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no plugins".to_owned(),
+        })
     }
 
     fn activity(&self) -> Vec<Entry> {
@@ -274,6 +327,14 @@ impl Control for Pretend {
         std::thread::sleep(timeout.min(Duration::from_secs(2)));
         Ok(Some("Alt+F8".to_owned()))
     }
+
+    fn preview_overlay(&self, _view: PreviewView) -> Result<(), PreviewIssue> {
+        Ok(())
+    }
+
+    fn retry_dictation(&self) {}
+
+    fn dismiss_dictation(&self) {}
 
     fn copy(&self, _text: &str) -> Result<(), String> {
         Ok(())

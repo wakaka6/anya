@@ -5,13 +5,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anya_config::{Config, Mode};
+use anya_config::{Config, EngineRole, Mode};
 use anya_core::audio::{Device, DeviceKind};
 use anya_i18n::Catalog;
-use anya_protocol::{Field as EngineField, FieldKind, Manifest, Source, Text};
+use anya_protocol::{Field as EngineField, FieldKind, Manifest, Scope, Source, Text};
 use anya_runtime::{
-    Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info, Invalid, SaveError, Saved,
-    Stats, Status, Subscription,
+    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
+    InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient, Pairing, PluginIssue,
+    PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -27,6 +28,7 @@ struct Fake {
     saves: Mutex<Vec<Config>>,
     refuse: Mutex<Vec<Invalid>>,
     status: Mutex<Status>,
+    plugins: Mutex<Vec<InstalledPlugin>>,
     activity: Mutex<Vec<Entry>>,
     devices: Mutex<Result<Vec<Device>, String>>,
     switched: Mutex<Vec<(&'static str, bool)>>,
@@ -44,6 +46,7 @@ fn engine(id: &str, title: &str, streaming: bool, fields: Vec<EngineField>) -> E
             fields,
         },
         ready: false,
+        enabled: None,
     }
 }
 
@@ -62,7 +65,9 @@ impl Fake {
     fn new() -> Arc<Fake> {
         let mut config = Config::default();
         config.dictation.hotkeys = "Alt+Super".into();
-        config.recognition.engine = "stream".into();
+        for role in EngineRole::ALL {
+            config.recognition.set_engine(role, "stream");
+        }
         config.recognition.engines.insert(
             "stream".into(),
             [
@@ -80,13 +85,16 @@ impl Fake {
                 dictation: Dictation::Idle,
                 finishing: 0,
                 live_text: None,
+                level: None,
                 continuous_on: false,
                 subscription: Subscription::Listening {
                     url: "ws://127.0.0.1:7590/".into(),
                     subscribers: 2,
                 },
+                lan: Lan::Off,
                 stats: Stats::default(),
             }),
+            plugins: Mutex::new(Vec::new()),
             activity: Mutex::new(Vec::new()),
             devices: Mutex::new(Ok(vec![Device {
                 id: "mic1".into(),
@@ -110,7 +118,6 @@ impl Control for Fake {
             desktop: "darwin".into(),
             version: "0.0.0".into(),
             config_path: PathBuf::from("/home/u/.config/anya/config.toml"),
-            debug: false,
         }
     }
 
@@ -190,6 +197,54 @@ impl Control for Fake {
         self.status.lock().expect("lock").clone()
     }
 
+    fn clients(&self) -> Vec<PairedClient> {
+        Vec::new()
+    }
+
+    fn start_pairing(&self) -> Result<Pairing, PairError> {
+        Err(PairError::LanOff)
+    }
+
+    fn set_client_scopes(&self, _id: &str, _scopes: Vec<Scope>) -> Result<(), ClientIssue> {
+        Err(ClientIssue::Write {
+            detail: "no paired clients".to_owned(),
+        })
+    }
+
+    fn remove_client(&self, _id: &str) -> Result<(), ClientIssue> {
+        Err(ClientIssue::Write {
+            detail: "no paired clients".to_owned(),
+        })
+    }
+
+    fn plugins(&self) -> Vec<InstalledPlugin> {
+        self.plugins.lock().expect("lock").clone()
+    }
+
+    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no registry".to_owned(),
+        })
+    }
+
+    fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no registry".to_owned(),
+        })
+    }
+
+    fn set_plugin_enabled(&self, _id: &str, _on: bool) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no plugins".to_owned(),
+        })
+    }
+
+    fn remove_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
+        Err(PluginIssue::Bun {
+            reason: "no plugins".to_owned(),
+        })
+    }
+
     fn activity(&self) -> Vec<Entry> {
         self.activity.lock().expect("lock").clone()
     }
@@ -216,6 +271,14 @@ impl Control for Fake {
     fn record_hotkey(&self, _timeout: Duration) -> Result<Option<String>, String> {
         self.recorded.lock().expect("lock").clone()
     }
+
+    fn preview_overlay(&self, _view: PreviewView) -> Result<(), PreviewIssue> {
+        Ok(())
+    }
+
+    fn retry_dictation(&self) {}
+
+    fn dismiss_dictation(&self) {}
 
     fn copy(&self, _text: &str) -> Result<(), String> {
         Ok(())
@@ -325,8 +388,9 @@ fn the_main_screen_reads_in_both_locales() {
                 "Sessions 3  |  Characters 120  |  Average 120 chars/min  |  Latest 60 chars/min",
                 "── Settings ──",
                 "Hotkeys: Alt+Super",
-                "Engine: Stream [Streaming] (Enter to choose)",
-                "Engine settings: Set up (Enter to change)",
+                "Dictation engine: Stream [Streaming] Set up",
+                "Remote engine: Stream [Streaming] Set up",
+                "Engine settings: (Enter to pick an engine to set up)",
                 "Listening on ws://127.0.0.1:7590/ · subscribers: 2",
                 "Recording",
                 "Recognizing: hello wor",
@@ -339,8 +403,9 @@ fn the_main_screen_reads_in_both_locales() {
                 "历史 3 次  |  总字数 120  |  平均速度 120 字/分钟  |  最近速度 60 字/分钟",
                 "── 配置 ──",
                 "热键: Alt+Super",
-                "引擎: Stream [流式] (回车选择)",
-                "引擎配置: 已配置 (回车修改)",
+                "听写引擎: Stream [流式] 已配置",
+                "远程引擎: Stream [流式] 已配置",
+                "引擎配置: (回车选引擎并配置)",
                 "监听中 ws://127.0.0.1:7590/ · 2 个订阅者",
                 "录音中",
                 "识别中：hello wor",
@@ -389,6 +454,73 @@ fn a_typed_field_is_checked_then_saved() {
     assert!(!app.dirty());
     shows(&mut app, "Saved to /home/u/.config/anya/config.toml");
     shows(&mut app, "Stop delay (ms): 250");
+}
+
+#[test]
+fn installed_plugins_show_their_load_state_in_both_locales() {
+    for (locale, ready, failed) in [
+        ("en", "echo (ready)", "broken (failed: no entry)"),
+        ("zh-CN", "echo（已就绪）", "broken（失败：no entry）"),
+    ] {
+        let fake = Fake::new();
+        *fake.plugins.lock().expect("lock") = ["echo", "broken"]
+            .into_iter()
+            .map(|id| InstalledPlugin {
+                id: id.to_owned(),
+                version: "1.0.0".to_owned(),
+                enabled: true,
+                load: if id == "echo" {
+                    PluginLoad::Ready
+                } else {
+                    PluginLoad::Failed {
+                        detail: "no entry".to_owned(),
+                    }
+                },
+                title: None,
+                description: None,
+            })
+            .collect();
+        let (mut app, _) = app(&fake, locale);
+        shows(&mut app, ready);
+        shows(&mut app, failed);
+    }
+}
+
+#[test]
+fn lan_sharing_is_a_switch_and_a_port_with_its_status() {
+    let fake = Fake::new();
+    let (mut app, _) = app(&fake, "en");
+    goto(&mut app, Field::LanEnabled);
+    shows(&mut app, "LAN sharing");
+    press(&mut app, KeyCode::Char(' '));
+    goto(&mut app, Field::LanPort);
+    press(&mut app, KeyCode::Enter);
+    ctrl(&mut app, 'u');
+    typed(&mut app, "99999");
+    press(&mut app, KeyCode::Enter);
+    shows(&mut app, "The port must be a number from 1 to 65535");
+    assert!(fake.saves().is_empty(), "a refused port saves nothing");
+    ctrl(&mut app, 'u');
+    typed(&mut app, "9000");
+    press(&mut app, KeyCode::Enter);
+    let saves = fake.saves();
+    assert!(saves[0].subscription.lan);
+    assert_eq!(saves[0].subscription.lan_port, 9000);
+
+    fake.status.lock().expect("lock").lan = Lan::Listening {
+        url: "wss://192.168.1.5:9000/asr".into(),
+        fingerprint: "ab:cd".into(),
+    };
+    app.refresh();
+    shows(
+        &mut app,
+        "LAN: wss://192.168.1.5:9000/asr · certificate ab:cd",
+    );
+    fake.status.lock().expect("lock").lan = Lan::Down {
+        detail: "address in use".into(),
+    };
+    app.refresh();
+    shows(&mut app, "LAN sharing is not listening: address in use");
 }
 
 #[test]
@@ -474,10 +606,27 @@ fn a_value_anya_refuses_shows_beside_its_field() {
 }
 
 #[test]
+fn an_unknown_engine_is_shown_beside_the_use_that_chose_it() {
+    let fake = Fake::new();
+    *fake.refuse.lock().expect("lock") = vec![Invalid::UnknownEngine {
+        role: EngineRole::Remote,
+        id: "nope".into(),
+    }];
+    let (mut app, _) = app(&fake, "en");
+    ch(&mut app, 's');
+    assert_eq!(app.field(), Some(Field::RemoteEngine));
+    shows(&mut app, "Remote engine: Stream");
+    shows(&mut app, "Unknown recognition engine: nope");
+}
+
+#[test]
 fn the_engine_modal_writes_only_declared_keys_and_deletes_blanked_ones() {
     let fake = Fake::new();
     let (mut app, _) = app(&fake, "en");
     goto(&mut app, Field::EngineSettings);
+    press(&mut app, KeyCode::Enter);
+    let s = screen(&mut app, 160, 60);
+    assert!(s.contains("Choose an engine to set up"), "{s}");
     press(&mut app, KeyCode::Enter);
     let s = screen(&mut app, 160, 60);
     assert!(s.contains("Engine settings · Stream"), "{s}");
@@ -527,10 +676,10 @@ fn the_engine_modal_writes_only_declared_keys_and_deletes_blanked_ones() {
 fn the_picker_chooses_an_engine_and_opens_its_docs() {
     let fake = Fake::new();
     let (mut app, opened) = app(&fake, "en");
-    goto(&mut app, Field::Engine);
+    goto(&mut app, Field::DictationEngine);
     press(&mut app, KeyCode::Enter);
     let s = screen(&mut app, 160, 60);
-    assert!(s.contains("Choose a recognition engine"), "{s}");
+    assert!(s.contains("Engine for dictation"), "{s}");
     assert!(s.contains("▸ ● Stream  [Streaming]  Set up"), "{s}");
     assert!(s.contains("Batch  [Whole clip]  Not set up"), "{s}");
     ch(&mut app, 'o');
@@ -540,16 +689,59 @@ fn the_picker_chooses_an_engine_and_opens_its_docs() {
     );
     ch(&mut app, 'j');
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.draft.recognition.engine, "batch");
+    assert_eq!(app.draft.recognition.dictation, "batch");
+    assert_eq!(
+        app.draft.recognition.continuous, "stream",
+        "other uses stay"
+    );
+    assert_eq!(app.draft.recognition.remote, "stream");
     assert!(matches!(&app.screen, Screen::Settings(s) if s.engine == "batch"));
     press(&mut app, KeyCode::Esc);
-    shows(
-        &mut app,
-        "Engine settings: Required settings missing (Enter to set up)",
-    );
     assert!(fake.saves().is_empty(), "picking is not saving");
     ch(&mut app, 's');
-    assert_eq!(fake.saves()[0].recognition.engine, "batch");
+    let saved = &fake.saves()[0].recognition;
+    assert_eq!(
+        (
+            saved.dictation.as_str(),
+            saved.continuous.as_str(),
+            saved.remote.as_str()
+        ),
+        ("batch", "stream", "stream")
+    );
+}
+
+#[test]
+fn each_use_picks_its_own_engine_with_the_set_up_ones_first() {
+    let fake = Fake::new();
+    let (mut app, _) = app(&fake, "en");
+    // Batch has no key yet, so Stream is offered first for every use.
+    goto(&mut app, Field::RemoteEngine);
+    shows(&mut app, "Remote engine: Stream");
+    press(&mut app, KeyCode::Enter);
+    let s = screen(&mut app, 160, 60);
+    assert!(s.contains("Engine for remote dictation"), "{s}");
+    ch(&mut app, 'j');
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.draft.recognition.remote, "batch");
+    assert_eq!(app.draft.recognition.dictation, "stream");
+    assert_eq!(app.draft.recognition.continuous, "stream");
+    press(&mut app, KeyCode::Esc);
+
+    goto(&mut app, Field::ContinuousEngine);
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.draft.recognition.continuous, "stream");
+    assert_eq!(app.screen, Screen::Nav, "a set-up engine needs no settings");
+    ch(&mut app, 's');
+    let saved = &fake.saves()[0].recognition;
+    assert_eq!(
+        (
+            saved.dictation.as_str(),
+            saved.continuous.as_str(),
+            saved.remote.as_str()
+        ),
+        ("stream", "stream", "batch")
+    );
 }
 
 #[test]

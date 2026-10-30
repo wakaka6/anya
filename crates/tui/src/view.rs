@@ -3,7 +3,9 @@
 use anya_config::DEFAULT_ADDRESS;
 use anya_core::audio::DeviceKind;
 use anya_protocol::{FieldKind, Manifest, Source};
-use anya_runtime::{Delivered, Dictation, Entry, Notice, Subscription};
+use anya_runtime::{
+    DebugEvent, Delivered, Dictation, Entry, Lan, Notice, PluginLoad, Subscription,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -13,6 +15,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, Group, Level, LineEdit, Screen, SettingEdit, choices};
 use crate::form::{FIELDS, Field, Kind};
+use anya_config::EngineRole;
 
 const LOG_LINES: usize = 5;
 const LOG_LINES_EXPANDED: usize = 100;
@@ -111,7 +114,7 @@ pub(crate) fn draw(app: &mut App, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(footer(app)), foot);
 
     match app.screen.clone() {
-        Screen::Picker(at) => draw_picker(app, frame, at),
+        Screen::Picker(role, at) => draw_picker(app, frame, role, at),
         Screen::Settings(state) => {
             draw_settings(app, frame, &state.engine, state.cursor, state.edit)
         }
@@ -256,31 +259,33 @@ fn value_spans(app: &App, field: Field, editing: bool) -> Vec<Span<'static>> {
             }
         },
         Kind::Action => {
-            let id = app.draft.recognition.engine_id();
+            let Some(role) = field.role() else {
+                return vec![Span::styled(
+                    c.t("tui.engine.settings_hint").to_owned(),
+                    dim(),
+                )];
+            };
+            let id = app.draft.recognition.engine_id(role);
             let Some(engine) = app.engine(id) else {
                 return vec![Span::styled(
                     c.tf("tui.engine.unknown", &[("id", id)]),
                     error(),
                 )];
             };
-            if field == Field::Engine {
-                vec![
-                    Span::styled(app.title(&engine.manifest), value()),
-                    Span::raw(" "),
-                    tag(app, &engine.manifest),
-                    Span::raw(" "),
-                    Span::styled(c.t("tui.engine.choose").to_owned(), dim()),
-                ]
-            } else if engine.manifest.fields.is_empty() {
-                vec![Span::styled(
-                    c.t("tui.engine.no_settings").to_owned(),
-                    dim(),
-                )]
+            let state = if engine.manifest.fields.is_empty() {
+                Span::styled(c.t("tui.engine.no_settings_short").to_owned(), dim())
             } else if app.ready(id) {
-                vec![Span::styled(c.t("tui.engine.ready").to_owned(), ok())]
+                Span::styled(c.t("tui.engine.ready_short").to_owned(), ok())
             } else {
-                vec![Span::styled(c.t("tui.engine.missing").to_owned(), warn())]
-            }
+                Span::styled(c.t("tui.engine.missing_short").to_owned(), warn())
+            };
+            vec![
+                Span::styled(app.title(&engine.manifest), value()),
+                Span::raw(" "),
+                tag(app, &engine.manifest),
+                Span::raw(" "),
+                state,
+            ]
         }
     }
 }
@@ -373,6 +378,26 @@ fn draw_form(app: &mut App, frame: &mut Frame, area: Rect) {
             };
             lines.push(line);
         }
+        if field == Field::LanPort {
+            let line = match &app.status.lan {
+                Lan::Off => None,
+                Lan::Listening { url, fingerprint } => Some(Line::styled(
+                    format!(
+                        "    {}",
+                        c.tf(
+                            "tui.lan.listening",
+                            &[("url", url), ("fingerprint", fingerprint)],
+                        )
+                    ),
+                    Style::new().fg(Color::Green),
+                )),
+                Lan::Down { detail } => Some(Line::styled(
+                    format!("    {}", c.tf("tui.lan.down", &[("detail", detail)])),
+                    warn(),
+                )),
+            };
+            lines.extend(line);
+        }
         if cfg!(target_os = "macos")
             && field == Field::ContinuousDevice
             && (here || app.help)
@@ -463,11 +488,6 @@ fn status_lines(app: &App) -> Vec<Line<'static>> {
             spans.push(Span::styled(c.t("tui.status.failed").to_owned(), error()));
             spans.push(Span::raw("  "));
             spans.push(Span::styled(c.error(*code, detail.as_deref()), error()));
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                c.t("tui.status.failed_hint").to_owned(),
-                dim(),
-            ));
             background(&mut spans);
         }
     }
@@ -486,7 +506,34 @@ fn status_lines(app: &App) -> Vec<Line<'static>> {
     } else {
         Line::styled(c.t("tui.status.continuous_off").to_owned(), dim())
     };
+    let mut continuous = continuous;
+    if !app.plugins.is_empty() {
+        continuous.spans.push(Span::raw("  "));
+        continuous
+            .spans
+            .push(Span::styled(plugins_text(app), dim()));
+    }
     vec![Line::from(spans), live, continuous]
+}
+
+/// `Plugins: echo (ready), other (off)`, each in its own words.
+fn plugins_text(app: &App) -> String {
+    let c = &app.catalog;
+    let list: Vec<String> = app
+        .plugins
+        .iter()
+        .map(|p| {
+            let state = match &p.load {
+                PluginLoad::HostDown => c.t("tui.plugins.host_down").to_owned(),
+                PluginLoad::Off => c.t("tui.plugins.off").to_owned(),
+                PluginLoad::Loading => c.t("tui.plugins.loading").to_owned(),
+                PluginLoad::Ready => c.t("tui.plugins.ready").to_owned(),
+                PluginLoad::Failed { detail } => c.tf("tui.plugins.failed", &[("detail", detail)]),
+            };
+            c.tf("tui.plugins.item", &[("id", &p.id), ("state", &state)])
+        })
+        .collect();
+    c.tf("tui.plugins.line", &[("list", &list.join(", "))])
 }
 
 fn source_label(app: &App, source: Source) -> String {
@@ -508,6 +555,8 @@ fn notice_key(notice: Notice) -> &'static str {
         Notice::ConfigBroken => "tui.notice.config_broken",
         Notice::HotwordsUnreadable => "tui.notice.hotwords_unreadable",
         Notice::DeliveryFailed => "tui.notice.delivery_failed",
+        Notice::PluginsUnavailable => "tui.notice.plugins_unavailable",
+        Notice::OverlayUnavailable => "tui.notice.overlay_unavailable",
     }
 }
 
@@ -550,6 +599,26 @@ fn entry_line(app: &App, entry: &Entry) -> (u64, String, Style) {
             );
             (*at, line, Style::new().fg(Color::LightRed))
         }
+        Entry::Debug { at, event } => {
+            let line = match event {
+                DebugEvent::KeyDown { combo } => c.tf("tui.debug.key_down", &[("combo", combo)]),
+                DebugEvent::KeyUp { combo } => c.tf("tui.debug.key_up", &[("combo", combo)]),
+                DebugEvent::Timing {
+                    connect_ms,
+                    first_text_ms,
+                    final_ms,
+                } => [
+                    ("tui.debug.connect", connect_ms),
+                    ("tui.debug.first_text", first_text_ms),
+                    ("tui.debug.final", final_ms),
+                ]
+                .into_iter()
+                .filter_map(|(key, ms)| Some(c.tf(key, &[("ms", &(*ms)?.to_string())])))
+                .collect::<Vec<_>>()
+                .join(" · "),
+            };
+            (*at, c.tf("tui.log.debug", &[("text", &line)]), dim())
+        }
         Entry::Notice { at, notice, detail } => {
             let text = c.t(notice_key(*notice));
             let line = match detail.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
@@ -557,9 +626,11 @@ fn entry_line(app: &App, entry: &Entry) -> (u64, String, Style) {
                 None => text.to_owned(),
             };
             let style = match notice {
-                Notice::ConfigBroken | Notice::HotwordsUnreadable | Notice::DeliveryFailed => {
-                    Style::new().fg(Color::LightYellow)
-                }
+                Notice::ConfigBroken
+                | Notice::HotwordsUnreadable
+                | Notice::DeliveryFailed
+                | Notice::PluginsUnavailable
+                | Notice::OverlayUnavailable => Style::new().fg(Color::LightYellow),
                 _ => dim(),
             };
             (*at, line, style)
@@ -617,7 +688,7 @@ fn footer(app: &App) -> Line<'static> {
         Screen::Text(_) => "tui.hint.text",
         Screen::Select => "tui.hint.select",
         Screen::Recording(_) => "tui.hint.recording",
-        Screen::Picker(_) => "tui.hint.picker",
+        Screen::Picker(..) => "tui.hint.picker",
         Screen::Settings(s) if s.edit.is_some() => "tui.hint.settings_edit",
         Screen::Settings(_) => "tui.hint.settings",
     };
@@ -665,12 +736,16 @@ fn draw_modal(frame: &mut Frame, rect: Rect, heading: Line<'static>, lines: Vec<
     );
 }
 
-fn draw_picker(app: &App, frame: &mut Frame, at: usize) {
+fn draw_picker(app: &App, frame: &mut Frame, role: Option<EngineRole>, at: usize) {
     let c = &app.catalog;
-    let current = app.draft.recognition.engine_id();
+    let recognition = &app.draft.recognition;
+    let in_use = |id: &str| match role {
+        Some(role) => recognition.engine_id(role) == id,
+        None => recognition.engines_in_use().contains(&id),
+    };
     let mut lines = Vec::new();
-    for (i, engine) in app.engines.iter().enumerate() {
-        let m = &engine.manifest;
+    for (i, &index) in app.picker_order().iter().enumerate() {
+        let m = &app.engines[index].manifest;
         let state = if app.ready(&m.id) {
             Span::styled(
                 c.t("tui.picker.ready").to_owned(),
@@ -681,7 +756,7 @@ fn draw_picker(app: &App, frame: &mut Frame, at: usize) {
         };
         lines.push(Line::from(vec![
             Span::styled(if i == at { "▸ " } else { "  " }, ok()),
-            Span::styled(if m.id == current { "● " } else { "  " }, ok()),
+            Span::styled(if in_use(&m.id) { "● " } else { "  " }, ok()),
             Span::styled(app.title(m), Style::new().add_modifier(Modifier::BOLD)),
             Span::raw("  "),
             tag(app, m),
@@ -699,7 +774,14 @@ fn draw_picker(app: &App, frame: &mut Frame, at: usize) {
         }
     }
     let rect = modal_area(frame.area(), lines.len());
-    let heading = Line::styled(format!(" {} ", c.t("tui.picker.title")), title());
+    let heading = match role {
+        Some(role) => c.tf(
+            "tui.picker.title_for",
+            &[("use", c.t(&format!("tui.use.{}", role.key())))],
+        ),
+        None => c.t("tui.picker.title_settings").to_owned(),
+    };
+    let heading = Line::styled(format!(" {heading} "), title());
     draw_modal(frame, rect, heading, lines);
 }
 
