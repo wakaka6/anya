@@ -4,6 +4,7 @@ resolver = "3"
 members = [
     "crates/protocol",
     "crates/core",
+    "crates/plugin-rt",
     "crates/dictation",
     "crates/continuous",
     "crates/audio",
@@ -16,6 +17,7 @@ members = [
     "crates/engines/auralwise",
     "crates/engines/mimo",
     "crates/server",
+    "crates/plugin-host",
     "crates/config",
     "crates/i18n",
     "crates/runtime",
@@ -35,6 +37,7 @@ publish = false
 [workspace.dependencies]
 anya-protocol = { path = "crates/protocol" }
 anya-core = { path = "crates/core" }
+anya-plugin-rt = { path = "crates/plugin-rt" }
 anya-dictation = { path = "crates/dictation" }
 anya-continuous = { path = "crates/continuous" }
 anya-audio = { path = "crates/audio" }
@@ -47,6 +50,7 @@ anya-engine-openai = { path = "crates/engines/openai" }
 anya-engine-auralwise = { path = "crates/engines/auralwise" }
 anya-engine-mimo = { path = "crates/engines/mimo" }
 anya-server = { path = "crates/server" }
+anya-plugin-host = { path = "crates/plugin-host" }
 anya-config = { path = "crates/config" }
 anya-i18n = { path = "crates/i18n" }
 anya-runtime = { path = "crates/runtime" }
@@ -65,6 +69,19 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # The one crypto provider: crates that open wss:// depend on it so rustls
 # has a process default.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# The LAN gateway: TLS in front of the WebSocket, a self-signed certificate
+# the client pins, and tokens kept as SHA-256 hashes (ring is rustls' provider).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+ring = "0.17"
+# The plugin host: npm tarballs (gzip + tar), the Bun release (zip), SRI
+# hashes (base64 of ring digests) and semver ranges for compatibility.
+base64 = "0.22"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = { version = "0.4", default-features = false }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+semver = "1"
+tempfile = "3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

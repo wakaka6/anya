@@ -1,0 +1,30 @@
+[package]
+name = "anya-plugin-host"
+description = "Runs engine plugins in one Bun process, and installs them from the anyahq-plugins registry."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anya-core.workspace = true
+anya-protocol.workspace = true
+base64.workspace = true
+flate2.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tracing.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

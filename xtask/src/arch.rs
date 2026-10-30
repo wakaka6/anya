@@ -14,6 +14,7 @@ pub enum Layer {
     /// `anya-protocol`: wire formats.
     Protocol,
     /// `anya-core`: the seams and the session controller.
+    /// `anya-plugin-rt` sits beside it: the plugin runtime, which names no seam.
     Core,
     /// When sessions open and end: dictation, continuous transcription.
     /// Pure logic over core's seams; the app feeds them input events.
@@ -35,11 +36,13 @@ impl Layer {
     pub fn of(package: &str) -> Option<Layer> {
         Some(match package {
             "anya-protocol" => Layer::Protocol,
-            "anya-core" => Layer::Core,
+            "anya-core" | "anya-plugin-rt" => Layer::Core,
             "anya-dictation" | "anya-continuous" => Layer::Trigger,
             "anya-audio" | "anya-hotkey" | "anya-output" | "anya-overlay" => Layer::Adapter,
             "anya-server" | "anya-plugin-host" => Layer::Service,
-            "anya" | "anya-config" | "anya-i18n" | "anya-runtime" | "anya-tui" | "anya-gui" => Layer::App,
+            "anya" | "anya-config" | "anya-i18n" | "anya-runtime" | "anya-tui" | "anya-gui" => {
+                Layer::App
+            }
             "xtask" => Layer::Tooling,
             p if p.starts_with(ENGINE_PREFIX) => Layer::Engine,
             _ => return None,

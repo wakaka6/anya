@@ -1,0 +1,17 @@
+{
+  "name": "echo-engine",
+  "version": "1.0.0",
+  "description": "Streaming example engine: reports how many bytes of audio it has heard.",
+  "type": "module",
+  "main": "engine.js",
+  "anya": {
+    "id": "echo",
+    "engine": "./engine.js",
+    "compat": ">=0.0.0",
+    "protocol": 1,
+    "permissions": []
+  },
+  "devDependencies": {
+    "@anyahq/plugin": "^1.0.0"
+  }
+}

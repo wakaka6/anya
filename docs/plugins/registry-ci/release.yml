@@ -1,0 +1,59 @@
+# Copy to .github/workflows/release.yml in the anyahq-plugins repository.
+# A tag `<plugin-id>-v<version>` (for example `echo-v1.2.0`) releases
+# plugins/<plugin-id>: CI packs it, validates it, and commits the tarball
+# (tgz/) and the updated index.json to the `dist` branch of this repository.
+# Anya reads both from raw.githubusercontent.com. Nothing installs on a user's
+# machine from here; Anya reads the index when the user opens the marketplace.
+name: release
+on:
+  push:
+    tags: ["*-v*"]
+permissions:
+  contents: write
+concurrency: { group: index, cancel-in-progress: false }
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.14" }
+      - name: Parse the tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          echo "PLUGIN=${tag%-v*}" >> "$GITHUB_ENV"
+          echo "VERSION=${tag##*-v}" >> "$GITHUB_ENV"
+      - name: Check out the dist branch
+        run: |
+          if git ls-remote --exit-code --heads origin dist >/dev/null; then
+            git worktree add "$RUNNER_TEMP/dist" origin/dist
+          else
+            git worktree add --orphan -b dist "$RUNNER_TEMP/dist"
+          fi
+          mkdir -p "$RUNNER_TEMP/dist/tgz"
+          test -f "$RUNNER_TEMP/dist/index.json" || echo '{"version":1,"plugins":[]}' > "$RUNNER_TEMP/dist/index.json"
+      - name: Pack
+        run: |
+          cd "plugins/$PLUGIN"
+          test "$(jq -r .version package.json)" = "$VERSION" || { echo "tag and package.json version differ"; exit 1; }
+          mkdir "$RUNNER_TEMP/pack" "$RUNNER_TEMP/unpacked"
+          npm pack --pack-destination "$RUNNER_TEMP/pack"
+          mv "$RUNNER_TEMP"/pack/*.tgz "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz"
+          tar -xzf "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" -C "$RUNNER_TEMP/unpacked" --strip-components=1
+      - name: Fetch the SDK
+        run: curl -fsSL https://raw.githubusercontent.com/anyahq/anya/main/sdk/plugin/index.js -o "$RUNNER_TEMP/sdk.js"
+      - name: Validate and add the index entry
+        run: |
+          bun scripts/validate.mjs "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dist/tgz/$PLUGIN-$VERSION.tgz" \
+            "$RUNNER_TEMP/dist/index.json" "$RUNNER_TEMP/sdk.js"
+          cp "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz" "$RUNNER_TEMP/dist/tgz/"
+      - name: Publish to the dist branch
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.json tgz
+          git commit -m "$PLUGIN $VERSION"
+          git push origin HEAD:dist
