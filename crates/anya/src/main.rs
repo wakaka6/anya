@@ -36,10 +36,10 @@ use anya_protocol::Provide;
 use anya_protocol::{ErrorCode, PairingOffer, Scope, Source};
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation,
-    EngineInfo, Entry, HookInfo, HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market,
-    MarketPlugin, Notice, PairError, PairedClient, Pairing, PluginIcon, PluginIssue, PluginLoad,
-    PreviewIssue, PreviewView, Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue,
-    UpdateState, UpdateVia,
+    EngineInfo, Entry, HookInfo, HotkeyRole, Icon, Info, InstalledPlugin, Invalid, Lan, Market,
+    MarketPlugin, Notice, PairError, PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue,
+    PreviewView, Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
+    UpdateVia,
 };
 use anya_server::{
     Address, Audience, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address,
@@ -289,8 +289,8 @@ struct App {
     router: Arc<Mutex<route::Router>>,
     data_dir: PathBuf,
     plugin_store: Store,
-    /// Plugin icons, for the settings.
-    plugin_icons: icons::PluginIcons,
+    /// Engine and plugin icons, for the settings.
+    icons: icons::Icons,
     /// Running once a plugin is enabled and a Bun is found.
     plugin_host: Arc<Mutex<Option<PluginHost>>>,
     /// What the update check knows (docs/decisions/0014).
@@ -400,7 +400,7 @@ impl App {
             audiences: Arc::default(),
             router: Arc::default(),
             plugin_store: Store::new(PluginDirs::under(&data_dir)),
-            plugin_icons: icons::PluginIcons::new(PluginDirs::under(&data_dir).icons),
+            icons: icons::Icons::new(PluginDirs::under(&data_dir).icons),
             data_dir,
             plugin_host: Arc::new(Mutex::new(None)),
             update: Arc::new(Mutex::new(UpdateState::Unknown)),
@@ -1015,6 +1015,18 @@ impl App {
         });
     }
 
+    /// The name of engine `id`'s icon: a built-in engine's logo, or the icon
+    /// of the installed plugin that serves it.
+    fn engine_icon(&self, id: &str, plugin: bool) -> Option<String> {
+        if !plugin {
+            return builtin::engine_icon(id).and_then(|icon| self.icons.of_bytes(icon));
+        }
+        let installed = self.plugin_store.installed().ok()?;
+        let p = installed.iter().find(|p| p.id == id)?;
+        let package = read_package(&self.plugin_store.package_dir(p)).ok()?;
+        self.icons.of_package(&package)
+    }
+
     /// Every built-in engine, switched on or off, then the engines community
     /// plugins serve (which have no switch here).
     fn listed_engines(&self) -> Vec<(Arc<dyn Engine>, Option<bool>)> {
@@ -1243,6 +1255,7 @@ impl Control for App {
         self.listed_engines()
             .iter()
             .map(|(engine, enabled)| EngineInfo {
+                icon: self.engine_icon(&engine.manifest().id, enabled.is_none()),
                 enabled: *enabled,
                 manifest: engine.manifest().clone(),
                 ready: engine
@@ -1366,9 +1379,7 @@ impl Control for App {
                         .unwrap_or_default(),
                     fields,
                     missing,
-                    icon: package
-                        .as_ref()
-                        .and_then(|k| self.plugin_icons.of_package(k)),
+                    icon: package.as_ref().and_then(|k| self.icons.of_package(k)),
                 }
             })
             .collect()
@@ -1386,9 +1397,9 @@ impl Control for App {
                  }| {
                     let release = p.versions.last()?;
                     let icon = if official {
-                        official::find(&p.id).and_then(|(b, _)| self.plugin_icons.of_bundled(b))
+                        official::find(&p.id).and_then(|(b, _)| self.icons.of_bundled(b))
                     } else {
-                        self.plugin_icons.of_release(release)
+                        self.icons.of_release(release)
                     };
                     Some(MarketPlugin {
                         version: release.version.clone(),
@@ -1411,8 +1422,8 @@ impl Control for App {
         }
     }
 
-    fn plugin_icon(&self, name: &str) -> Option<PluginIcon> {
-        self.runtime.block_on(self.plugin_icons.get(name))
+    fn icon(&self, name: &str) -> Option<Icon> {
+        self.runtime.block_on(self.icons.get(name))
     }
 
     fn install_plugin(&self, id: &str) -> Result<(), PluginIssue> {

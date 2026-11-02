@@ -165,6 +165,7 @@ impl Control for Pretend {
             .map(|m| EngineInfo {
                 ready: self.engine_ready(&m.id, &config.recognition.settings(&m.id)),
                 enabled: None,
+                icon: None,
                 manifest: m,
             })
             .collect()
@@ -285,7 +286,7 @@ impl Control for Pretend {
         }
     }
 
-    fn plugin_icon(&self, _name: &str) -> Option<anya_runtime::PluginIcon> {
+    fn icon(&self, _name: &str) -> Option<anya_runtime::Icon> {
         None
     }
 

@@ -1,23 +1,24 @@
-//! Plugin icons as the settings ask for them: by a name made from the
-//! picture, kept on disk. An installed plugin's comes from its package, an
-//! official plugin's from the binary, a registry plugin's is downloaded the
-//! first time it is asked for, checked against the index's hash.
+//! Engine and plugin icons as the settings ask for them: by a name made from
+//! the picture, kept on disk. A built-in engine's and an official plugin's
+//! come from the binary, an installed plugin's from its package, a registry
+//! plugin's is downloaded the first time it is asked for, checked against the
+//! index's hash.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use anya_plugin_host::{Bundled, Icons, Package, package_icon};
+use anya_plugin_host::{Bundled, Icons as Kept, Package, package_icon};
 use anya_protocol::IndexVersion;
-use anya_runtime::PluginIcon;
+use anya_runtime::Icon;
 
 /// How long a registry icon that failed to download is not asked for again.
 const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 
-/// The plugin icons.
-pub struct PluginIcons {
-    icons: Icons,
+/// The icons.
+pub struct Icons {
+    icons: Kept,
     /// Each package's icon name, by package directory; a package is read once.
     packages: Mutex<HashMap<PathBuf, Option<String>>>,
     /// Registry icons by name: their URL and integrity.
@@ -32,11 +33,11 @@ fn lock<T>(value: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-impl PluginIcons {
+impl Icons {
     /// The icons kept in `dir`.
-    pub fn new(dir: PathBuf) -> PluginIcons {
-        PluginIcons {
-            icons: Icons::new(dir),
+    pub fn new(dir: PathBuf) -> Icons {
+        Icons {
+            icons: Kept::new(dir),
             packages: Mutex::default(),
             remote: Mutex::default(),
             failed: Mutex::default(),
@@ -76,17 +77,25 @@ impl PluginIcons {
         }
     }
 
-    /// The name of a registry release's icon, which [`PluginIcons::get`]
+    /// The name of `bytes`, an icon built into Anya.
+    pub fn of_bytes(&self, bytes: &[u8]) -> Option<String> {
+        self.icons
+            .keep(bytes)
+            .inspect_err(|e| tracing::warn!("a built-in icon does not read: {e}"))
+            .ok()
+    }
+
+    /// The name of a registry release's icon, which [`Icons::get`]
     /// downloads when it is first asked for.
     pub fn of_release(&self, release: &IndexVersion) -> Option<String> {
         let (url, integrity) = (release.icon.as_ref()?, release.icon_integrity.as_ref()?);
-        let name = Icons::name_of(integrity)?;
+        let name = Kept::name_of(integrity)?;
         lock(&self.remote).insert(name.clone(), (url.clone(), integrity.clone()));
         Some(name)
     }
 
     /// The icon named `name`; a registry icon is downloaded the first time.
-    pub async fn get(&self, name: &str) -> Option<PluginIcon> {
+    pub async fn get(&self, name: &str) -> Option<Icon> {
         if let Some(icon) = self.read(name) {
             return Some(icon);
         }
@@ -105,9 +114,9 @@ impl PluginIcons {
         self.read(name)
     }
 
-    fn read(&self, name: &str) -> Option<PluginIcon> {
+    fn read(&self, name: &str) -> Option<Icon> {
         let (bytes, format) = self.icons.read(name)?;
-        Some(PluginIcon {
+        Some(Icon {
             bytes,
             content_type: format.content_type(),
         })

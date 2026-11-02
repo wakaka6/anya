@@ -202,11 +202,9 @@ pub(super) fn market(list: &[MarketPlugin], catalog: &Catalog) -> Vec<Value> {
         .collect()
 }
 
-/// Where the page loads a plugin's icon from; `null` without one.
+/// Where the page loads an icon from; `null` without one.
 fn icon_url(name: Option<&str>) -> Value {
-    name.map_or(Value::Null, |n| {
-        Value::from(format!("/api/plugins/icon/{n}"))
-    })
+    name.map_or(Value::Null, |n| Value::from(format!("/api/icons/{n}")))
 }
 
 /// The LAN listener as the page shows it: a state, a line, and for a
@@ -250,7 +248,7 @@ fn engines(page: &Page, config: &Config, catalog: &Catalog) -> Vec<Value> {
         .control
         .engines()
         .into_iter()
-        .map(|e| engine(&e.manifest, e.ready, e.enabled, locale))
+        .map(|e| engine(&e.manifest, e.ready, e.enabled, e.icon.as_deref(), locale))
         .collect();
     // An engine the config names for a role but Anya lacks stays visible, so
     // the user sees what is chosen; saving it is refused with the reason.
@@ -267,6 +265,7 @@ fn engines(page: &Page, config: &Config, catalog: &Catalog) -> Vec<Value> {
             "ready": false,
             "custom": true,
             "plugin": false,
+            "icon": null,
             "enabled": null,
             "fields": [],
         }));
@@ -274,7 +273,13 @@ fn engines(page: &Page, config: &Config, catalog: &Catalog) -> Vec<Value> {
     out
 }
 
-fn engine(m: &Manifest, ready: bool, enabled: Option<bool>, locale: &str) -> Value {
+fn engine(
+    m: &Manifest,
+    ready: bool,
+    enabled: Option<bool>,
+    icon: Option<&str>,
+    locale: &str,
+) -> Value {
     let title = match m.title.get(locale) {
         "" => m.id.as_str(),
         t => t,
@@ -290,6 +295,7 @@ fn engine(m: &Manifest, ready: bool, enabled: Option<bool>, locale: &str) -> Val
         "custom": false,
         "plugin": enabled.is_none(),
         "enabled": enabled,
+        "icon": icon_url(icon),
         "fields": fields,
     })
 }

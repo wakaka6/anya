@@ -26,6 +26,9 @@ const TIMEOUT: Duration = Duration::from_secs(120);
 /// Most of an answer read.
 const ANSWER_LIMIT: usize = 4 << 20;
 
+/// The engine's logo, shown beside it in the settings.
+pub const ICON: &[u8] = include_bytes!("../icon.svg");
+
 /// The OpenAI-compatible engine.
 pub fn engine() -> Arc<dyn Engine> {
     Arc::new(OpenAi {

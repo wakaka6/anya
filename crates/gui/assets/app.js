@@ -1366,7 +1366,7 @@ const openEngines = new Set();
 // Repaints what depends on which services are usable; set by the engine page.
 let engineViews = null;
 
-// The plugin's icon when it has one that loads; else a coloured tile with
+// The engine's or plugin's icon when it has one that loads; else a coloured tile with
 // the name's first letter, the same colour every time.
 function tileFor(id, title, icon) {
   if (icon) {
@@ -1468,7 +1468,7 @@ function serviceRow(id, paints) {
   paint();
 
   const head = el("div", { class: "prov-head" },
-    tileFor(id, engine.title),
+    tileFor(id, engine.title, engine.icon),
     el("div", { class: "svc" }, el("b", { title: engine.title }, engine.title), el("small", {}, engine.blurb)),
     engine.plugin ? el("span", { class: "chip tag static plug" }, t("gui.engine.plugin_tag")) : null,
     engine.custom ? null : el("span", { class: "chip tag static" }, t(engine.streaming ? "gui.engine.streaming" : "gui.engine.batch")),

@@ -90,6 +90,7 @@ impl Control for Fake {
             },
             ready: true,
             enabled: None,
+            icon: None,
         }]
     }
 
@@ -175,7 +176,7 @@ impl Control for Fake {
         }
     }
 
-    fn plugin_icon(&self, _name: &str) -> Option<anya_runtime::PluginIcon> {
+    fn icon(&self, _name: &str) -> Option<anya_runtime::Icon> {
         None
     }
 

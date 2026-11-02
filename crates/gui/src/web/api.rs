@@ -43,8 +43,8 @@ pub(super) async fn handle(page: &Arc<Page>, req: Request<Incoming>) -> Reply {
         return reply::asset(ty, body.as_bytes());
     }
     let catalog = page.catalog();
-    if get && let Some(name) = path.strip_prefix("/api/plugins/icon/") {
-        return plugin_icon(page, &catalog, name.to_owned()).await;
+    if get && let Some(name) = path.strip_prefix("/api/icons/") {
+        return icon(page, &catalog, name.to_owned()).await;
     }
     let found = match (get, path.as_str()) {
         (true, "/api/i18n") => Some(i18n(&catalog)),
@@ -653,9 +653,9 @@ async fn plugin_market(page: &Page, catalog: &Catalog) -> Reply {
     }
 }
 
-async fn plugin_icon(page: &Page, catalog: &Catalog, name: String) -> Reply {
+async fn icon(page: &Page, catalog: &Catalog, name: String) -> Reply {
     let control = page.control.clone();
-    match tokio::task::spawn_blocking(move || control.plugin_icon(&name)).await {
+    match tokio::task::spawn_blocking(move || control.icon(&name)).await {
         Ok(Some(icon)) => reply::icon(icon.content_type, icon.bytes),
         _ => reply::error(StatusCode::NOT_FOUND, catalog.t("gui.api.unsupported")),
     }

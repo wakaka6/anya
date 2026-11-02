@@ -1498,7 +1498,7 @@ async fn the_registry_is_read_when_asked_and_its_failure_is_told_beside_what_is_
 }
 
 #[tokio::test]
-async fn a_plugin_icon_is_listed_as_a_url_and_served_only_as_a_picture() {
+async fn icons_are_listed_as_urls_and_served_only_as_pictures() {
     let h = harness(ShellKind::Web).await;
     let market = h.post("/api/plugins/market", &json!({})).await.json()["plugins"].clone();
     let echo = market
@@ -1507,9 +1507,18 @@ async fn a_plugin_icon_is_listed_as_a_url_and_served_only_as_a_picture() {
         .iter()
         .find(|p| p["id"] == "echo")
         .expect("echo");
-    let url = format!("/api/plugins/icon/{}", super::fake::ECHO_ICON);
+    let url = format!("/api/icons/{}", super::fake::ECHO_ICON);
     assert_eq!(echo["icon"], url);
     assert_eq!(market[1]["icon"], json!(null), "no icon, no URL");
+    let engines = h.get("/api/state").await.json()["engines"].clone();
+    let icons: Vec<(&str, &Value)> = engines
+        .as_array()
+        .expect("engines")
+        .iter()
+        .map(|e| (e["id"].as_str().expect("id"), &e["icon"]))
+        .collect();
+    assert!(icons.contains(&("cloud", &json!(url))), "{icons:?}");
+    assert!(icons.contains(&("sherpa", &json!(null))), "{icons:?}");
 
     let res = h.get(&url).await;
     assert_eq!(res.status, 200);
@@ -1527,7 +1536,7 @@ async fn a_plugin_icon_is_listed_as_a_url_and_served_only_as_a_picture() {
     assert_eq!(installed[0]["icon"], url, "installed, it keeps its icon");
 
     assert_eq!(
-        h.get("/api/plugins/icon/ffffffffffffffffffffffffffffffff")
+        h.get("/api/icons/ffffffffffffffffffffffffffffffff")
             .await
             .status,
         404

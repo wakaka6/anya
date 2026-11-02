@@ -51,6 +51,27 @@ pub fn engines() -> Vec<Arc<dyn Engine>> {
     ENGINES.clone()
 }
 
+/// The logo of built-in engine `id`, from its crate; `None` for an engine
+/// whose crate has none, or an id that is not built in.
+pub fn engine_icon(id: &str) -> Option<&'static [u8]> {
+    static ICONS: LazyLock<Vec<(String, &'static [u8])>> = LazyLock::new(|| {
+        [
+            (anya_engine_doubao::engine(), anya_engine_doubao::ICON),
+            (anya_engine_dashscope::engine(), anya_engine_dashscope::ICON),
+            (anya_engine_openai::engine(), anya_engine_openai::ICON),
+            (
+                anya_engine_whisper_cpp::engine(),
+                anya_engine_whisper_cpp::ICON,
+            ),
+            (anya_engine_mimo::engine(), anya_engine_mimo::ICON),
+        ]
+        .into_iter()
+        .map(|(engine, icon)| (engine.manifest().id.clone(), icon))
+        .collect()
+    });
+    ICONS.iter().find(|(e, _)| e == id).map(|(_, icon)| *icon)
+}
+
 /// A built-in engine as a plugin: it serves itself at the engines point.
 struct EnginePlugin(Arc<dyn Engine>);
 
@@ -254,6 +275,22 @@ mod tests {
             app: None,
             settings: Default::default(),
         }
+    }
+
+    #[test]
+    fn each_built_in_engine_logo_is_an_icon_anya_shows() {
+        let mut with_logo = 0;
+        for engine in engines() {
+            let id = &engine.manifest().id;
+            if let Some(icon) = engine_icon(id) {
+                anya_plugin_host::check_icon(id, icon)
+                    .unwrap_or_else(|e| panic!("{id}'s logo: {e}"));
+                with_logo += 1;
+            }
+        }
+        // AuralWise publishes no logo file.
+        assert_eq!(with_logo, engines().len() - 1);
+        assert_eq!(engine_icon("no-such-engine"), None);
     }
 
     #[test]

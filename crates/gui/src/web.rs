@@ -26,7 +26,7 @@
 //! | Route | Body | Answer |
 //! |---|---|---|
 //! | `GET /api/i18n` | | `{locale, text: {key: text}}`, the whole catalog |
-//! | `GET /api/state` | | `{locale, shell, info, default_address, config, engines: [{id, title, blurb, docs, streaming, ready, custom, plugin, enabled, fields}], positions, languages, ui_languages, devices, devices_error?, lan, clients, plugins}`; `config.recognition.{dictation, continuous, remote}` name the engine each use sends to, and a refused one is reported as field `recognition.<use>` |
+//! | `GET /api/state` | | `{locale, shell, info, default_address, config, engines: [{id, title, blurb, docs, streaming, ready, custom, plugin, enabled, icon, fields}], positions, languages, ui_languages, devices, devices_error?, lan, clients, plugins}`; `config.recognition.{dictation, continuous, remote}` name the engine each use sends to, and a refused one is reported as field `recognition.<use>` |
 //! | `GET /api/status` | | `{status, pill: {state, label}, detail, failure: {text, detail}?, config_broken, engine: {id, title, ready}, subscription: {state, line, url?, subscribers?}, lan: {state, line, url?, fingerprint?}, clients, plugins: [{id, name, version, enabled, state, line}], stats, update: {state, line, notice, can_upgrade}, activity: [{at, kind, source, level, text, note, engine?, session?, detail?}]}`; `update.state` is `unknown \| current \| available \| upgrading \| restart \| failed`, `notice` says the tray panel shows it (never for `failed`) and `can_upgrade` that Anya can run the upgrade; `status.level` is the dictation input level, `null` unless recording |
 //! | `GET /api/route` | | `{live: [{session, origin: {key, label, role, local}, engine: {id, title}, streaming, level, text, sinks: [{key, label}]}], log: [{seq, row, at, session, from, to, kind, filter, label, detail, level, activity}]}`, in memory only; `kind` is `start \| audio \| partial \| final \| failed \| ended`, `filter` is `text \| audio \| error \| other`, a final is one line per place it went, and `activity` says the Activity page has the line |
 //! | `POST /api/settings` | the whole config | `{state, warning?}`; 400 `{error, invalid: [{fields, message}]}`; 500 when writing fails |
@@ -44,8 +44,8 @@
 //! | `POST /api/pairing` | | `{code, expires_in, url, fingerprint, qr}` (`qr` an SVG of the pairing offer, `expires_in` in seconds); 409 when LAN sharing is off or down |
 //! | `POST /api/clients/scopes` | `{id, scopes}` | `{clients}`; 400 for an unknown scope, 404 for an unknown client |
 //! | `POST /api/clients/remove` | `{id}` | `{clients}`; 404 for an unknown client |
-//! | `POST /api/plugins/market` | | `{plugins: [{id, name, description, version, streaming, permissions, icon}]}` from the registry; 502 when it cannot be read; `icon`, here and on installed plugins, is the URL of the plugin's icon or `null` |
-//! | `GET /api/plugins/icon/<name>` | | the icon's bytes, cached as immutable; 404 when there is none to show |
+//! | `POST /api/plugins/market` | | `{plugins: [{id, name, description, version, streaming, permissions, icon}]}` from the registry; 502 when it cannot be read; `icon`, here, on installed plugins and on engines, is the URL of its icon or `null` |
+//! | `GET /api/icons/<name>` | | an engine's or a plugin's icon, as `icon` names it; cached as immutable; 404 when there is none to show |
 //! | `POST /api/plugins/install` | `{id}` | `{plugins}` the installed list; the plugin is installed disabled; 409 with the reason when refused |
 //! | `POST /api/plugins/enable` | `{id, on}` | `{plugins}`; 404 for a plugin that is not installed |
 //! | `POST /api/plugins/remove` | `{id}` | `{plugins}`; 404 for a plugin that is not installed |

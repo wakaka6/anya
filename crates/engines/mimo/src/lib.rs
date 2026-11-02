@@ -20,6 +20,9 @@ const DEFAULT_MODEL: &str = "mimo-v2.5-asr";
 /// One request: upload, recognition and answer.
 const TIMEOUT: Duration = Duration::from_secs(120);
 
+/// The engine's logo, shown beside it in the settings.
+pub const ICON: &[u8] = include_bytes!("../icon.svg");
+
 /// The Xiaomi MiMo engine.
 pub fn engine() -> Arc<dyn Engine> {
     Arc::new(Mimo {

@@ -44,6 +44,9 @@ pub struct EngineInfo {
     /// Whether a built-in engine is switched on; `None` for an engine with no
     /// switch (a community plugin's, which has its own on the Plugins page).
     pub enabled: Option<bool>,
+    /// The name its logo is asked for by ([`Control::icon`]): a built-in
+    /// engine's from its crate, a plugin's from its package; `None` without.
+    pub icon: Option<String>,
 }
 
 /// What dictation is doing.
@@ -194,8 +197,8 @@ pub struct InstalledPlugin {
     /// The keys of its required settings left blank; its hooks do not run
     /// until they are set.
     pub missing: Vec<String>,
-    /// The name its icon is asked for by ([`Control::plugin_icon`]); `None`
-    /// when its package gives none, or none Anya can show.
+    /// The name its icon is asked for by ([`Control::icon`]); `None` when
+    /// its package gives none, or none Anya can show.
     pub icon: Option<String>,
 }
 
@@ -231,14 +234,15 @@ pub struct MarketPlugin {
     pub host: bool,
     /// What it asks for, as the registry declares it (`network:host`, …).
     pub permissions: Vec<String>,
-    /// The name its icon is asked for by ([`Control::plugin_icon`]); `None`
-    /// when it gives none.
+    /// The name its icon is asked for by ([`Control::icon`]); `None` when it
+    /// gives none.
     pub icon: Option<String>,
 }
 
-/// A plugin's icon, checked: one of the formats Anya shows, at most 1 MiB.
+/// An engine's or a plugin's icon, checked: one of the formats Anya shows,
+/// at most 1 MiB.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginIcon {
+pub struct Icon {
     /// The picture.
     pub bytes: Vec<u8>,
     /// Its MIME type.
@@ -1058,11 +1062,11 @@ pub trait Control: Send + Sync {
     /// why the registry was unreachable.
     fn plugin_market(&self) -> Market;
 
-    /// The icon named `name` by [`InstalledPlugin::icon`] or
-    /// [`MarketPlugin::icon`]; `None` when there is none to show. A registry
-    /// plugin's icon is downloaded the first time, so it may block on the
-    /// network: call it off the UI thread.
-    fn plugin_icon(&self, name: &str) -> Option<PluginIcon>;
+    /// The icon named `name` by [`EngineInfo::icon`], [`InstalledPlugin::icon`]
+    /// or [`MarketPlugin::icon`]; `None` when there is none to show. A
+    /// registry plugin's icon is downloaded the first time, so it may block
+    /// on the network: call it off the UI thread.
+    fn icon(&self, name: &str) -> Option<Icon>;
 
     /// Installs plugin `id`, disabled: an official plugin from Anya itself,
     /// any other at its newest release from the registry. Blocks while

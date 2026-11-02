@@ -29,6 +29,9 @@ const TIMEOUT: Duration = Duration::from_secs(300);
 /// Most of an answer read.
 const ANSWER_LIMIT: usize = 4 << 20;
 
+/// The engine's logo, shown beside it in the settings: the ggml-org avatar, as whisper.cpp's project shows it.
+pub const ICON: &[u8] = include_bytes!("../icon.jpg");
+
 /// The whisper.cpp engine.
 pub fn engine() -> Arc<dyn Engine> {
     Arc::new(WhisperCpp {

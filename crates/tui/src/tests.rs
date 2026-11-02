@@ -52,6 +52,7 @@ fn engine(id: &str, title: &str, streaming: bool, fields: Vec<EngineField>) -> E
         },
         ready: false,
         enabled: None,
+        icon: None,
     }
 }
 
@@ -240,7 +241,7 @@ impl Control for Fake {
         }
     }
 
-    fn plugin_icon(&self, _name: &str) -> Option<anya_runtime::PluginIcon> {
+    fn icon(&self, _name: &str) -> Option<anya_runtime::Icon> {
         None
     }
 

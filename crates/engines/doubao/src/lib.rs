@@ -19,6 +19,9 @@ mod frame;
 mod session;
 mod transcript;
 
+/// The engine's logo, shown beside it in the settings.
+pub const ICON: &[u8] = include_bytes!("../icon.svg");
+
 /// The Doubao engine.
 pub fn engine() -> Arc<dyn Engine> {
     Arc::new(Doubao {

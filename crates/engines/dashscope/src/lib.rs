@@ -30,6 +30,9 @@ use anya_protocol::{Field, FieldKind, Manifest, Text};
 
 use crate::config::Config;
 
+/// The engine's logo, shown beside it in the settings.
+pub const ICON: &[u8] = include_bytes!("../icon.svg");
+
 /// The DashScope Fun-ASR engine.
 pub fn engine() -> Arc<dyn Engine> {
     Arc::new(DashScope {

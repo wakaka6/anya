@@ -19,12 +19,13 @@ use anya_protocol::{
 };
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
-    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market, MarketPlugin, Notice, PairError,
-    PairedClient, Pairing, PluginIcon, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route,
-    SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
+    HotkeyRole, Icon, Info, InstalledPlugin, Invalid, Lan, Market, MarketPlugin, Notice, PairError,
+    PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError,
+    Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
 };
 
-/// The name the `echo` plugin's icon goes by, and the icon.
+/// The name the `echo` plugin's and the `cloud` engine's icon goes by, and
+/// the icon.
 pub(crate) const ECHO_ICON: &str = "0123456789abcdef0123456789abcdef";
 const ECHO_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#5856d6"/></svg>"##;
 
@@ -369,6 +370,7 @@ impl Control for FakeControl {
                 // for a plugin's, which has its switch on the Plugins page.
                 enabled: (m.id != "sherpa")
                     .then(|| config.plugins.builtin.get(&m.id) != Some(&false)),
+                icon: (m.id == "cloud").then(|| ECHO_ICON.to_owned()),
             })
             .collect()
     }
@@ -470,8 +472,8 @@ impl Control for FakeControl {
         lock(&self.market).clone()
     }
 
-    fn plugin_icon(&self, name: &str) -> Option<PluginIcon> {
-        (name == ECHO_ICON).then(|| PluginIcon {
+    fn icon(&self, name: &str) -> Option<Icon> {
+        (name == ECHO_ICON).then(|| Icon {
             bytes: ECHO_SVG.to_vec(),
             content_type: "image/svg+xml",
         })
