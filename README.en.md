@@ -27,7 +27,7 @@ Anya is a local speech-to-text service for Linux and macOS. A small core only ca
 - **Dictate into any field**: hold or tap a hotkey, speak, and the result is pasted at the cursor or put on the clipboard.
 - **Transcribe any sound**: continuous transcription of the microphone or of what the system is playing (a CoreAudio process tap on macOS, the PulseAudio/PipeWire monitor on Linux; no virtual audio driver).
 - **Your choice of engine**: Doubao, DashScope, OpenAI-compatible, AuralWise and MiMo are built in; dictation, continuous transcription and LAN apps can each use a different one.
-- **Plugins for more engines**: community engines are npm packages run by one Bun process, checked against an integrity hash before install.
+- **Plugins**: community npm packages that add engines, add hotwords before a dictation, rewrite its text before the paste, or send it elsewhere at the same time; checked against an integrity hash before install.
 - **An ASR gateway**: a phone, a browser or another computer pairs with Anya and sends its own microphone for recognition, without an engine account of its own.
 - **Build on it**: meeting notes, live captions, translation, an agent that listens, all reading the same frames.
 - **Private by default**: audio goes only to the engine you chose; if it fails you see the error, and Anya never quietly retries on another one.
@@ -88,7 +88,9 @@ The subscriber protocol, its ten ordering promises, the compatibility rule and s
 
 ## Plugins
 
-Speech engines can be plugins, all run by one Bun process (Bun 1.2 or newer; if none is found, the first plugin install downloads a pinned release and checks its SHA-256). Plugins come from the anyahq-plugins registry and every download is checked against its integrity hash.
+A plugin can provide four things: a speech engine; hotwords and a language for a dictation, chosen by the app in front, before it opens (context); a rewrite of the dictated text before it is pasted, such as replacements, spoken punctuation or polishing (transform); and something done with the text beside the paste, such as keeping it in your notes or a to-do list (action). The last three apply to your own dictation only, not to continuous transcription or LAN apps. Transforms run in the order you set and the rewritten text is pasted; actions run alongside the paste and never hold it up.
+
+Plugins run in one of two ways. **Inline** plugins run in QuickJS inside Anya: they cannot reach the network or the disk, and every call is stopped at its time and memory budget. **Host** plugins run in a Bun process of their own (Bun 1.2 or newer; if none is found, installing the first such plugin downloads a pinned release and checks its SHA-256); Anya checks each process every second and ends and restarts one that has not answered for 3 seconds, without touching the others. Plugins come from the anyahq-plugins registry and every download is checked against its integrity hash.
 
 ```bash
 anya plugin search [query]       # browse the registry
@@ -97,13 +99,21 @@ anya plugin enable <id>          # loaded when Anya starts
 anya plugin disable <id>
 anya plugin remove <id>
 anya plugin list
-anya plugin builtin              # built-in engines and their state
-anya plugin builtin off <id>     # turn a built-in engine off (on turns it back on)
+anya plugin builtin              # built-in pieces and their state
+anya plugin builtin off <id>     # turn a built-in piece off (on turns it back on)
 ```
 
-Install and enable are separate steps, on the settings window's Engine page too. **An enabled engine plugin receives the audio of every session opened on its engine (a LAN app's dictation included) and runs with your rights, with no sandbox, so enable only plugins you trust.** Changes made on the command line apply the next time Anya starts; enabling, disabling and removing in the settings window apply at once. Writing a plugin: [docs/plugins.md](docs/plugins.md).
+Install and enable are separate steps, on the settings window's Plugins page too, which lists what a plugin provides and what each part receives before you enable it. **An engine plugin receives the audio of every session opened on its engine (a LAN app's dictation included); a context plugin learns which app you are using; transform and action plugins receive everything you dictate. Host plugins run with your rights, with no sandbox, so enable only plugins you trust.** Changes made on the command line apply the next time Anya starts; enabling, disabling and removing in the settings window apply at once. Writing a plugin: [docs/plugins.md](docs/plugins.md).
 
-Built-in engines can be turned off too, except the one you have chosen; the change is written to `[plugins.builtin]` in the config file, and a running Anya reads it and applies it at once.
+Built-in engines can be turned off too, except the one you have chosen. Two more built-in pieces: `replace` applies `replacements.txt` next to the config file (one `spoken => written` a line), and `community-hooks` runs every community plugin's context, transform and action hooks; turned off, none of them runs. These changes are written to `[plugins.builtin]` in the config file, and a running Anya reads them and applies them at once. The transform order, plugin settings and time budgets live in `[plugins] order`, `[plugins.settings.<id>]` and `[plugins.limits]`.
+
+The plugins this repository ships are in [`plugins/`](plugins/):
+
+| Plugin | Provides | What it does |
+| --- | --- | --- |
+| `spoken-punctuation` | context, transform (inline) | Say “逗号”, “句号”, “问号”, “换行”, “新段落” and the like to get the mark; the words also go to the engine as hotwords, so it mishears them less |
+| `app-hotwords` | context (inline) | Adds the hotwords you list for the app in front: your project's names in the editor, commands in the terminal |
+| `daily-notes` | action (Bun) | Appends every dictation, with its time and app, to a Markdown note per day (`<folder>/2026-10-31.md`) |
 
 ## Updates
 
@@ -117,10 +127,10 @@ The check is one request to the tap's host with `User-Agent: anya/<version>` and
 flowchart TB
   App["App: anya binary, desktop window"]
   Trigger["Triggers: dictation · continuous"]
-  Adapter["Adapters: audio · hotkey · output · overlay"]
+  Adapter["Adapters: audio · hotkey · output · overlay · focus"]
   Engine["Engines: anya-engine-&lt;id&gt;"]
-  Service["Services: server · plugin-host"]
-  Core["anya-core: seams, session controller"]
+  Service["Services: server · plugin-host · script"]
+  Core["anya-core: seams, session controller, hooks"]
   Protocol["anya-protocol: wire formats"]
   App --> Trigger & Adapter & Engine & Service
   Trigger & Adapter & Engine & Service --> Core --> Protocol
@@ -130,10 +140,10 @@ Dependencies point down only, and never sideways; the rule is code (`xtask/src/a
 
 ## Contributing
 
-Needs Rust 1.95 and [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
+Needs Rust 1.95, [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) and Bun 1.2 or newer (for the tests in `plugins/`).
 
 ```bash
-cargo xtask ci       # the full gate CI runs: fmt, clippy, tests (with the layer rules), cargo-deny
+cargo xtask ci       # the full gate CI runs: fmt, clippy, tests (with the layer rules), cargo-deny, plugin tests
 cargo xtask check    # layer rules only
 cargo test --workspace
 ```

@@ -1,14 +1,14 @@
 //! What Anya and the plugin host say to each other, and the registry index
-//! Anya reads to offer plugins for install. The host is one Bun process;
-//! both directions are JSON lines on its stdin and stdout
-//! (docs/decisions/0004-plugins-in-bun.md). Plugin authors never see these
-//! messages: the `@wakaka6/anya-plugin` SDK speaks them.
+//! Anya reads to offer plugins for install. Each plugin with a host entry
+//! runs in a Bun process of its own; both directions are JSON lines on its
+//! stdin and stdout (docs/decisions/0015-plugin-runtimes.md). Plugin authors
+//! never see these messages: the `@wakaka6/anya-plugin` SDK speaks them.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ErrorCode, Manifest, Recognition, Text};
+use crate::{ErrorCode, Field, Manifest, Recognition, Source, Text};
 
 /// Version of the host protocol and of the SDK API behind it. A registry
 /// entry names the one it was built for; Anya installs and loads only
@@ -39,8 +39,12 @@ pub enum HostEvent {
     Loaded {
         /// The package id the `load` command named.
         plugin: String,
-        /// The engine's manifest.
-        manifest: Manifest,
+        /// The engine's manifest, when the entry provides an engine.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        engine: Option<Manifest>,
+        /// Everything the entry provides, the engine included.
+        #[serde(default)]
+        provides: Vec<Provide>,
     },
     /// A plugin did not load: missing entry, exception, or timeout.
     LoadFailed {
@@ -85,6 +89,42 @@ pub enum HostEvent {
         level: LogLevel,
         /// The text.
         message: String,
+    },
+    /// The answer to a `ping`: the host's event loop is free.
+    Pong {
+        /// The `ping`'s number.
+        seq: u64,
+    },
+    /// A `context` call's answer.
+    ContextDone {
+        /// The call it answers.
+        call: String,
+        /// Words to add to the session's hotwords.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hotwords: Vec<String>,
+        /// The language to open the session with.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+    },
+    /// A `transform` call's answer.
+    Transformed {
+        /// The call it answers.
+        call: String,
+        /// The text that goes on.
+        text: String,
+    },
+    /// An `action` call finished.
+    ActionDone {
+        /// The call it answers.
+        call: String,
+    },
+    /// A hook call failed: the plugin threw, rejected or answered with the
+    /// wrong shape.
+    CallFailed {
+        /// The call that failed.
+        call: String,
+        /// The plugin's own words, untranslated.
+        detail: String,
     },
     /// A type a newer host added; skip it.
     #[serde(other)]
@@ -158,11 +198,83 @@ pub enum HostCommand {
         /// The session to close.
         session: String,
     },
+    /// Answer with `pong` at once. Anya's watchdog sends one every second.
+    Ping {
+        /// Echoed in the `pong`.
+        seq: u64,
+    },
+    /// Ask the plugin's context hook what a session should open with.
+    /// Answered with `context_done` or `call_failed`.
+    Context {
+        /// Anya's id for the call, echoed in the answer.
+        call: String,
+        /// The package that provides the hook.
+        plugin: String,
+        /// The session the call is about.
+        #[serde(flatten)]
+        about: HookCall,
+        /// The language the session would open with.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        /// The hotwords the session would open with.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hotwords: Vec<String>,
+    },
+    /// Run the plugin's transform hook on a session's final text.
+    /// Answered with `transformed` or `call_failed`.
+    Transform {
+        /// Anya's id for the call, echoed in the answer.
+        call: String,
+        /// The package that provides the hook.
+        plugin: String,
+        /// The text so far.
+        text: String,
+        /// The session the text is from.
+        #[serde(flatten)]
+        about: HookCall,
+    },
+    /// Hand a session's final text to the plugin's action hook.
+    /// Answered with `action_done` or `call_failed`.
+    Action {
+        /// Anya's id for the call, echoed in the answer.
+        call: String,
+        /// The package that provides the hook.
+        plugin: String,
+        /// The text, as the transforms left it.
+        text: String,
+        /// The session the text is from.
+        #[serde(flatten)]
+        about: HookCall,
+    },
+    /// Anya gave up on a call: its budget is spent. The plugin's signal is
+    /// aborted, and an answer that still comes is ignored.
+    Cancel {
+        /// The call given up on.
+        call: String,
+    },
     /// Close every session and exit.
     Shutdown,
     /// A command a newer Anya added; a host that reads it ignores it.
     #[serde(other)]
     Unknown,
+}
+
+/// What every hook call says about its session.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookCall {
+    /// The session; absent for a `context` call, made before it opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    /// What opened the session.
+    #[serde(default)]
+    pub source: Source,
+    /// The focused app's id (a macOS bundle id, an X11 window class), when
+    /// the desktop tells it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// The plugin's settings, keyed by the field keys its package declares.
+    #[serde(default)]
+    pub settings: BTreeMap<String, String>,
 }
 
 /// The registry index: every plugin the registry offers and its released
@@ -205,8 +317,13 @@ pub struct IndexVersion {
     pub anya: String,
     /// The [`PLUGIN_PROTOCOL`] it was built for.
     pub protocol: u32,
-    /// What the plugin provides.
-    pub kind: PluginKind,
+    /// What the plugin provides, as the registry's CI found in its entries.
+    #[serde(default)]
+    pub provides: Vec<Provide>,
+    /// Whether the release has a host entry, and so runs in Bun. One without
+    /// runs inline only: it cannot reach the network or the disk.
+    #[serde(default)]
+    pub host: bool,
     /// An engine plugin's `Manifest.streaming`, for listing before install.
     #[serde(default)]
     pub streaming: bool,
@@ -216,13 +333,100 @@ pub struct IndexVersion {
     pub permissions: Vec<String>,
 }
 
-/// What a plugin provides, as `kind` in the index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// One thing a plugin provides (docs/decisions/0016-dictation-hooks.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PluginKind {
+pub enum Provide {
     /// A speech engine; it receives the audio of sessions opened on it.
     Engine,
+    /// Hotwords and a language for a dictation before it opens; it learns the
+    /// focused app.
+    Context,
+    /// Text in, text out, on a dictation's final text; it receives everything
+    /// dictated.
+    Transform,
+    /// Something done with a dictation's final text beside the paste; it
+    /// receives everything dictated.
+    Action,
     /// A kind a newer Anya added; this one cannot install it.
     #[serde(other)]
     Unknown,
+}
+
+/// The `anya` field of a plugin's `package.json`: what Anya reads before it
+/// runs any of the plugin's code.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginPackage {
+    /// Plugin id; the package's `name` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Name to show; the package's `name` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<Text>,
+    /// One line under the name; the package's `description` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<Text>,
+    /// The module QuickJS runs inside Anya: context and transform hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<String>,
+    /// The module Bun runs in a process of its own: an engine, hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Semver range of Anya versions it runs on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compat: Option<String>,
+    /// The [`PLUGIN_PROTOCOL`] it was built for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<u32>,
+    /// Strings shown to the user before they enable it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<String>,
+    /// The hooks' settings, stored under the plugin's id; an engine keeps its
+    /// own in its manifest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<Field>,
+    /// The budgets the plugin asks for; the user's win.
+    #[serde(default, skip_serializing_if = "Limits::is_empty")]
+    pub limits: Limits,
+}
+
+/// Budgets of a plugin's hooks (docs/decisions/0015-plugin-runtimes.md):
+/// what a package asks for, or what the user sets. Absent is the default;
+/// every value is clamped to its hook's range.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Milliseconds an inline call may run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_ms: Option<u32>,
+    /// MiB an inline plugin's runtime may hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_memory_mib: Option<u32>,
+    /// Milliseconds a host context call may take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_ms: Option<u32>,
+    /// Milliseconds a host transform call may take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform_ms: Option<u32>,
+    /// Milliseconds an action may take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_ms: Option<u32>,
+}
+
+impl Limits {
+    /// Nothing set.
+    pub fn is_empty(&self) -> bool {
+        *self == Limits::default()
+    }
+
+    /// Each value of `self`, else `other`'s.
+    pub fn or(self, other: Limits) -> Limits {
+        Limits {
+            inline_ms: self.inline_ms.or(other.inline_ms),
+            inline_memory_mib: self.inline_memory_mib.or(other.inline_memory_mib),
+            context_ms: self.context_ms.or(other.context_ms),
+            transform_ms: self.transform_ms.or(other.transform_ms),
+            action_ms: self.action_ms.or(other.action_ms),
+        }
+    }
 }

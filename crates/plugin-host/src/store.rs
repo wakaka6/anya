@@ -5,10 +5,11 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use anya_protocol::{Index, PLUGIN_PROTOCOL, PluginKind};
+use anya_protocol::{Index, PLUGIN_PROTOCOL, Provide};
 use serde::{Deserialize, Serialize};
 
 use crate::PluginError;
+use crate::package::{Package, read_package};
 use crate::registry::{
     MAX_ARTIFACT_BYTES, download, find_release, unpack_tarball, verify_integrity,
 };
@@ -44,6 +45,13 @@ pub struct Installed {
     pub integrity: String,
     /// The user turned the plugin on; only enabled plugins load and receive audio.
     pub enabled: bool,
+    /// What the release provides, as the index said when it was installed;
+    /// empty in records written before the index said it.
+    #[serde(default)]
+    pub provides: Vec<Provide>,
+    /// Whether the release has a host entry, so it needs Bun.
+    #[serde(default)]
+    pub host: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -60,6 +68,14 @@ struct Record {
 pub struct Store {
     dirs: PluginDirs,
     lock: Arc<Mutex<()>>,
+}
+
+/// An enabled plugin with a host entry.
+pub(crate) struct Hosted {
+    pub(crate) installed: Installed,
+    pub(crate) dir: PathBuf,
+    /// The package, or why it cannot be read.
+    pub(crate) package: Result<Package, PluginError>,
 }
 
 /// Held for the length of one change to `plugins.json`; both locks go with it.
@@ -159,9 +175,39 @@ impl Store {
             .collect())
     }
 
-    /// Installs `id` at `version` from `index`: checks that the release is an
-    /// engine for this plugin protocol and for `anya_version`, downloads its
-    /// tarball, checks its integrity hash and unpacks it. The plugin is
+    /// The enabled plugins that have a host entry, for the host to run. A
+    /// package that cannot be read is listed with the reason, so the host
+    /// can say why it did not load; one with only an inline entry is not.
+    pub(crate) fn hosted(&self) -> Result<Vec<Hosted>, PluginError> {
+        let mut hosted = Vec::new();
+        for (installed, dir) in self.enabled()? {
+            match read_package(&dir) {
+                Ok(package) if package.anya.host.is_none() => {}
+                Ok(package) => hosted.push(Hosted {
+                    installed,
+                    dir,
+                    package: Ok(package),
+                }),
+                Err(e) => hosted.push(Hosted {
+                    installed,
+                    dir,
+                    package: Err(e),
+                }),
+            }
+        }
+        Ok(hosted)
+    }
+
+    /// Whether an enabled plugin has a host entry, so Anya needs a Bun to
+    /// run it. Inline-only plugins need none.
+    pub fn needs_bun(&self) -> Result<bool, PluginError> {
+        Ok(self.hosted()?.iter().any(|h| h.package.is_ok()))
+    }
+
+    /// Installs `id` at `version` from `index`: checks that the release
+    /// provides something this Anya knows, for this plugin protocol and for
+    /// `anya_version`, downloads its tarball, checks its integrity hash and
+    /// unpacks it. The plugin is
     /// recorded disabled; enabling is the user's next step. Installing over an
     /// installed plugin replaces its version, and also leaves it disabled.
     pub async fn install(
@@ -182,8 +228,10 @@ impl Store {
             version: version.to_owned(),
             reason,
         };
-        if release.kind != PluginKind::Engine {
-            return Err(incompatible("it is not an engine plugin".to_owned()));
+        if release.provides.is_empty() || release.provides.contains(&Provide::Unknown) {
+            return Err(incompatible(
+                "it provides nothing, or something this Anya does not know".to_owned(),
+            ));
         }
         if release.protocol != PLUGIN_PROTOCOL {
             return Err(incompatible(format!(
@@ -209,31 +257,31 @@ impl Store {
         verify_integrity(&release.artifact, &bytes, &release.integrity)?;
 
         let store = self.clone();
-        let (id, integrity, artifact) = (
-            id.to_owned(),
-            release.integrity.clone(),
-            release.artifact.clone(),
-        );
-        let version = parsed.to_string();
-        tokio::task::spawn_blocking(move || {
-            store.place(&id, &version, &integrity, &artifact, &bytes)
-        })
-        .await
-        .map_err(|e| PluginError::Io {
-            path: "install".to_owned(),
-            reason: e.to_string(),
-        })?
+        let installed = Installed {
+            id: id.to_owned(),
+            version: parsed.to_string(),
+            integrity: release.integrity.clone(),
+            enabled: false,
+            provides: release.provides.clone(),
+            host: release.host,
+        };
+        let artifact = release.artifact.clone();
+        tokio::task::spawn_blocking(move || store.place(installed, &artifact, &bytes))
+            .await
+            .map_err(|e| PluginError::Io {
+                path: "install".to_owned(),
+                reason: e.to_string(),
+            })?
     }
 
-    /// Unpacks `tgz` as `id`/`version` and records it.
+    /// Unpacks `tgz` as `installed`'s id and version and records it.
     fn place(
         &self,
-        id: &str,
-        version: &str,
-        integrity: &str,
+        installed: Installed,
         artifact: &str,
         tgz: &[u8],
     ) -> Result<Installed, PluginError> {
+        let (id, version) = (installed.id.as_str(), installed.version.as_str());
         let _guard = self.guard()?;
         let mut record = self.read()?;
         let base = self.dirs.plugins.join(id);
@@ -248,12 +296,6 @@ impl Store {
         remove_dir(&target)?;
         std::fs::rename(&partial, &target).map_err(|e| PluginError::io(&target, &e))?;
 
-        let installed = Installed {
-            id: id.to_owned(),
-            version: version.to_owned(),
-            integrity: integrity.to_owned(),
-            enabled: false,
-        };
         let replaced = match record.installed.iter_mut().find(|p| p.id == id) {
             Some(entry) => Some(std::mem::replace(entry, installed.clone())),
             None => {

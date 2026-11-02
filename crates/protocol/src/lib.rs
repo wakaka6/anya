@@ -31,8 +31,8 @@ pub use frame::{
 };
 pub use manifest::{Field, FieldKind, Manifest};
 pub use plugin::{
-    AUDIO_BYTES, HostCommand, HostEvent, INDEX_VERSION, Index, IndexPlugin, IndexVersion, LogLevel,
-    PLUGIN_PROTOCOL, PluginKind,
+    AUDIO_BYTES, HookCall, HostCommand, HostEvent, INDEX_VERSION, Index, IndexPlugin, IndexVersion,
+    Limits, LogLevel, PLUGIN_PROTOCOL, PluginPackage, Provide,
 };
 pub use text::Text;
 

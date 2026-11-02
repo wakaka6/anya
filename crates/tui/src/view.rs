@@ -2,7 +2,9 @@
 
 use anya_config::DEFAULT_ADDRESS;
 use anya_core::audio::DeviceKind;
-use anya_protocol::{FieldKind, Manifest, Source};
+use anya_core::hooks::HookFailure;
+use anya_i18n::Catalog;
+use anya_protocol::{FieldKind, Manifest, Provide, Source};
 use anya_runtime::{
     DebugEvent, Delivered, Dictation, Entry, Lan, Notice, PluginLoad, Subscription, UpdateState,
     UpdateVia,
@@ -773,7 +775,13 @@ fn plugins_text(app: &App) -> String {
                 PluginLoad::Ready => c.t("tui.plugins.ready").to_owned(),
                 PluginLoad::Failed { detail } => c.tf("tui.plugins.failed", &[("detail", detail)]),
             };
-            c.tf("tui.plugins.item", &[("id", &p.id), ("state", &state)])
+            match provides_text(c, &p.provides) {
+                Some(provides) => c.tf(
+                    "tui.plugins.item_provides",
+                    &[("id", &p.id), ("provides", &provides), ("state", &state)],
+                ),
+                None => c.tf("tui.plugins.item", &[("id", &p.id), ("state", &state)]),
+            }
         })
         .collect();
     c.tf("tui.plugins.line", &[("list", &list.join(", "))])
@@ -790,6 +798,39 @@ fn source_mark(source: Source) -> &'static str {
         Source::Dictation => "",
         Source::Continuous => "♪ ",
         Source::Unknown => "? ",
+    }
+}
+
+/// `engine+transform`, each in its own words; `None` when a plugin has
+/// provided nothing known (it has not loaded yet).
+fn provides_text(c: &Catalog, provides: &[Provide]) -> Option<String> {
+    let words: Vec<&str> = provides
+        .iter()
+        .filter_map(|p| provide_key(*p))
+        .map(|key| c.t(key))
+        .collect();
+    (!words.is_empty()).then(|| words.join("+"))
+}
+
+fn provide_key(provide: Provide) -> Option<&'static str> {
+    match provide {
+        Provide::Engine => Some("tui.provide.engine"),
+        Provide::Context => Some("tui.provide.context"),
+        Provide::Transform => Some("tui.provide.transform"),
+        Provide::Action => Some("tui.provide.action"),
+        Provide::Unknown => None,
+    }
+}
+
+fn failure_key(failure: HookFailure) -> &'static str {
+    match failure {
+        HookFailure::Timeout => "tui.hook.failure_timeout",
+        HookFailure::Memory => "tui.hook.failure_memory",
+        HookFailure::Invalid => "tui.hook.failure_invalid",
+        HookFailure::Failed => "tui.hook.failure_failed",
+        HookFailure::Unavailable => "tui.hook.failure_unavailable",
+        HookFailure::Busy => "tui.hook.failure_busy",
+        HookFailure::Unknown => "tui.hook.failure_unknown",
     }
 }
 
@@ -875,6 +916,29 @@ fn entry_line(app: &App, entry: &Entry) -> (u64, String, Style) {
             };
             (*at, line, style)
         }
+        Entry::HookFailed {
+            at,
+            plugin,
+            hook,
+            failure,
+            ..
+        } => {
+            let kind = provide_key(*hook).map_or("", |key| c.t(key));
+            let line = c.tf(
+                "tui.log.hook_failed",
+                &[
+                    ("hook", kind),
+                    ("plugin", plugin),
+                    ("failure", c.t(failure_key(*failure))),
+                ],
+            );
+            (*at, line, Style::new().fg(Color::LightYellow))
+        }
+        Entry::PluginStalled { at, plugin } => (
+            *at,
+            c.tf("tui.log.plugin_stalled", &[("plugin", plugin)]),
+            Style::new().fg(Color::LightYellow),
+        ),
     }
 }
 

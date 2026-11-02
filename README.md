@@ -27,7 +27,7 @@ Anya 是 Linux 和 macOS 上的本地语音转文字服务。一个小核心只�
 - **听写到任意输入框**：按住或按一下热键说话，识别结果粘贴到当前焦点，或放进剪贴板。
 - **转写任意声音**：持续转写麦克风，或系统正在播放的声音（macOS 用 CoreAudio process tap，Linux 用 PulseAudio/PipeWire monitor，不需要虚拟声卡）。
 - **多家引擎，自己选**：内置豆包、DashScope、OpenAI 兼容接口、AuralWise、MiMo；听写、持续转写和局域网应用可以各用各的。
-- **插件扩展引擎**：社区引擎写成 npm 包，在一个 Bun 进程里运行，安装前校验完整性哈希。
+- **插件扩展**：社区插件写成 npm 包，可以提供识别引擎，也可以在听写前补充热词、在粘贴前改写文字、把文字同时送去别处；安装前校验完整性哈希。
 - **识别网关**：手机、浏览器或另一台电脑配对后，把自己的麦克风送来识别，不需要自己的引擎账号。
 - **在它上面做应用**：会议纪要、实时字幕、翻译、会听的 agent，都从同一套帧里读。
 - **隐私默认值**：音频只发给你选的那一家引擎；它出错时你会看到错误，Anya 不会悄悄换另一家重试。
@@ -88,7 +88,9 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 
 ## 插件
 
-识别引擎可以做成插件，由同一个 Bun 进程运行（要求 Bun 1.2 或更新；第一次安装插件时找不到会自动下载固定版本，并校验 SHA-256）。插件从 anyahq-plugins 仓库安装，下载内容会校验完整性哈希。
+插件可以提供四样东西：识别引擎（engine）；听写开始前按当前应用补充热词和语言（context）；粘贴前改写听写的文字，比如替换词、口述标点、润色（transform）；把听写的文字同时送去别处，比如记进笔记、整理待办（action）。后三样只作用于你自己的听写，不作用于持续转写和局域网应用。改写按你排的顺序依次执行，粘贴的是改写后的文字；action 和粘贴同时进行，不会拖慢粘贴。
+
+插件有两种运行方式。**inline** 在 Anya 内部的 QuickJS 里运行，不能联网也不能读写文件，每次调用有时间和内存上限，超时会被直接打断。**host** 在插件自己的 Bun 进程里运行（要求 Bun 1.2 或更新；第一次安装这类插件时找不到会自动下载固定版本，并校验 SHA-256），Anya 每秒检查一次，3 秒没有回应就结束并重启这个进程，不影响其他插件。插件从 anyahq-plugins 仓库安装，下载内容会校验完整性哈希。
 
 ```bash
 anya plugin search [关键字]      # 浏览仓库
@@ -97,13 +99,21 @@ anya plugin enable <id>          # 启用；Anya 启动时加载
 anya plugin disable <id>
 anya plugin remove <id>
 anya plugin list
-anya plugin builtin              # 内置引擎及其状态
-anya plugin builtin off <id>     # 关闭内置引擎（on 重新开启）
+anya plugin builtin              # 内置部件及其状态
+anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 ```
 
-安装和启用是两步，设置窗口的“引擎”页里也一样。**启用后的引擎插件会收到凭它的引擎开的每一次识别的音频（局域网应用的听写也算），并以你的权限运行，没有沙箱，请只启用你信得过的插件。** 命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。开发插件见 [docs/plugins.md](docs/plugins.md)。
+安装和启用是两步，设置窗口的“插件”页里也一样，启用前会列出插件提供什么、各自会拿到什么。**引擎插件会收到凭它的引擎开的每一次识别的音频（局域网应用的听写也算）；context 插件会知道当前在用哪个应用；transform 和 action 插件会收到你听写的全部文字。host 插件以你的权限运行，没有沙箱，请只启用你信得过的插件。** 命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。开发插件见 [docs/plugins.md](docs/plugins.md)。
 
-内置引擎也可以关闭，当前选用的引擎除外；这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。
+内置引擎也可以关闭，当前选用的引擎除外。另外两个内置部件：`replace` 按配置文件旁的 `replacements.txt` 替换词（每行 `说的 => 写的`），`community-hooks` 运行所有社区插件的 context、transform 和 action，关掉它这些都不再执行。这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。改写的顺序、插件设置和时间上限分别在 `[plugins] order`、`[plugins.settings.<id>]` 和 `[plugins.limits]`。
+
+仓库自带的插件在 [`plugins/`](plugins/)：
+
+| 插件 | 提供 | 做什么 |
+| --- | --- | --- |
+| `spoken-punctuation` | context、transform（inline） | 听写时说“逗号”“句号”“问号”“换行”“新段落”等得到标点；这些词也作为热词交给引擎，少听错 |
+| `app-hotwords` | context（inline） | 按前台应用加上你为它列的热词，比如编辑器里用项目名，终端里用命令名 |
+| `daily-notes` | action（Bun） | 把每次听写连同时间和应用，追加到当天的 Markdown 笔记（`<文件夹>/2026-10-31.md`） |
 
 ## 更新
 
@@ -117,10 +127,10 @@ Anya 通过 Homebrew tap 分发，不会自己替换自己的程序。它每天�
 flowchart TB
   App["应用：anya 二进制、桌面窗口"]
   Trigger["触发器：听写 · 持续转写"]
-  Adapter["适配器：音频 · 热键 · 输出 · 浮层"]
+  Adapter["适配器：音频 · 热键 · 输出 · 浮层 · 前台应用"]
   Engine["引擎：anya-engine-&lt;id&gt;"]
-  Service["服务：server · plugin-host"]
-  Core["anya-core：接口与会话控制"]
+  Service["服务：server · plugin-host · script"]
+  Core["anya-core：接口、会话控制与钩子"]
   Protocol["anya-protocol：线上格式"]
   App --> Trigger & Adapter & Engine & Service
   Trigger & Adapter & Engine & Service --> Core --> Protocol
@@ -130,10 +140,10 @@ flowchart TB
 
 ## 参与开发
 
-需要 Rust 1.95 和 [cargo-deny](https://github.com/EmbarkStudios/cargo-deny)。
+需要 Rust 1.95、[cargo-deny](https://github.com/EmbarkStudios/cargo-deny) 和 Bun 1.2 或更新（跑 `plugins/` 的测试）。
 
 ```bash
-cargo xtask ci       # CI 跑的完整检查：fmt、clippy、测试（含分层规则）、cargo-deny
+cargo xtask ci       # CI 跑的完整检查：fmt、clippy、测试（含分层规则）、cargo-deny、插件测试
 cargo xtask check    # 只查分层规则
 cargo test --workspace
 ```

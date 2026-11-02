@@ -11,7 +11,10 @@ use std::time::Duration;
 
 use anya_config::{Config, EngineRole};
 use anya_core::audio::Device;
-use anya_protocol::{EndReason, ErrorCode, Manifest, PairingOffer, Scope, SessionId, Source, Text};
+use anya_core::hooks::{HookFailure, Runs};
+use anya_protocol::{
+    EndReason, ErrorCode, Field, Manifest, PairingOffer, Provide, Scope, SessionId, Source, Text,
+};
 use serde::{Deserialize, Serialize};
 
 /// Facts about this instance that do not change while it runs.
@@ -25,6 +28,8 @@ pub struct Info {
     pub version: String,
     /// The file saves go to.
     pub config_path: PathBuf,
+    /// The built-in replacement list, next to the config file.
+    pub replacements_path: PathBuf,
 }
 
 /// One engine as the settings show it.
@@ -159,10 +164,10 @@ pub enum PluginLoad {
     },
 }
 
-/// An installed engine plugin, as the settings list it.
+/// An installed plugin, as the settings list it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InstalledPlugin {
-    /// The plugin id; also its engine's id.
+    /// The plugin id; also its engine's id when it provides one.
     pub id: String,
     /// The pinned version.
     pub version: String,
@@ -170,10 +175,20 @@ pub struct InstalledPlugin {
     pub enabled: bool,
     /// Whether it loaded.
     pub load: PluginLoad,
-    /// The engine's title once it has loaded.
+    /// Its name: the package's, or its engine's once it has loaded.
     pub title: Option<Text>,
-    /// The engine's one-line description once it has loaded.
+    /// Its one-line description, from the package or its engine.
     pub description: Option<Text>,
+    /// What it provides, as its package's entries export it; empty until
+    /// it has loaded once.
+    pub provides: Vec<Provide>,
+    /// It has a host entry and runs in Bun with the user's rights; without
+    /// one it runs inline only and cannot reach the network or the disk.
+    pub host: bool,
+    /// What it asks for, as its package declares it (`network:host`, …).
+    pub permissions: Vec<String>,
+    /// The settings of its hooks, kept under `[plugins.settings.<id>]`.
+    pub fields: Vec<Field>,
 }
 
 /// A plugin the registry offers, at its newest release.
@@ -189,8 +204,36 @@ pub struct MarketPlugin {
     pub version: String,
     /// The engine streams partial results.
     pub streaming: bool,
+    /// What the release provides.
+    pub provides: Vec<Provide>,
+    /// The release runs in Bun; without a host entry it runs inline only.
+    pub host: bool,
     /// What it asks for, as the registry declares it (`network:host`, …).
     pub permissions: Vec<String>,
+}
+
+/// One hook a dictation runs now, as the settings list them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HookInfo {
+    /// The plugin that provides it: a community plugin's id, or a built-in's.
+    pub plugin: String,
+    /// `context`, `transform` or `action`.
+    pub hook: Provide,
+    /// Where it runs.
+    pub runs: Runs,
+}
+
+/// A built-in piece that serves hooks, with its switch
+/// (`[plugins.builtin]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BuiltinHooks {
+    /// Its id: `replace` (the replacement list) or `community-hooks` (every
+    /// community plugin's hooks).
+    pub id: String,
+    /// What it serves.
+    pub provides: Vec<Provide>,
+    /// Whether it runs.
+    pub on: bool,
 }
 
 /// A running Anya's state, polled by the UIs a few times a second.
@@ -364,6 +407,27 @@ pub enum Entry {
         /// Untranslated specifics (a path, an error).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+    },
+    /// A plugin's hook failed on a dictation. Never its text.
+    HookFailed {
+        /// Unix ms.
+        at: u64,
+        /// The plugin's id.
+        plugin: String,
+        /// Which hook.
+        hook: Provide,
+        /// Why, as a code.
+        failure: HookFailure,
+        /// The dictation it was running on, when there was one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
+    },
+    /// A plugin's Bun process stopped answering and was restarted.
+    PluginStalled {
+        /// Unix ms.
+        at: u64,
+        /// The plugin's id.
+        plugin: String,
     },
 }
 
@@ -560,6 +624,11 @@ pub enum Invalid {
         /// Why, untranslated.
         detail: String,
     },
+    /// A plugin id in `[plugins]` that cannot name a plugin.
+    BadPluginId {
+        /// As written.
+        id: String,
+    },
 }
 
 impl Invalid {
@@ -590,6 +659,7 @@ impl Invalid {
                 "error.invalid.address",
                 vec![("address", address.clone()), ("detail", detail.clone())],
             ),
+            Invalid::BadPluginId { id } => ("error.invalid.plugin_id", vec![("id", id.clone())]),
         }
     }
 }
@@ -961,6 +1031,13 @@ pub trait Control: Send + Sync {
 
     /// Deletes plugin `id`.
     fn remove_plugin(&self, id: &str) -> Result<(), PluginIssue>;
+
+    /// The hooks a dictation runs now, in the order it runs them: context
+    /// and transform hooks by `[plugins] order`, then the actions.
+    fn hooks(&self) -> Vec<HookInfo>;
+
+    /// The built-in pieces that serve hooks, with their switches.
+    fn builtin_hooks(&self) -> Vec<BuiltinHooks>;
 
     /// Turns dictation hotkeys on or off: saves `[dictation] enabled` and applies it.
     fn set_dictation(&self, on: bool) -> Result<Saved, SaveError>;

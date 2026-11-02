@@ -18,6 +18,7 @@ use anya_continuous::{Continuous, Settings as ContinuousSettings};
 use anya_core::audio::{AudioSource, Device};
 use anya_core::desktop::Desktop;
 use anya_core::engine::{Choice, Engine, EngineError, SessionParams};
+use anya_core::hooks::{Actions, Call, ContextEngine, HookFailed};
 use anya_core::hub::{Hub, HubInfo};
 use anya_dictation::{
     Dictation, Input as DictationInput, Mode as DictationMode, Settings as DictationSettings,
@@ -27,14 +28,17 @@ use anya_hotkey::{Combo, Edge, Hotkeys};
 use anya_i18n::Catalog;
 use anya_output::Delivery;
 use anya_overlay::Overlay;
-use anya_plugin_host::{BunPath, PluginDirs, PluginHost, PluginState, Registry, Store};
+use anya_plugin_host::{
+    BunPath, PluginDirs, PluginHost, PluginState, Registry, Store, read_package,
+};
 use anya_plugin_rt::{Registration, Runtime};
+use anya_protocol::Provide;
 use anya_protocol::{ErrorCode, PairingOffer, Scope, Source};
 use anya_runtime::{
-    ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation, EngineInfo, Entry,
-    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient,
-    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats,
-    Status, Subscription, UpdateIssue, UpdateState, UpdateVia,
+    BuiltinHooks, ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation,
+    EngineInfo, Entry, HookInfo, HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin,
+    Notice, PairError, PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView,
+    Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState, UpdateVia,
 };
 use anya_server::{
     Address, Audience, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address,
@@ -44,7 +48,9 @@ use tokio::sync::{Mutex as AsyncMutex, watch};
 
 mod builtin;
 mod cli;
+mod community;
 mod doctor;
+mod hooks;
 mod indicator;
 mod install;
 mod plugins;
@@ -54,6 +60,7 @@ mod timing;
 
 use builtin::Points;
 use cli::{Command, Mode, Run};
+use community::{Community, Hooks, InlineState};
 
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
     value
@@ -69,8 +76,15 @@ fn now_ms() -> u64 {
 }
 
 /// The engine `role` uses, read from the config each time a session opens so
-/// a saved change applies to the next session of that use.
-fn choice(config: Arc<Mutex<Config>>, points: Points, role: EngineRole) -> Choice {
+/// a saved change applies to the next session of that use. With `context`, the engine asks the
+/// context hooks served now before each session opens, about the app that is
+/// in front then (docs/decisions/0016).
+fn choice(
+    config: Arc<Mutex<Config>>,
+    points: Points,
+    role: EngineRole,
+    context: Option<(Arc<Community>, Desktop)>,
+) -> Choice {
     Arc::new(move || {
         let cfg = lock(&config).clone();
         let id = cfg.recognition.engine_id(role).to_owned();
@@ -83,6 +97,12 @@ fn choice(config: Arc<Mutex<Config>>, points: Points, role: EngineRole) -> Choic
         let settings = cfg.recognition.settings(&id);
         engine.check(&settings)?;
         let (hotwords, _) = anya_config::read_hotwords(&cfg.recognition);
+        let engine = match &context {
+            Some((community, desktop)) => {
+                with_context(engine, &cfg, &points, &community.declared(), *desktop)
+            }
+            None => engine,
+        };
         Ok((
             engine,
             SessionParams {
@@ -96,6 +116,51 @@ fn choice(config: Arc<Mutex<Config>>, points: Points, role: EngineRole) -> Choic
 
 /// How long the overlay preview stays before the overlay shows its real state.
 const PREVIEW_HOLD: Duration = Duration::from_millis(2500);
+
+/// A failed hook as the activity list keeps it: the plugin, the hook and the
+/// failure's code, never the text or the plugin's own words.
+fn hook_failed(failed: HookFailed, session: Option<anya_protocol::SessionId>) -> Entry {
+    log_hook_failed(&failed);
+    Entry::HookFailed {
+        at: now_ms(),
+        plugin: failed.plugin,
+        hook: failed.hook,
+        failure: failed.failure,
+        session,
+    }
+}
+
+/// Logs a failed hook: its plugin, hook and code, and at debug level the
+/// plugin's own words, which may quote what was dictated.
+fn log_hook_failed(f: &HookFailed) {
+    tracing::warn!(plugin = %f.plugin, hook = ?f.hook, code = ?f.failure, "hook failed");
+    tracing::debug!(plugin = %f.plugin, detail = %f.detail, "hook failure detail");
+}
+
+/// `engine`, asking the context hooks `points` serve before each session
+/// opens; `engine` itself when there are none. A hook that fails is logged.
+fn with_context(
+    engine: Arc<dyn Engine>,
+    cfg: &Config,
+    points: &Points,
+    declared: &BTreeMap<String, community::Declared>,
+    desktop: Desktop,
+) -> Arc<dyn Engine> {
+    let hooks = hooks::plan(cfg, points, declared).contexts;
+    if hooks.is_empty() {
+        return engine;
+    }
+    let call = Call {
+        session: None,
+        source: Source::Dictation,
+        app: anya_focus::focused_app(desktop),
+        settings: BTreeMap::new(),
+    };
+    let failed = |failures: Vec<HookFailed>| {
+        failures.iter().for_each(log_hook_failed);
+    };
+    Arc::new(ContextEngine::new(engine, hooks, call, Arc::new(failed)))
+}
 
 /// How often Anya asks the tap whether a newer version exists.
 const UPDATE_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -212,6 +277,8 @@ struct App {
     builtin_rt: Mutex<Runtime<Points>>,
     /// The engines of loaded community plugins, served at the engines point.
     plugin_served: Arc<Mutex<Vec<Registration>>>,
+    /// The hooks of community plugins and the inline modules behind some.
+    community: Arc<Community>,
     hub: Hub,
     audio: Arc<dyn AudioSource>,
     dictation: Dictation,
@@ -257,20 +324,24 @@ impl App {
     ) -> Result<Arc<App>, String> {
         let config = Arc::new(Mutex::new(cfg.clone()));
         let points = Points::default();
-        let mut builtin_rt =
-            Runtime::new(points.clone(), builtin::plugins()).map_err(|e| e.to_string())?;
+        let community = Community::new();
+        let mut builtin_rt = Runtime::new(
+            points.clone(),
+            builtin::plugins(anya_config::replacements_path(&path), community.clone()),
+        )
+        .map_err(|e| e.to_string())?;
         builtin::reconcile(&mut builtin_rt, &cfg);
         let hub = Hub::new(HubInfo {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             session_prefix: format!("anya-{}", now_ms()),
         });
         let audio: Arc<dyn AudioSource> = Arc::new(AudioSystem::new(cfg.audio.gain));
-        let choice_for = |role| choice(config.clone(), points.clone(), role);
-        let remote_choice = choice_for(EngineRole::Remote);
+        let choice_for = |role, context| choice(config.clone(), points.clone(), role, context);
+        let remote_choice = choice_for(EngineRole::Remote, None);
         let (dictation, status_rx, finished_rx) = anya_dictation::spawn(
             hub.clone(),
             audio.clone(),
-            choice_for(EngineRole::Dictation),
+            choice_for(EngineRole::Dictation, Some((community.clone(), desktop))),
             DictationSettings {
                 mode: match cfg.dictation.mode {
                     ConfigMode::Toggle => DictationMode::Toggle,
@@ -286,7 +357,7 @@ impl App {
         let continuous = anya_continuous::spawn(
             hub.clone(),
             audio.clone(),
-            choice_for(EngineRole::Continuous),
+            choice_for(EngineRole::Continuous, None),
             params_rx,
         );
         let (quit, _) = watch::channel(false);
@@ -303,6 +374,7 @@ impl App {
             points,
             builtin_rt: Mutex::new(builtin_rt),
             plugin_served: Arc::default(),
+            community,
             hub,
             audio,
             dictation,
@@ -376,9 +448,9 @@ impl App {
                 detail,
             });
         };
-        match app.plugin_store.enabled() {
-            Ok(enabled) if enabled.is_empty() => {}
-            Ok(_) => {
+        match app.plugin_store.needs_bun() {
+            Ok(false) => {}
+            Ok(true) => {
                 if let Err(issue) = app.ensure_plugin_host().await {
                     tracing::warn!(%issue, "plugins are not running");
                     plugins_down(None);
@@ -389,6 +461,7 @@ impl App {
                 plugins_down(Some(e.to_string()));
             }
         }
+        app.community.refresh(&app.plugin_store, &app.config).await;
         let mut wanted = app.lan_wanted.subscribe();
         app.apply_lan(lan_port(&cfg)).await;
         let follow = app.clone();
@@ -402,7 +475,8 @@ impl App {
     }
 
     /// Starts the plugin host if it is not running: finds a Bun, and keeps
-    /// the engine list in step with what the host loads.
+    /// the engines and hooks served in step with what the host loads, and
+    /// the activity list told of plugins the host had to kill.
     async fn ensure_plugin_host(&self) -> Result<(), PluginIssue> {
         if lock(&self.plugin_host).is_some() {
             return Ok(());
@@ -417,34 +491,87 @@ impl App {
         }
         let host = PluginHost::start(dirs, bun);
         let mut changes = host.changes();
+        let mut stalls = host.stalls();
         *slot = Some(host);
         drop(slot);
-        let (points, host, served) = (
+        let (points, host, served, community) = (
             self.points.clone(),
             self.plugin_host.clone(),
             self.plugin_served.clone(),
+            self.community.clone(),
         );
         tokio::spawn(async move {
             while changes.changed().await.is_ok() {
-                let loaded = lock(&host)
-                    .as_ref()
-                    .map(PluginHost::engines)
-                    .unwrap_or_default();
+                let (loaded, hooks) = match lock(&host).as_ref() {
+                    Some(host) => (
+                        host.engines(),
+                        Hooks {
+                            contexts: host.contexts(),
+                            transforms: host.transforms(),
+                            actions: host.actions(),
+                        },
+                    ),
+                    None => Default::default(),
+                };
                 let fresh: Vec<Registration> = loaded
                     .into_iter()
                     .map(|engine| points.engines.serve(engine))
                     .collect();
                 *lock(&served) = fresh;
+                community.set_host(hooks);
+            }
+        });
+        let activity = self.activity.clone();
+        tokio::spawn(async move {
+            loop {
+                match stalls.recv().await {
+                    Ok(plugin) => activity.push(Entry::PluginStalled {
+                        at: now_ms(),
+                        plugin,
+                    }),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         });
         Ok(())
     }
 
-    /// Makes the host load what is enabled now, if a host runs.
+    /// Makes the host load what is enabled now, if a host runs, and the
+    /// inline plugins follow.
     fn reload_plugins(&self) {
         if let Some(host) = lock(&self.plugin_host).as_ref() {
             host.reload();
         }
+        self.refresh_inline();
+    }
+
+    /// Loads the inline plugins of what is enabled now, off the caller's
+    /// thread.
+    fn refresh_inline(&self) {
+        let (community, store, config) = (
+            self.community.clone(),
+            self.plugin_store.clone(),
+            self.config.clone(),
+        );
+        self.runtime.spawn(async move {
+            community.refresh(&store, &config).await;
+        });
+    }
+
+    /// Whether installed plugin `id` has a host entry, so enabling it needs a
+    /// running Bun. A package that cannot be read counts as one that does:
+    /// the host says why it did not load.
+    fn runs_in_bun(&self, id: &str) -> bool {
+        let Ok(installed) = self.plugin_store.installed() else {
+            return true;
+        };
+        installed.iter().find(|p| p.id == id).is_none_or(|p| {
+            match read_package(&self.plugin_store.package_dir(p)) {
+                Ok(package) => package.anya.host.is_some(),
+                Err(_) => true,
+            }
+        })
     }
 
     /// Stops the plugin host, if any, and waits for its process.
@@ -454,6 +581,7 @@ impl App {
             host.shutdown().await;
         }
         lock(&self.plugin_served).clear();
+        self.community.set_host(Hooks::default());
     }
 
     /// What the servers need to take remote dictation: the engine choice
@@ -508,9 +636,24 @@ impl App {
         done_tx: tokio::sync::mpsc::UnboundedSender<(String, Delivered)>,
     ) {
         let status = self.status.clone();
+        let failures = self.activity.clone();
         tokio::spawn(async move {
+            // A failure is kept once, when the dictation enters it.
+            let mut failed = false;
             while status_rx.changed().await.is_ok() {
                 let current = status_rx.borrow().clone();
+                match &current.state {
+                    anya_dictation::State::Failed { error, detail } if !failed => {
+                        failures.push(Entry::Failed {
+                            at: now_ms(),
+                            source: Source::Dictation,
+                            error: *error,
+                            detail: detail.clone(),
+                        });
+                    }
+                    _ => {}
+                }
+                failed = matches!(current.state, anya_dictation::State::Failed { .. });
                 let mut state = lock(&status);
                 state.dictation = match current.state {
                     anya_dictation::State::Idle => UiDictation::Idle,
@@ -529,9 +672,41 @@ impl App {
         let stats = self.stats.clone();
         let router = self.router.clone();
         let desktop = self.desktop;
+        let points = self.points.clone();
+        let community = self.community.clone();
+        let (actions, mut action_failures) = Actions::new();
+        let failures = activity.clone();
+        tokio::spawn(async move {
+            while let Some(failed) = action_failures.recv().await {
+                failures.push(hook_failed(failed, None));
+            }
+        });
         tokio::spawn(async move {
             while let Some(done) = finished.recv().await {
                 let cfg = lock(&config).clone();
+                let declared = community.declared();
+                let plan = hooks::plan(&cfg, &points, &declared);
+                let mut text = done.text;
+                if !plan.transforms.is_empty() || !plan.actions.is_empty() {
+                    let app = tokio::task::spawn_blocking(move || anya_focus::focused_app(desktop))
+                        .await
+                        .ok()
+                        .flatten();
+                    let call = Call {
+                        session: Some(done.session.clone()),
+                        source: Source::Dictation,
+                        app,
+                        settings: BTreeMap::new(),
+                    };
+                    let (chained, failed) =
+                        anya_core::hooks::transform(&plan.transforms, text, &call, plan.chain)
+                            .await;
+                    text = chained;
+                    for f in failed {
+                        activity.push(hook_failed(f, Some(done.session.clone())));
+                    }
+                    actions.dispatch(&plan.actions, &text, &call);
+                }
                 let output = match cfg.dictation.output {
                     ConfigOutput::Paste => Some(Delivery::Paste),
                     ConfigOutput::Clipboard => Some(Delivery::Clipboard),
@@ -540,7 +715,7 @@ impl App {
                 let delivered = match output {
                     None => Delivered::Kept,
                     Some(how) => match tokio::task::spawn_blocking({
-                        let text = done.text.clone();
+                        let text = text.clone();
                         move || anya_output::deliver(desktop, &text, how)
                     })
                     .await
@@ -559,8 +734,8 @@ impl App {
                         }
                     },
                 };
-                let _ = done_tx.send((done.text.clone(), delivered));
-                stats.record(&done.text, done.audio_ms);
+                let _ = done_tx.send((text.clone(), delivered));
+                stats.record(&text, done.audio_ms);
                 let engine = {
                     let mut router = lock(&router);
                     router.delivered(&done.session, delivered);
@@ -569,7 +744,7 @@ impl App {
                 activity.push(Entry::Final {
                     at: now_ms(),
                     source: Source::Dictation,
-                    text: done.text,
+                    text,
                     delivered,
                     session: Some(done.session),
                     engine,
@@ -851,8 +1026,15 @@ impl App {
     /// LAN listener and the overlay follow it. Returns why the hotkeys could
     /// not be registered, if they could not.
     fn apply(&self, cfg: Config) -> Option<String> {
-        *lock(&self.config) = cfg.clone();
+        let budgets_changed = std::mem::replace(&mut *lock(&self.config), cfg.clone())
+            .plugins
+            .limits
+            != cfg.plugins.limits;
         builtin::reconcile(&mut lock(&self.builtin_rt), &cfg);
+        if budgets_changed {
+            // Inline plugins load with the budgets in effect.
+            self.refresh_inline();
+        }
         self.dictation.configure(DictationSettings {
             mode: match cfg.dictation.mode {
                 ConfigMode::Toggle => DictationMode::Toggle,
@@ -888,7 +1070,7 @@ impl App {
         let builtin_ids = builtin::ids();
         let mut ids: Vec<String> = builtin::composed(&cfg, &builtin_ids)
             .into_iter()
-            .filter(|c| c.on)
+            .filter(|c| c.on && builtin::engines().iter().any(|e| e.manifest().id == c.id))
             .map(|c| c.id)
             .collect();
         ids.extend(
@@ -916,6 +1098,7 @@ impl App {
                         anya_config::Problem::UnknownEngine(role, id) => {
                             Invalid::UnknownEngine { role, id }
                         }
+                        anya_config::Problem::BadPluginId(_, id) => Invalid::BadPluginId { id },
                     })
                     .collect(),
             ));
@@ -971,6 +1154,7 @@ impl Control for App {
             desktop: self.desktop.to_string(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             config_path: self.config_path.clone(),
+            replacements_path: anya_config::replacements_path(&self.config_path),
         }
     }
 
@@ -1013,6 +1197,29 @@ impl Control for App {
             }
         }
         Ok(anya_hotkey::format_list(&combos))
+    }
+
+    fn hooks(&self) -> Vec<HookInfo> {
+        let cfg = lock(&self.config).clone();
+        hooks::plan(&cfg, &self.points, &self.community.declared()).infos()
+    }
+
+    fn builtin_hooks(&self) -> Vec<BuiltinHooks> {
+        let cfg = lock(&self.config).clone();
+        let wanted = builtin::composed(&cfg, &builtin::ids());
+        let on = |id: &str| wanted.iter().any(|c| c.id == id && c.on);
+        vec![
+            BuiltinHooks {
+                id: builtin::REPLACE.to_owned(),
+                provides: vec![Provide::Transform],
+                on: on(builtin::REPLACE),
+            },
+            BuiltinHooks {
+                id: builtin::COMMUNITY_HOOKS.to_owned(),
+                provides: vec![Provide::Context, Provide::Transform, Provide::Action],
+                on: on(builtin::COMMUNITY_HOOKS),
+            },
+        ]
     }
 
     fn engines(&self) -> Vec<EngineInfo> {
@@ -1073,11 +1280,13 @@ impl Control for App {
             .into_iter()
             .map(|p| {
                 let seen = status.iter().find(|s| s.id == p.id);
-                let load = match (p.enabled, seen) {
-                    (false, _) => PluginLoad::Off,
-                    (true, None) if running => PluginLoad::Loading,
-                    (true, None) => PluginLoad::HostDown,
-                    (true, Some(s)) => match &s.state {
+                let package = read_package(&self.plugin_store.package_dir(&p)).ok();
+                let host = package.as_ref().is_some_and(|k| k.anya.host.is_some());
+                let inline = self.community.inline_state(&p.id);
+                let host_load = match seen {
+                    None if running => PluginLoad::Loading,
+                    None => PluginLoad::HostDown,
+                    Some(s) => match &s.state {
                         PluginState::Loading => PluginLoad::Loading,
                         PluginState::Ready => PluginLoad::Ready,
                         PluginState::Failed(detail) => PluginLoad::Failed {
@@ -1085,17 +1294,54 @@ impl Control for App {
                         },
                     },
                 };
+                let load = match (p.enabled, &inline) {
+                    (false, _) => PluginLoad::Off,
+                    (true, Some(InlineState::Failed(detail))) => PluginLoad::Failed {
+                        detail: detail.clone(),
+                    },
+                    // An inline-only package waits for its module, not for Bun.
+                    (true, None) if !host && package.is_some() => PluginLoad::Loading,
+                    (true, Some(_)) if !host => PluginLoad::Ready,
+                    (true, _) => host_load,
+                };
+                // What the index said at install, so the enable prompt can
+                // say what the plugin will receive before it has ever run;
+                // what its entries export once loaded adds to it.
+                let mut provides = p.provides.clone();
+                let loaded = seen.map(|s| s.provides.clone()).unwrap_or_default();
+                let inline_provides = match inline {
+                    Some(InlineState::Ready(inline)) => inline,
+                    _ => Vec::new(),
+                };
+                for provide in loaded.into_iter().chain(inline_provides) {
+                    if !provides.contains(&provide) {
+                        provides.push(provide);
+                    }
+                }
+                let fields = package
+                    .as_ref()
+                    .map(|k| k.anya.fields.clone())
+                    .unwrap_or_default();
                 InstalledPlugin {
                     title: seen
                         .and_then(|s| s.manifest.as_ref())
-                        .map(|m| m.title.clone()),
+                        .map(|m| m.title.clone())
+                        .or_else(|| package.as_ref().map(|k| k.name.clone())),
                     description: seen
                         .and_then(|s| s.manifest.as_ref())
-                        .map(|m| m.blurb.clone()),
+                        .map(|m| m.blurb.clone())
+                        .or_else(|| package.as_ref().map(|k| k.description.clone())),
                     id: p.id,
                     version: p.version,
                     enabled: p.enabled,
                     load,
+                    provides,
+                    host,
+                    permissions: package
+                        .as_ref()
+                        .map(|k| k.anya.permissions.clone())
+                        .unwrap_or_default(),
+                    fields,
                 }
             })
             .collect()
@@ -1115,6 +1361,8 @@ impl Control for App {
                 Some(MarketPlugin {
                     version: release.version.clone(),
                     streaming: release.streaming,
+                    provides: release.provides.clone(),
+                    host: release.host,
                     permissions: release.permissions.clone(),
                     id: p.id,
                     name: p.name,
@@ -1137,7 +1385,10 @@ impl Control for App {
 
     fn set_plugin_enabled(&self, id: &str, on: bool) -> Result<(), PluginIssue> {
         if on {
-            self.runtime.block_on(self.ensure_plugin_host())?;
+            // Only a package with a host entry needs Bun.
+            if self.runs_in_bun(id) {
+                self.runtime.block_on(self.ensure_plugin_host())?;
+            }
             self.plugin_store.enable(id)
         } else {
             self.plugin_store.disable(id)
@@ -1383,6 +1634,23 @@ async fn run_app(run: Run, catalog: Catalog) -> Result<(), String> {
         tokio::runtime::Handle::current(),
     )
     .await?;
+    // SIGINT and SIGTERM end the app the way Quit does, so the plugin host and
+    // the servers are stopped instead of left to the system.
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (mut interrupt, mut terminate) = (
+            signal(SignalKind::interrupt()).map_err(|e| e.to_string())?,
+            signal(SignalKind::terminate()).map_err(|e| e.to_string())?,
+        );
+        let quitting = app.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = terminate.recv() => {}
+            }
+            quitting.quit();
+        });
+    }
     match run.mode {
         Mode::Daemon => {
             let mut quit = app.quit.subscribe();
@@ -1601,9 +1869,9 @@ mod tests {
         cfg.recognition.set_engine(EngineRole::Continuous, "beta");
         cfg.recognition.set_engine(EngineRole::Remote, "gamma");
         let config = Arc::new(Mutex::new(cfg));
-        let dictation = choice(config.clone(), points.clone(), EngineRole::Dictation);
-        let continuous = choice(config.clone(), points.clone(), EngineRole::Continuous);
-        let remote = choice(config.clone(), points, EngineRole::Remote);
+        let dictation = choice(config.clone(), points.clone(), EngineRole::Dictation, None);
+        let continuous = choice(config.clone(), points.clone(), EngineRole::Continuous, None);
+        let remote = choice(config.clone(), points, EngineRole::Remote, None);
         assert_eq!(opens_on(&dictation), "alpha");
         assert_eq!(opens_on(&continuous), "beta");
         assert_eq!(opens_on(&remote), "gamma");

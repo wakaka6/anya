@@ -20,6 +20,9 @@ const GATE: &[&[&str]] = &[
     &["deny", "check"],
 ];
 
+/// Where the plugins this repository releases live; `bun test` runs their tests.
+const PLUGINS: &str = "plugins";
+
 fn main() -> ExitCode {
     let root = workspace_root();
     let ok = match std::env::args().nth(1).as_deref() {
@@ -28,7 +31,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!("usage: cargo xtask <check|ci>");
             eprintln!("  check  layer rules (ARCHITECTURE.md)");
-            eprintln!("  ci     fmt, clippy, tests with the layer rules, cargo-deny");
+            eprintln!("  ci     fmt, clippy, tests with the layer rules, cargo-deny, plugin tests");
             return ExitCode::from(2);
         }
     };
@@ -77,5 +80,16 @@ fn gate(root: &Path) -> bool {
             }
         }
     }
-    true
+    println!("$ bun test ({PLUGINS}/)");
+    match Command::new("bun")
+        .arg("test")
+        .current_dir(root.join(PLUGINS))
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(e) => {
+            eprintln!("bun test: {e}; the plugins' tests need Bun 1.2 or newer on PATH");
+            false
+        }
+    }
 }

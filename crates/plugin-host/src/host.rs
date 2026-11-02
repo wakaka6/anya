@@ -1,22 +1,29 @@
-//! The Bun host process: started, fed commands, read for events and, when it
-//! dies, restarted with backoff. A death ends the sessions it ran with an
-//! error; nothing retries them elsewhere (docs/decisions/0005).
+//! The plugin host: one Bun process per enabled package that has a host
+//! entry, each started, fed commands, read for events, watched and, when it
+//! dies or stops answering, restarted with backoff. A death ends the sessions
+//! it ran with an error; nothing retries them elsewhere
+//! (docs/decisions/0005, docs/decisions/0015).
 
-use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use anya_core::engine::{Engine, EngineError, Output};
-use anya_protocol::{ErrorCode, HostCommand, HostEvent, LogLevel, Manifest, PLUGIN_PROTOCOL};
+use anya_core::hooks::{ActionHook, ContextHook, Extra, HookError, TransformHook};
+use anya_protocol::{
+    ErrorCode, HostCommand, HostEvent, LogLevel, Manifest, PLUGIN_PROTOCOL, Provide,
+};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::engine::PluginEngine;
+use crate::hooks::HostHook;
+use crate::link::{Answer, COMMAND_QUEUE, Link};
+use crate::store::Hosted;
 use crate::{BunPath, PluginDirs, PluginError, Store};
 
 /// The host script, written next to the SDK into the runtime directory.
@@ -25,81 +32,88 @@ const HOST_JS: &str = include_str!("../../../host/host.js");
 /// The SDK the host serves to plugins as `@wakaka6/anya-plugin`.
 const SDK_JS: &str = include_str!("../../../sdk/plugin/index.js");
 
-/// Commands waiting for the host's stdin: 40 ms of audio each, so about
-/// forty seconds of one session. A host that falls further behind than that
-/// ends the sessions that cannot be served.
-pub(crate) const COMMAND_QUEUE: usize = 1024;
-
-/// Results queued per session for the hub, which drains them at once.
-pub(crate) const OUTPUT_QUEUE: usize = 64;
-
-/// How long a new host may take to say `ready`.
+/// How long a new process may take to say `ready`.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How long a host gets to exit after `shutdown`.
+/// How long a process gets to exit after `shutdown`.
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 
-/// The first and longest wait before restarting a host that died.
+/// How often a ready process is pinged.
+const PING_EVERY: Duration = Duration::from_secs(1);
+
+/// How long a ready process may send nothing at all before it is killed.
+/// Fixed: a longer wait would only keep a stuck plugin alive (0015).
+const SILENCE: Duration = Duration::from_secs(3);
+
+/// The first and longest wait before restarting a process that died.
 const BACKOFF_START: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
-/// A host that ran this long counts as healthy: its next death starts the
+/// A process that ran this long counts as healthy: its next death starts the
 /// backoff over.
 const HEALTHY_AFTER: Duration = Duration::from_secs(60);
+
+/// Plugin ids the watchdog killed, buffered per subscriber.
+const STALL_BUFFER: usize = 16;
+
+/// Why a session on a killed process ended.
+const STALLED: &str = "the plugin stopped answering";
+
+/// Why a session on a process that died ended.
+const STOPPED: &str = "the plugin host stopped";
 
 /// Where a plugin is on its way to being usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginState {
     /// The host was asked to load it and has not answered.
     Loading,
-    /// It loaded and its engine can open sessions.
+    /// It loaded and what it provides can be used.
     Ready,
     /// It did not load; carries the reason, untranslated.
     Failed(String),
 }
 
-/// One enabled plugin as the host sees it.
+/// One enabled plugin with a host entry, as the host sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginStatus {
     /// The plugin id.
     pub id: String,
     /// Whether it loaded.
     pub state: PluginState,
-    /// The engine it provides, once it has loaded; kept while the host
+    /// The engine it provides, once it has loaded; kept while its process
     /// restarts.
     pub manifest: Option<Manifest>,
+    /// Everything its host entry provides, once it has loaded.
+    pub provides: Vec<Provide>,
 }
 
 /// What the supervisor is asked to do.
 enum Control {
-    /// Restart the host with the plugins that are enabled now.
+    /// Restart every process with the plugins that are enabled now.
     Reload,
-    /// Stop the host and end.
+    /// Stop every process and end.
     Shutdown,
 }
 
 #[derive(Default)]
 struct State {
-    /// Where commands go while a host runs.
-    writer: Option<mpsc::Sender<HostCommand>>,
-    /// Open sessions by host session id.
-    sessions: HashMap<String, mpsc::Sender<Output>>,
     status: Vec<PluginStatus>,
+    links: Vec<Arc<Link>>,
 }
 
-/// What the supervisor, the engines and their sessions share.
+/// What the supervisor, the child tasks and the host's methods share.
 pub(crate) struct Shared {
     state: Mutex<State>,
-    next: AtomicU64,
     changes: watch::Sender<u64>,
+    stalls: broadcast::Sender<String>,
 }
 
 impl Shared {
     fn new() -> Arc<Shared> {
         Arc::new(Shared {
             state: Mutex::default(),
-            next: AtomicU64::new(1),
             changes: watch::channel(0).0,
+            stalls: broadcast::channel(STALL_BUFFER).0,
         })
     }
 
@@ -110,43 +124,6 @@ impl Shared {
 
     fn changed(&self) {
         self.changes.send_modify(|n| *n += 1);
-    }
-
-    /// Registers a session and returns its id and the writer to the host, or
-    /// `None` while no host runs.
-    pub(crate) fn register(
-        &self,
-        output: mpsc::Sender<Output>,
-    ) -> Option<(String, mpsc::Sender<HostCommand>)> {
-        let mut state = self.state();
-        let writer = state.writer.clone()?;
-        let id = format!("s{}", self.next.fetch_add(1, Ordering::Relaxed));
-        state.sessions.insert(id.clone(), output);
-        Some((id, writer))
-    }
-
-    /// Forgets a session; true when it was still open.
-    pub(crate) fn take_session(&self, id: &str) -> bool {
-        self.state().sessions.remove(id).is_some()
-    }
-
-    /// Ends a session from this side with `error`.
-    pub(crate) fn fail_session(&self, id: &str, error: EngineError) {
-        if let Some(output) = self.state().sessions.remove(id) {
-            let _ = output.try_send(Output::Error(error));
-        }
-    }
-
-    /// Ends every session: the host they ran in is gone.
-    fn fail_all(&self, reason: &str) {
-        let sessions: Vec<_> = {
-            let mut state = self.state();
-            state.writer = None;
-            state.sessions.drain().collect()
-        };
-        for (_, output) in sessions {
-            let _ = output.try_send(Output::Error(EngineError::Upstream(reason.to_owned())));
-        }
     }
 
     fn set_status(&self, id: &str, update: impl FnOnce(&mut PluginStatus)) {
@@ -160,8 +137,8 @@ impl Shared {
     }
 }
 
-/// The plugin host: owns the Bun process that runs the enabled engine
-/// plugins. Dropping it stops the process.
+/// The plugin host: owns the Bun processes that run the enabled plugins'
+/// host entries. Dropping it stops them.
 pub struct PluginHost {
     shared: Arc<Shared>,
     store: Store,
@@ -170,10 +147,10 @@ pub struct PluginHost {
 }
 
 impl PluginHost {
-    /// Starts supervising a host for the plugins enabled in `dirs`, using
-    /// `bun`. Returns at once; plugins load in the background (see
-    /// [`PluginHost::settled`]). With no plugin enabled no process runs.
-    /// Must be called inside a Tokio runtime.
+    /// Starts supervising a Bun process for every plugin enabled in `dirs`
+    /// that has a host entry, using `bun`. Plugins with only an inline entry
+    /// start no process. Returns at once; plugins load in the background
+    /// (see [`PluginHost::settled`]). Must be called inside a Tokio runtime.
     pub fn start(dirs: PluginDirs, bun: BunPath) -> PluginHost {
         let shared = Shared::new();
         let store = Store::new(dirs.clone());
@@ -199,7 +176,7 @@ impl PluginHost {
     }
 
     /// The engines of the plugins that loaded, one per plugin. A session on
-    /// one while the host is down ends with an error at once.
+    /// one while its process is down ends with an error at once.
     pub fn engines(&self) -> Vec<Arc<dyn Engine>> {
         let state = self.shared.state();
         state
@@ -207,24 +184,67 @@ impl PluginHost {
             .iter()
             .filter_map(|s| {
                 let manifest = s.manifest.clone()?;
-                let engine: Arc<dyn Engine> = Arc::new(PluginEngine::new(
-                    s.id.clone(),
-                    manifest,
-                    Arc::clone(&self.shared),
-                ));
+                let link = state.links.iter().find(|l| l.plugin() == s.id)?;
+                let engine: Arc<dyn Engine> =
+                    Arc::new(PluginEngine::new(s.id.clone(), manifest, Arc::clone(link)));
                 Some(engine)
             })
             .collect()
     }
 
-    /// Every enabled plugin and whether it loaded.
+    /// The plugins that loaded and provide `hook`, as hooks.
+    fn hooks(&self, hook: Provide) -> Vec<Arc<HostHook>> {
+        let state = self.shared.state();
+        state
+            .status
+            .iter()
+            .filter(|s| s.state == PluginState::Ready && s.provides.contains(&hook))
+            .filter_map(|s| {
+                let link = state.links.iter().find(|l| l.plugin() == s.id)?;
+                Some(Arc::new(HostHook::new(Arc::clone(link))))
+            })
+            .collect()
+    }
+
+    /// The context hooks of the plugins that loaded, one per plugin. A call
+    /// while the plugin's process is down fails as unavailable.
+    pub fn contexts(&self) -> Vec<Arc<dyn ContextHook>> {
+        self.hooks(Provide::Context)
+            .into_iter()
+            .map(|h| h as Arc<dyn ContextHook>)
+            .collect()
+    }
+
+    /// The transform hooks of the plugins that loaded, one per plugin.
+    pub fn transforms(&self) -> Vec<Arc<dyn TransformHook>> {
+        self.hooks(Provide::Transform)
+            .into_iter()
+            .map(|h| h as Arc<dyn TransformHook>)
+            .collect()
+    }
+
+    /// The action hooks of the plugins that loaded, one per plugin.
+    pub fn actions(&self) -> Vec<Arc<dyn ActionHook>> {
+        self.hooks(Provide::Action)
+            .into_iter()
+            .map(|h| h as Arc<dyn ActionHook>)
+            .collect()
+    }
+
+    /// Every enabled plugin with a host entry and whether it loaded.
     pub fn status(&self) -> Vec<PluginStatus> {
         self.shared.state().status.clone()
     }
 
-    /// Whether a host process is up and takes commands.
+    /// Whether any plugin process is up and takes commands.
     pub fn running(&self) -> bool {
-        self.shared.state().writer.is_some()
+        self.shared.state().links.iter().any(|l| l.is_up())
+    }
+
+    /// The ids of plugins the watchdog killed for not answering, as it kills
+    /// them. A receiver that falls behind misses the oldest.
+    pub fn stalls(&self) -> broadcast::Receiver<String> {
+        self.shared.stalls.subscribe()
     }
 
     /// A counter that changes whenever [`PluginHost::status`] or
@@ -233,16 +253,21 @@ impl PluginHost {
         self.shared.changes.subscribe()
     }
 
-    /// Waits until the host runs and no plugin is still loading, or until
-    /// `timeout`. Returns whether that happened.
+    /// Waits until every plugin that has a host entry is up and none is
+    /// still loading, or until `timeout`. Returns whether that happened.
     pub async fn settled(&self, timeout: Duration) -> bool {
         let mut changes = self.changes();
         let settled = || {
+            let wanted = self.store.hosted().map_or(0, |w| w.len());
             let state = self.shared.state();
-            let wanted = self.store.enabled().map_or(0, |w| w.len());
-            (wanted == 0 || state.writer.is_some())
-                && state.status.len() == wanted
-                && state.status.iter().all(|s| s.state != PluginState::Loading)
+            state.status.len() == wanted
+                && state.status.iter().all(|s| match s.state {
+                    PluginState::Loading => false,
+                    PluginState::Failed(_) => true,
+                    PluginState::Ready => {
+                        state.links.iter().any(|l| l.plugin() == s.id && l.is_up())
+                    }
+                })
         };
         tokio::time::timeout(timeout, async {
             while !settled() {
@@ -255,13 +280,13 @@ impl PluginHost {
         .is_ok()
     }
 
-    /// Restarts the host with the plugins enabled now, after an enable,
+    /// Restarts the processes with the plugins enabled now, after an enable,
     /// disable, remove or update. Open sessions end with an error.
     pub fn reload(&self) {
         let _ = self.control.try_send(Control::Reload);
     }
 
-    /// Stops the host process and waits for it.
+    /// Stops the plugin processes and waits for them.
     pub async fn shutdown(mut self) {
         let _ = self.control.send(Control::Shutdown).await;
         if let Some(task) = self.task.take() {
@@ -276,11 +301,11 @@ impl Drop for PluginHost {
     }
 }
 
-/// How one run of the host ended.
+/// How one run of a plugin's process ended.
 enum Exit {
-    Shutdown,
-    Reload,
+    Stop,
     Died(String),
+    Stalled,
 }
 
 async fn supervise(
@@ -294,66 +319,160 @@ async fn supervise(
     loop {
         // An unreadable record loads nothing; it is left as it is for the
         // user to fix, and the next reload reads it again.
-        let wanted = store.enabled().unwrap_or_else(|e| {
+        let hosted = store.hosted().unwrap_or_else(|e| {
             tracing::warn!("no plugins load: {e}");
             Vec::new()
         });
-        shared.state().status = wanted
-            .iter()
-            .map(|(p, _)| PluginStatus {
-                id: p.id.clone(),
-                state: PluginState::Loading,
-                manifest: None,
-            })
-            .collect();
-        shared.changed();
-        let started = Instant::now();
-        let exit = if wanted.is_empty() {
-            match controls.recv().await {
-                Some(Control::Reload) => Exit::Reload,
-                Some(Control::Shutdown) | None => Exit::Shutdown,
+        let script = if hosted.iter().any(|h| h.package.is_ok()) {
+            match write_runtime(&dirs.runtime).await {
+                Ok(script) => Some(script),
+                Err(e) => {
+                    tracing::warn!("cannot write the plugin runtime: {e}; retrying in {backoff:?}");
+                    tokio::select! {
+                        () = tokio::time::sleep(backoff) => {}
+                        control = controls.recv() => match control {
+                            Some(Control::Reload) => backoff = BACKOFF_START,
+                            Some(Control::Shutdown) | None => return,
+                        },
+                    }
+                    backoff = (backoff * 2).min(BACKOFF_MAX);
+                    continue;
+                }
             }
         } else {
-            run(&shared, &dirs, &bun, &wanted, &mut controls).await
+            None
         };
-        shared.fail_all("the plugin host stopped");
-        shared.changed();
-        match exit {
-            Exit::Shutdown => return,
-            Exit::Reload => backoff = BACKOFF_START,
-            Exit::Died(reason) => {
-                tracing::warn!("plugin host died: {reason}; restarting in {backoff:?}");
-                if started.elapsed() >= HEALTHY_AFTER {
-                    backoff = BACKOFF_START;
+        backoff = BACKOFF_START;
+
+        let (stop, stopped) = watch::channel(false);
+        let mut links = Vec::new();
+        let mut status = Vec::new();
+        let mut children = Vec::new();
+        for Hosted {
+            installed,
+            dir,
+            package,
+        } in hosted
+        {
+            let link = Arc::new(Link::new(installed.id.clone()));
+            let mut entry = PluginStatus {
+                id: installed.id.clone(),
+                state: PluginState::Loading,
+                manifest: None,
+                provides: Vec::new(),
+            };
+            match (package, &script) {
+                (Ok(_), Some(script)) => {
+                    children.push(tokio::spawn(child(
+                        Arc::clone(&shared),
+                        Arc::clone(&link),
+                        Spawn {
+                            dir,
+                            bun: bun.clone(),
+                            script: script.clone(),
+                            runtime: dirs.runtime.clone(),
+                        },
+                        stopped.clone(),
+                    )));
                 }
-                tokio::select! {
-                    () = tokio::time::sleep(backoff) => {}
-                    control = controls.recv() => match control {
-                        Some(Control::Reload) => {}
-                        Some(Control::Shutdown) | None => return,
-                    },
+                (Err(e), _) => {
+                    tracing::warn!(plugin = %installed.id, "plugin did not load: {e}");
+                    entry.state = PluginState::Failed(e.to_string());
                 }
-                backoff = (backoff * 2).min(BACKOFF_MAX);
+                (Ok(_), None) => {}
             }
+            links.push(link);
+            status.push(entry);
+        }
+        {
+            let mut state = shared.state();
+            state.status = status;
+            state.links = links.clone();
+        }
+        shared.changed();
+
+        let control = controls.recv().await;
+        let _ = stop.send(true);
+        for task in children {
+            let _ = task.await;
+        }
+        for link in &links {
+            link.fail_all(STOPPED);
+        }
+        shared.changed();
+        match control {
+            Some(Control::Reload) => {}
+            Some(Control::Shutdown) | None => return,
         }
     }
 }
 
-/// Runs one host process until it exits or is told to stop.
+/// What a child task needs to start its process.
+struct Spawn {
+    dir: PathBuf,
+    bun: BunPath,
+    script: PathBuf,
+    runtime: PathBuf,
+}
+
+/// Runs one plugin's process for as long as `stopped` allows: start, watch,
+/// and when it dies or stalls restart it after a backoff.
+async fn child(
+    shared: Arc<Shared>,
+    link: Arc<Link>,
+    spawn: Spawn,
+    mut stopped: watch::Receiver<bool>,
+) {
+    let mut backoff = BACKOFF_START;
+    loop {
+        shared.set_status(link.plugin(), |s| {
+            s.state = PluginState::Loading;
+            s.manifest = None;
+            s.provides = Vec::new();
+        });
+        let started = Instant::now();
+        let exit = run(&shared, &link, &spawn, &mut stopped).await;
+        link.fail_all(if matches!(exit, Exit::Stalled) {
+            STALLED
+        } else {
+            STOPPED
+        });
+        shared.changed();
+        match exit {
+            Exit::Stop => return,
+            Exit::Died(reason) => tracing::warn!(
+                plugin = link.plugin(),
+                "plugin host died: {reason}; restarting in {backoff:?}"
+            ),
+            Exit::Stalled => {
+                tracing::warn!(
+                    plugin = link.plugin(),
+                    "plugin stopped answering and was killed; restarting in {backoff:?}"
+                );
+                let _ = shared.stalls.send(link.plugin().to_owned());
+            }
+        }
+        if started.elapsed() >= HEALTHY_AFTER {
+            backoff = BACKOFF_START;
+        }
+        tokio::select! {
+            () = tokio::time::sleep(backoff) => {}
+            _ = stopped.changed() => return,
+        }
+        backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// Runs one process of one plugin until it exits, stalls or is told to stop.
 async fn run(
     shared: &Arc<Shared>,
-    dirs: &PluginDirs,
-    bun: &BunPath,
-    wanted: &[(crate::Installed, std::path::PathBuf)],
-    controls: &mut mpsc::Receiver<Control>,
+    link: &Arc<Link>,
+    spawn: &Spawn,
+    stopped: &mut watch::Receiver<bool>,
 ) -> Exit {
-    let script = match write_runtime(&dirs.runtime).await {
-        Ok(script) => script,
-        Err(e) => return Exit::Died(e.to_string()),
-    };
-    let mut child = match Command::new(&bun.0)
-        .arg(&script)
-        .current_dir(&dirs.runtime)
+    let mut child = match Command::new(&spawn.bun.0)
+        .arg(&spawn.script)
+        .current_dir(&spawn.runtime)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -361,7 +480,7 @@ async fn run(
         .spawn()
     {
         Ok(child) => child,
-        Err(e) => return Exit::Died(format!("cannot start {}: {e}", bun.0.display())),
+        Err(e) => return Exit::Died(format!("cannot start {}: {e}", spawn.bun.0.display())),
     };
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -379,40 +498,62 @@ async fn run(
     let write_task = tokio::spawn(write_commands(stdin, commands));
     let mut lines = BufReader::new(stdout).lines();
 
-    let exit = 'session: {
-        match tokio::time::timeout(READY_TIMEOUT, ready(&mut lines)).await {
+    let exit = 'watch: {
+        let ready = tokio::select! {
+            ready = tokio::time::timeout(READY_TIMEOUT, ready(&mut lines)) => ready,
+            _ = stopped.changed() => break 'watch Exit::Stop,
+        };
+        match ready {
             Ok(Ok(())) => {}
-            Ok(Err(reason)) => break 'session Exit::Died(reason),
-            Err(_) => break 'session Exit::Died("the host did not become ready".to_owned()),
+            Ok(Err(reason)) => break 'watch Exit::Died(reason),
+            Err(_) => break 'watch Exit::Died("the host did not become ready".to_owned()),
         }
-        shared.state().writer = Some(writer.clone());
+        link.set_writer(writer.clone());
         shared.changed();
-        for (plugin, dir) in wanted {
-            let load = HostCommand::Load {
-                plugin: plugin.id.clone(),
-                path: dir.display().to_string(),
-            };
-            if writer.send(load).await.is_err() {
-                break 'session Exit::Died("the host closed its input".to_owned());
-            }
+        let load = HostCommand::Load {
+            plugin: link.plugin().to_owned(),
+            path: spawn.dir.display().to_string(),
+        };
+        if writer.send(load).await.is_err() {
+            break 'watch Exit::Died("the host closed its input".to_owned());
         }
+
+        // The watchdog: a ping every second; a process that has not answered
+        // one for SILENCE is stuck, however much else it writes (a plugin
+        // looping on console.log never gets to answer).
+        let mut last = Instant::now();
+        let mut seq = 0u64;
+        let mut ping = tokio::time::interval(PING_EVERY);
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 line = lines.next_line() => match line {
-                    Ok(Some(line)) => handle_line(shared, &writer, &line),
+                    Ok(Some(line)) => {
+                        if handle_line(shared, link, &writer, &line) {
+                            last = Instant::now();
+                        }
+                    }
                     Ok(None) => break Exit::Died("the host exited".to_owned()),
                     Err(e) => break Exit::Died(format!("reading the host failed: {e}")),
                 },
-                control = controls.recv() => match control {
-                    Some(Control::Reload) => break Exit::Reload,
-                    Some(Control::Shutdown) | None => break Exit::Shutdown,
-                },
+                _ = ping.tick() => {
+                    seq += 1;
+                    let _ = writer.try_send(HostCommand::Ping { seq });
+                }
+                () = tokio::time::sleep_until(last + SILENCE) => break Exit::Stalled,
+                _ = stopped.changed() => break Exit::Stop,
             }
         }
     };
 
-    if !matches!(exit, Exit::Died(_)) {
-        let _ = tokio::time::timeout(EXIT_GRACE, writer.send(HostCommand::Shutdown)).await;
+    match exit {
+        Exit::Stop => {
+            let _ = tokio::time::timeout(EXIT_GRACE, writer.send(HostCommand::Shutdown)).await;
+        }
+        Exit::Stalled => {
+            let _ = child.start_kill();
+        }
+        Exit::Died(_) => {}
     }
     drop(writer);
     stop(&mut child, write_task).await;
@@ -441,7 +582,7 @@ async fn ready(
     }
 }
 
-/// Lets the host exit after `shutdown`, then makes sure it has.
+/// Lets the process exit after `shutdown`, then makes sure it has.
 async fn stop(child: &mut Child, writer: JoinHandle<()>) {
     if tokio::time::timeout(EXIT_GRACE, child.wait())
         .await
@@ -467,71 +608,84 @@ async fn write_commands(
     }
 }
 
-fn handle_line(shared: &Arc<Shared>, writer: &mpsc::Sender<HostCommand>, line: &str) {
+/// Acts on one line of the host; true when it answered a ping.
+fn handle_line(
+    shared: &Arc<Shared>,
+    link: &Arc<Link>,
+    writer: &mpsc::Sender<HostCommand>,
+    line: &str,
+) -> bool {
     let event = match serde_json::from_str::<HostEvent>(line) {
         Ok(event) => event,
         Err(e) => {
             tracing::debug!("skipped a host line that is not an event: {e}");
-            return;
+            return false;
         }
     };
     match event {
-        HostEvent::Loaded { plugin, manifest } => loaded(shared, &plugin, manifest),
-        HostEvent::LoadFailed { plugin, detail } => {
+        HostEvent::Loaded {
+            engine, provides, ..
+        } => loaded(shared, link.plugin(), engine, provides),
+        HostEvent::LoadFailed { detail, .. } => {
+            let plugin = link.plugin();
             tracing::warn!(%plugin, "plugin did not load: {detail}");
-            shared.set_status(&plugin, |s| {
+            shared.set_status(plugin, |s| {
                 s.state = PluginState::Failed(detail);
                 s.manifest = None;
+                s.provides = Vec::new();
             });
         }
         HostEvent::SessionReady { session } => {
-            send_output(shared, writer, &session, Output::Ready, false);
+            send_output(link, writer, &session, Output::Ready, false);
         }
         HostEvent::Recognition {
             session,
             recognition,
         } => {
             let last = recognition.is_final;
-            send_output(shared, writer, &session, Output::Result(recognition), last);
+            send_output(link, writer, &session, Output::Result(recognition), last);
         }
         HostEvent::SessionError {
             session,
             code,
             detail,
         } => {
-            shared.fail_session(&session, engine_error(code, detail));
+            link.fail_session(&session, engine_error(code, detail));
         }
         HostEvent::SessionClosed { session } => {
-            shared.take_session(&session);
+            link.take_session(&session);
         }
         HostEvent::Log {
             plugin,
             level,
             message,
         } => log(&plugin, level, &message),
+        HostEvent::ContextDone {
+            call,
+            hotwords,
+            language,
+        } => link.finish_call(&call, Ok(Answer::Context(Extra { hotwords, language }))),
+        HostEvent::Transformed { call, text } => link.finish_call(&call, Ok(Answer::Text(text))),
+        HostEvent::ActionDone { call } => link.finish_call(&call, Ok(Answer::Done)),
+        HostEvent::CallFailed { call, detail } => {
+            link.finish_call(&call, Err(HookError::Failed(detail)));
+        }
+        HostEvent::Pong { .. } => return true,
         HostEvent::Ready { .. } | HostEvent::Unknown => {}
     }
+    false
 }
 
 /// Delivers `output` to the session; `last` forgets the session after it.
 /// A session whose hub side is gone or full is closed on the host.
 fn send_output(
-    shared: &Arc<Shared>,
+    link: &Arc<Link>,
     writer: &mpsc::Sender<HostCommand>,
     session: &str,
     output: Output,
     last: bool,
 ) {
-    let mut state = shared.state();
-    let Some(tx) = state.sessions.get(session) else {
-        return;
-    };
-    let delivered = tx.try_send(output).is_ok();
-    if last || !delivered {
-        state.sessions.remove(session);
-    }
-    drop(state);
-    if !delivered {
+    if link.deliver(session, output, last) == Some(false) {
         tracing::warn!(session, "session reader is gone or too slow; closing it");
         let _ = writer.try_send(HostCommand::Close {
             session: session.to_owned(),
@@ -539,24 +693,28 @@ fn send_output(
     }
 }
 
-fn loaded(shared: &Arc<Shared>, plugin: &str, manifest: Manifest) {
-    let taken_by = shared
-        .state()
-        .status
-        .iter()
-        .find(|s| s.id != plugin && s.manifest.as_ref().is_some_and(|m| m.id == manifest.id))
-        .map(|s| s.id.clone());
-    shared.set_status(plugin, |s| match taken_by {
-        Some(other) => {
+fn loaded(shared: &Arc<Shared>, plugin: &str, engine: Option<Manifest>, provides: Vec<Provide>) {
+    let taken_by = engine.as_ref().and_then(|manifest| {
+        shared
+            .state()
+            .status
+            .iter()
+            .find(|s| s.id != plugin && s.manifest.as_ref().is_some_and(|m| m.id == manifest.id))
+            .map(|s| s.id.clone())
+    });
+    shared.set_status(plugin, |s| match (taken_by, engine) {
+        (Some(other), Some(manifest)) => {
             s.state = PluginState::Failed(format!(
                 "engine id {:?} is already provided by plugin {other}",
                 manifest.id
             ));
             s.manifest = None;
+            s.provides = Vec::new();
         }
-        None => {
+        (_, engine) => {
             s.state = PluginState::Ready;
-            s.manifest = Some(manifest);
+            s.manifest = engine;
+            s.provides = provides;
         }
     });
 }
@@ -575,7 +733,7 @@ fn log(plugin: &str, level: LogLevel, message: &str) {
 }
 
 /// Writes the host script and the SDK it serves; returns the script's path.
-async fn write_runtime(runtime: &std::path::Path) -> Result<std::path::PathBuf, PluginError> {
+async fn write_runtime(runtime: &Path) -> Result<PathBuf, PluginError> {
     tokio::fs::create_dir_all(runtime)
         .await
         .map_err(|e| PluginError::io(runtime, &e))?;

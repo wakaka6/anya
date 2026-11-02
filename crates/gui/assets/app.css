@@ -336,7 +336,6 @@ input:focus-visible, select:focus-visible, button:focus-visible, [tabindex]:focu
 }
 .invalid { border-color: var(--error) !important; }
 input[readonly] { cursor: default; }
-input.path { flex: 1; width: auto; text-overflow: ellipsis; }
 
 .secret { display: flex; align-items: center; gap: 8px; }
 .secret input { width: 190px; }
@@ -918,10 +917,15 @@ select:active { background-color: var(--field-hover); }
 .adv-fields { display: grid; gap: 8px; padding-top: 8px; }
 .docs-line { display: flex; }
 
-.row.plugin { grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 12px; max-height: 120px; overflow: hidden; transition: max-height .2s var(--ease), min-height .2s var(--ease), padding .2s var(--ease), opacity .2s; }
+.row.plugin { grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 12px; max-height: 240px; overflow: hidden; transition: max-height .2s var(--ease), min-height .2s var(--ease), padding .2s var(--ease), opacity .2s; }
 .row.plugin.leaving { max-height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; }
 .row.plugin.fresh { animation: fresh-bg 1.4s ease-out; }
 @keyframes fresh-bg { from { background: var(--accent-soft); } }
+.row.plugin .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.row.plugin .tags .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; border-radius: 10px; }
+.plugin-settings { display: grid; gap: 8px; padding: 0 14px 12px 54px; }
+.plugin-settings > summary { padding: 2px 0; color: var(--muted); cursor: pointer; }
+.row.hook { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; }
 
 .section > h2 { align-items: center; }
 .section > h2 input[type="text"] { width: 190px; padding: 3px 9px; font-weight: 400; }
@@ -930,6 +934,7 @@ select:active { background-color: var(--field-hover); }
 .plugin-card .top { display: flex; align-items: center; gap: 10px; }
 .plugin-card .desc { min-height: 2.8em; color: var(--muted); font-size: 12px; }
 .plugin-card .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.plugin-card .tags .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; border-radius: 10px; }
 button.installing { position: relative; overflow: hidden; }
 button.installing:disabled { opacity: 1; color: var(--muted); }
 button.installing::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); animation: install-progress 1.3s ease-out forwards; }

@@ -9,7 +9,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use tokio::sync::mpsc;
 
-use crate::host::{OUTPUT_QUEUE, Shared};
+use crate::link::{Link, OUTPUT_QUEUE};
 
 /// Audio a session holds before the plugin takes it; about two minutes, as
 /// for built-in engines.
@@ -21,15 +21,15 @@ const INPUT_CAPACITY: usize = 4096;
 pub struct PluginEngine {
     plugin: String,
     manifest: Manifest,
-    shared: Arc<Shared>,
+    link: Arc<Link>,
 }
 
 impl PluginEngine {
-    pub(crate) fn new(plugin: String, manifest: Manifest, shared: Arc<Shared>) -> PluginEngine {
+    pub(crate) fn new(plugin: String, manifest: Manifest, link: Arc<Link>) -> PluginEngine {
         PluginEngine {
             plugin,
             manifest,
-            shared,
+            link,
         }
     }
 
@@ -47,7 +47,7 @@ impl Engine for PluginEngine {
     fn open(&self, params: SessionParams) -> Session {
         let (input, audio) = mpsc::channel(INPUT_CAPACITY);
         let (results, output) = mpsc::channel(OUTPUT_QUEUE);
-        let Some((id, writer)) = self.shared.register(results.clone()) else {
+        let Some((id, writer)) = self.link.register(results.clone()) else {
             let _ = results.try_send(Output::Error(EngineError::Connect(
                 "the plugin host is not running".to_owned(),
             )));
@@ -62,13 +62,13 @@ impl Engine for PluginEngine {
             settings: params.settings,
         };
         if writer.try_send(open).is_err() {
-            self.shared.fail_session(
+            self.link.fail_session(
                 &id,
                 EngineError::Upstream("the plugin host is not keeping up".to_owned()),
             );
             return Session { input, output };
         }
-        tokio::spawn(forward(Arc::clone(&self.shared), id, writer, audio));
+        tokio::spawn(forward(Arc::clone(&self.link), id, writer, audio));
         Session { input, output }
     }
 }
@@ -76,7 +76,7 @@ impl Engine for PluginEngine {
 /// Carries a session's audio to the host. It never blocks the session's
 /// owner: audio the host cannot take ends the session instead.
 async fn forward(
-    shared: Arc<Shared>,
+    link: Arc<Link>,
     id: String,
     writer: mpsc::Sender<HostCommand>,
     mut audio: mpsc::Receiver<Input>,
@@ -89,7 +89,7 @@ async fn forward(
                     pcm: STANDARD.encode(pcm),
                 };
                 if writer.try_send(command).is_err() {
-                    shared.fail_session(
+                    link.fail_session(
                         &id,
                         EngineError::Upstream("the plugin host is not keeping up".to_owned()),
                     );
@@ -103,7 +103,7 @@ async fn forward(
         }
     }
     // The owner dropped the session without finishing it: abandoned.
-    if shared.take_session(&id) {
+    if link.take_session(&id) {
         let _ = writer.send(HostCommand::Close { session: id }).await;
     }
 }

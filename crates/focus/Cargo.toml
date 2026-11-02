@@ -1,0 +1,24 @@
+[package]
+name = "anya-focus"
+description = "Which app has the keyboard focus, for context hooks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+anya-core.workspace = true
+tracing.workspace = true
+
+# The macOS backend's dependencies (src/darwin.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+
+# The X11 backend's dependencies (src/x11.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.14"
+
+[lints]
+workspace = true

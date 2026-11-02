@@ -1650,6 +1650,10 @@ async fn a_failed_plugin_says_why_in_the_users_language() {
         },
         title: None,
         description: None,
+        provides: Vec::new(),
+        host: true,
+        permissions: Vec::new(),
+        fields: Vec::new(),
     });
     let h = harness_with(control, ShellKind::Web).await;
     let p = h.get("/api/status").await.json()["plugins"][0].clone();
@@ -2045,5 +2049,218 @@ fn the_html_carries_no_text_of_its_own() {
                 "{page} has a literal {attr}"
             );
         }
+    }
+}
+
+fn installed(
+    id: &str,
+    provides: Vec<anya_protocol::Provide>,
+    host: bool,
+) -> anya_runtime::InstalledPlugin {
+    anya_runtime::InstalledPlugin {
+        id: id.to_owned(),
+        version: "1.0.0".to_owned(),
+        enabled: true,
+        load: anya_runtime::PluginLoad::Ready,
+        title: Some(id.into()),
+        description: None,
+        provides,
+        host,
+        permissions: if host {
+            vec!["network:api.example.com".to_owned()]
+        } else {
+            Vec::new()
+        },
+        fields: vec![anya_protocol::Field {
+            key: "api_key".to_owned(),
+            label: "API key".into(),
+            help: anya_protocol::Text::default(),
+            kind: anya_protocol::FieldKind::Secret,
+            required: false,
+            advanced: false,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn installed_plugins_say_what_they_provide_and_where_they_run() {
+    use anya_protocol::Provide;
+    let control = FakeControl::sample();
+    lock(&control.plugins).extend([
+        installed("swap", vec![Provide::Context, Provide::Transform], false),
+        installed("polish", vec![Provide::Transform], true),
+    ]);
+    let h = harness_with(control, ShellKind::Web).await;
+    let plugins = h.get("/api/state").await.json()["plugins"].clone();
+    assert_eq!(plugins[0]["provides"], json!(["context", "transform"]));
+    assert_eq!(plugins[0]["host"], false);
+    assert_eq!(plugins[0]["permissions"], json!([]));
+    assert_eq!(plugins[1]["host"], true);
+    assert_eq!(
+        plugins[1]["permissions"],
+        json!(["network:api.example.com"])
+    );
+    assert_eq!(plugins[1]["fields"][0]["key"], "api_key");
+    assert_eq!(plugins[1]["fields"][0]["kind"], "secret");
+
+    let market = h.post("/api/plugins/market", &json!({})).await.json()["plugins"].clone();
+    let swap = market
+        .as_array()
+        .and_then(|l| l.iter().find(|p| p["id"] == "swap"))
+        .expect("swap in the market");
+    assert_eq!(swap["provides"], json!(["context", "transform"]));
+    assert_eq!(swap["host"], false);
+}
+
+#[tokio::test]
+async fn dictation_hooks_list_in_run_order_and_the_order_is_saved() {
+    use anya_protocol::Provide;
+    let control = FakeControl::sample();
+    lock(&control.plugins).extend([
+        installed("swap", vec![Provide::Transform], false),
+        installed("polish", vec![Provide::Transform, Provide::Action], true),
+    ]);
+    let h = harness_with(control, ShellKind::Web).await;
+    let state = h.get("/api/state").await.json();
+    assert_eq!(
+        state["info"]["replacements_path"],
+        "/home/me/.config/anya/replacements.txt"
+    );
+    let run = |state: &serde_json::Value| -> Vec<String> {
+        state["hooks"]["run"]
+            .as_array()
+            .expect("hooks")
+            .iter()
+            .map(|h| {
+                format!(
+                    "{}:{}",
+                    h["plugin"].as_str().unwrap_or(""),
+                    h["hook"].as_str().unwrap_or("")
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        run(&state),
+        [
+            "polish:transform",
+            "replace:transform",
+            "swap:transform",
+            "polish:action"
+        ],
+        "unlisted plugins run by id, actions last"
+    );
+    assert_eq!(state["hooks"]["run"][0]["movable"], true);
+    assert_eq!(state["hooks"]["run"][1]["runs"], "builtin");
+    assert_eq!(state["hooks"]["run"][2]["runs"], "inline");
+    assert_eq!(state["hooks"]["run"][3]["movable"], false);
+    assert_eq!(state["hooks"]["run"][3]["runs"], "host");
+
+    let mut c = edited(&h);
+    c["plugins"]["order"] = json!(["swap", "replace"]);
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let saved = lock(&h.control.saved).last().cloned().expect("a save");
+    assert_eq!(saved.plugins.order, ["swap", "replace"]);
+    assert_eq!(
+        run(&res.json()["state"]),
+        [
+            "swap:transform",
+            "replace:transform",
+            "polish:transform",
+            "polish:action"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_built_in_hook_switches_are_saved_and_turn_hooks_off() {
+    use anya_protocol::Provide;
+    let control = FakeControl::sample();
+    lock(&control.plugins).push(installed("swap", vec![Provide::Transform], false));
+    let h = harness_with(control, ShellKind::Web).await;
+    let state = h.get("/api/state").await.json();
+    let builtin = state["hooks"]["builtin"].as_array().expect("builtin");
+    assert_eq!(builtin[0]["id"], "replace");
+    assert_eq!(builtin[0]["name"], "Replacement list");
+    assert_eq!(builtin[0]["on"], true);
+    assert_eq!(builtin[1]["id"], "community-hooks");
+
+    let mut c = edited(&h);
+    c["plugins"]["builtin"] = json!({"replace": false, "community-hooks": false});
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let saved = lock(&h.control.saved).last().cloned().expect("a save");
+    assert_eq!(saved.plugins.builtin.get("replace"), Some(&false));
+    assert_eq!(saved.plugins.builtin.get("community-hooks"), Some(&false));
+    assert_eq!(res.json()["state"]["hooks"]["run"], json!([]));
+    assert_eq!(res.json()["state"]["hooks"]["builtin"][1]["on"], false);
+}
+
+#[tokio::test]
+async fn a_plugins_hook_settings_are_saved_under_its_id() {
+    use anya_protocol::Provide;
+    let control = FakeControl::sample();
+    lock(&control.plugins).push(installed("polish", vec![Provide::Transform], true));
+    let h = harness_with(control, ShellKind::Web).await;
+    let mut c = edited(&h);
+    c["plugins"]["settings"] = json!({"polish": {"api_key": "sk-1"}});
+    let res = h.post("/api/settings", &c).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let saved = lock(&h.control.saved).last().cloned().expect("a save");
+    assert_eq!(
+        saved
+            .plugins
+            .settings
+            .get("polish")
+            .and_then(|s| s.get("api_key"))
+            .map(String::as_str),
+        Some("sk-1")
+    );
+    assert_eq!(
+        res.json()["state"]["config"]["plugins"]["settings"]["polish"]["api_key"],
+        "sk-1"
+    );
+}
+
+#[tokio::test]
+async fn failed_hooks_and_stalled_plugins_show_in_the_activity_without_text() {
+    use anya_core::hooks::HookFailure;
+    use anya_protocol::Provide;
+    for (locale, failed, stalled) in [
+        (
+            "en",
+            "Plugin polish: its transform hook took too long",
+            "Plugin polish stopped answering and was restarted",
+        ),
+        (
+            "zh-CN",
+            "插件 polish：文本转换钩子超时",
+            "插件 polish 停止响应，已重启",
+        ),
+    ] {
+        let control = FakeControl::sample();
+        lock(&control.config).ui.language = locale.to_owned();
+        *lock(&control.activity) = vec![
+            Entry::HookFailed {
+                at: 1,
+                plugin: "polish".to_owned(),
+                hook: Provide::Transform,
+                failure: HookFailure::Timeout,
+                session: None,
+            },
+            Entry::PluginStalled {
+                at: 2,
+                plugin: "polish".to_owned(),
+            },
+        ];
+        let h = harness_with(control, ShellKind::Web).await;
+        let s = h.get("/api/status").await.json();
+        let activity = s["activity"].as_array().expect("activity");
+        assert_eq!(activity[0]["kind"], "hook");
+        assert_eq!(activity[0]["level"], "warn");
+        assert_eq!(activity[0]["text"], failed);
+        assert_eq!(activity[1]["kind"], "hook");
+        assert_eq!(activity[1]["text"], stalled);
     }
 }

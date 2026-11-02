@@ -1,0 +1,31 @@
+{
+  "name": "app-hotwords",
+  "version": "1.0.0",
+  "description": "Hotwords for the app in front: the editor gets your project's names, the terminal its commands.",
+  "type": "module",
+  "main": "inline.js",
+  "files": ["inline.js"],
+  "anya": {
+    "id": "app-hotwords",
+    "name": { "en": "Hotwords per app", "zh-CN": "按应用加热词" },
+    "description": {
+      "en": "Adds the hotwords you list for the app in front when a dictation starts",
+      "zh-CN": "开始听写时，按前台应用加上你为它列的热词"
+    },
+    "inline": "./inline.js",
+    "compat": ">=0.0.0",
+    "protocol": 1,
+    "permissions": [],
+    "fields": [
+      {
+        "key": "apps",
+        "label": { "en": "Apps and their words", "zh-CN": "应用和热词" },
+        "help": {
+          "en": "App id, a colon, words separated by commas; apps separated by ';'. Example: com.microsoft.VSCode: rquickjs, Tokio; com.apple.Terminal: kubectl. On macOS an app's id is what `osascript -e 'id of app \"Terminal\"'` prints; on X11 its window class",
+          "zh-CN": "应用 id、冒号、逗号分隔的词；多个应用用分号隔开。例如 com.microsoft.VSCode: rquickjs, Tokio; com.apple.Terminal: kubectl。macOS 上应用 id 可用 `osascript -e 'id of app \"Terminal\"'` 查到；X11 上是窗口类名"
+        },
+        "kind": "text"
+      }
+    ]
+  }
+}

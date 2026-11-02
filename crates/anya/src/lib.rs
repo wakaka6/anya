@@ -4,6 +4,7 @@
 
 pub mod builtin;
 pub mod cli;
+pub mod community;
 pub mod doctor;
 pub mod indicator;
 pub mod install;

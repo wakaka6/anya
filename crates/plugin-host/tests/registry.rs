@@ -12,7 +12,7 @@ use anya_plugin_host::{
 use common::{index, release, serve, tgz, tgz_raw};
 use serde_json::{Value, json};
 
-const PACKAGE_JSON: &[u8] = br#"{"name":"echo","version":"1.0.0","anya":{"engine":"./engine.js"}}"#;
+const PACKAGE_JSON: &[u8] = br#"{"name":"echo","version":"1.0.0","anya":{"host":"./engine.js"}}"#;
 
 fn package() -> Vec<u8> {
     tgz(&[
@@ -123,13 +123,16 @@ async fn install_enable_disable_remove_keep_plugins_json_in_step() {
             version: "1.0.0".to_owned(),
             integrity: anya_plugin_host::integrity_of(&body),
             enabled: false,
+            provides: vec![anya_protocol::Provide::Engine],
+            host: true,
         }
     );
     assert_eq!(
         record(&dir),
         json!({"installed": [{
             "id": "echo", "version": "1.0.0",
-            "integrity": anya_plugin_host::integrity_of(&body), "enabled": false
+            "integrity": anya_plugin_host::integrity_of(&body), "enabled": false,
+            "provides": ["engine"], "host": true
         }]})
     );
     // `package/` is dropped: the package.json sits at the version's root.
@@ -187,7 +190,8 @@ async fn a_release_that_cannot_run_here_is_refused_before_download() {
     for (field, value, wanted) in [
         ("protocol", json!(2), "plugin protocol"),
         ("anya", json!(">=9.0.0"), "needs Anya"),
-        ("kind", json!("sink"), "not an engine"),
+        ("provides", json!([]), "provides nothing"),
+        ("provides", json!(["engine", "sink"]), "does not know"),
     ] {
         let mut doc = index("echo", "1.0.0", url, &body);
         doc["plugins"][0]["versions"][0][field] = value;
@@ -236,7 +240,7 @@ async fn updating_is_an_install_of_the_new_version_and_waits_for_enable() {
     let v2 = tgz(&[
         (
             "package.json",
-            br#"{"name":"echo","version":"1.1.0","anya":{"engine":"./engine.js"}}"#,
+            br#"{"name":"echo","version":"1.1.0","anya":{"host":"./engine.js"}}"#,
         ),
         ("engine.js", b"export default 2;"),
     ]);

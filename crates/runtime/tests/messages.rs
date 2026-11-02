@@ -20,6 +20,7 @@ fn every_invalid_value_has_a_message_with_its_values() {
             address: "A1".into(),
             detail: "D1".into(),
         },
+        Invalid::BadPluginId { id: "P1".into() },
     ];
     for tag in LOCALES {
         let catalog = Catalog::new(tag);

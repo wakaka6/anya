@@ -13,9 +13,9 @@ use anya_core::audio::{Device, DeviceKind};
 use anya_i18n::Catalog;
 use anya_protocol::{Manifest, Scope, Source, Text};
 use anya_runtime::{
-    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
-    InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient, Pairing, PluginIssue,
-    PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
+    BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
+    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient,
+    Pairing, PluginIssue, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
 };
 
 struct Fake {
@@ -52,6 +52,7 @@ impl Control for Fake {
             .to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             config_path: PathBuf::from("~/.config/anya/config.toml"),
+            replacements_path: PathBuf::from("~/.config/anya/replacements.txt"),
         }
     }
 
@@ -150,6 +151,14 @@ impl Control for Fake {
         Err(ClientIssue::Write {
             detail: "no paired clients".to_owned(),
         })
+    }
+
+    fn hooks(&self) -> Vec<HookInfo> {
+        Vec::new()
+    }
+
+    fn builtin_hooks(&self) -> Vec<BuiltinHooks> {
+        Vec::new()
     }
 
     fn plugins(&self) -> Vec<InstalledPlugin> {

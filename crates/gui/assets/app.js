@@ -778,7 +778,7 @@ function logRow(e, open, redraw) {
       el("span", { class: "chip tag static debug" }, t("gui.activity.tag_debug")),
       el("span", { class: "text mono" }, e.text));
   }
-  if (e.kind === "notice") {
+  if (e.kind === "notice" || e.kind === "hook") {
     return el("li", { class: e.level }, time, el("span", { class: "text" }, e.text));
   }
   const tag = el("span", { class: "chip tag static" },
@@ -1696,18 +1696,101 @@ let freshPlugin = null;
 let pluginViews = null;
 let pluginError = null;
 
+// The words of each kind a plugin provides, as the server names it.
+const PROVIDE_NAME = {
+  engine: "gui.provide.engine",
+  context: "gui.provide.context",
+  transform: "gui.provide.transform",
+  action: "gui.provide.action",
+};
+const PROVIDE_GETS = {
+  engine: "gui.plugins.gets_engine",
+  context: "gui.plugins.gets_context",
+  transform: "gui.plugins.gets_transform",
+  action: "gui.plugins.gets_action",
+};
+const HOOK_RUNS = {
+  builtin: "gui.hooks.runs_builtin",
+  inline: "gui.hooks.runs_inline",
+  host: "gui.hooks.runs_host",
+};
+
+// What a plugin's kinds receive, then where it runs and what it asks for:
+// the words of the install and enable consent, and the lines of an installed
+// row. A plugin that has not loaded yet lists no kinds.
+function disclosure(p) {
+  const kinds = p.provides.length
+    ? p.provides.map((k) => el("li", {}, t(PROVIDE_GETS[k])))
+    : [el("li", {}, t("gui.plugins.provides_none"))];
+  return [
+    ...kinds,
+    el("li", {}, t(p.host ? "gui.plugins.runs_host" : "gui.plugins.runs_inline")),
+    ...(p.host ? [el("li", {}, tf("gui.plugins.permissions", {
+      list: p.permissions.length ? p.permissions.join(", ") : t("gui.plugins.no_permissions"),
+    }))] : []),
+  ];
+}
+
+function provideChips(p) {
+  return p.provides.map((k) => el("span", { class: "chip tag static" }, t(PROVIDE_NAME[k])));
+}
+
+// The hook settings of one plugin, saved under `[plugins.settings.<id>]`.
+function pluginSettings(p) {
+  const saved = () => cfg().plugins.settings?.[p.id] ?? {};
+  const values = Object.fromEntries(p.fields.map((f) => [f.key, saved()[f.key] ?? ""]));
+  const collect = () => {
+    const next = {};
+    for (const f of p.fields) {
+      const v = String(values[f.key]).trim();
+      if (v) next[f.key] = v;
+    }
+    return next;
+  };
+  const rows = p.fields.map((f) => el("div", { class: "field" },
+    el("span", { class: "fl" }, f.label),
+    el("span", { class: "fv" },
+      fieldInput(f, values[f.key], (v) => { values[f.key] = v; }, (v) => {
+        values[f.key] = v;
+        const next = collect();
+        commit((c) => {
+          c.plugins.settings = c.plugins.settings ?? {};
+          if (Object.keys(next).length) c.plugins.settings[p.id] = next;
+          else delete c.plugins.settings[p.id];
+        }, { field: "plugins.settings" });
+      }),
+      f.help ? el("small", {}, f.help) : null)));
+  return el("details", { class: "plugin-settings" },
+    el("summary", {}, t("gui.plugins.settings")),
+    ...rows,
+    errorSlot("plugins.settings"));
+}
+
 function installedItem(p) {
   const row = el("div", { class: p.id === freshPlugin ? "row plugin fresh" : "row plugin" },
     tileFor(p.id, p.name),
     el("div", { class: "svc" },
       el("b", { title: p.name }, p.name, el("span", { class: "ver" }, `v${p.version}`)),
-      el("small", { class: p.enabled ? `state-${p.state}` : "" }, p.enabled ? p.line : t("gui.plugins.disabled_note"))),
+      el("small", { class: p.enabled ? `state-${p.state}` : "" }, p.enabled ? p.line : t("gui.plugins.disabled_note")),
+      el("div", { class: "tags" },
+        ...provideChips(p),
+        el("span", { class: "chip tag static" }, t(p.host ? "gui.plugins.runs_host" : "gui.plugins.runs_inline")))),
     el("input", {
       type: "checkbox",
       class: "switch",
       checked: p.enabled,
       "aria-label": t("gui.plugins.enabled"),
-      onchange: (ev) => pluginCall("/api/plugins/enable", { id: p.id, on: ev.target.checked }),
+      onchange: (ev) => {
+        if (!ev.target.checked) return pluginCall("/api/plugins/enable", { id: p.id, on: false });
+        // Enabling is where it starts receiving: say what first.
+        ev.target.checked = false;
+        consent(p, {
+          title: tf("gui.plugins.enable_title", { name: p.name }),
+          intro: t("gui.plugins.enable_intro"),
+          label: t("gui.plugins.enable"),
+          run: () => pluginCall("/api/plugins/enable", { id: p.id, on: true }),
+        }, ev.target);
+      },
     }),
     el("button", {
       type: "button",
@@ -1718,7 +1801,7 @@ function installedItem(p) {
         setTimeout(() => pluginCall("/api/plugins/remove", { id: p.id }), reducedMotion() ? 0 : 200);
       },
     }, t("gui.remove")));
-  return row;
+  return el("div", { class: "plugin-item" }, row, p.fields.length ? pluginSettings(p) : null);
 }
 
 async function pluginCall(path, body) {
@@ -1727,12 +1810,15 @@ async function pluginCall(path, body) {
     plugins = (await api(path, body)).plugins;
     state.plugins = plugins;
     // A plugin's engine comes and goes with its switch.
-    state.engines = (await api("/api/state")).engines;
+    const fresh = await api("/api/state");
+    state.engines = fresh.engines;
+    state.hooks = fresh.hooks;
   } catch (err) {
     pluginError = err.message;
   }
   pluginViews?.installed(true);
   pluginViews?.market();
+  pluginViews?.hooks();
 }
 
 function marketCard(p) {
@@ -1750,7 +1836,11 @@ function marketCard(p) {
       }, t(have ? "gui.plugins.installed" : busy ? "gui.plugins.installing" : "gui.plugins.install"))),
     el("p", { class: "desc" }, p.description),
     el("div", { class: "tags" },
-      el("span", { class: "chip tag static" }, t(p.streaming ? "gui.engine.streaming" : "gui.engine.batch")),
+      p.provides.includes("engine")
+        ? el("span", { class: "chip tag static" }, t(p.streaming ? "gui.engine.streaming" : "gui.engine.batch"))
+        : null,
+      ...provideChips(p),
+      el("span", { class: "chip tag static" }, t(p.host ? "gui.plugins.runs_host" : "gui.plugins.runs_inline")),
       ...p.permissions.map((x) => el("span", { class: "chip tag static" }, x))));
 }
 
@@ -1764,6 +1854,65 @@ async function loadMarket() {
   }
   pluginViews?.installed();
   pluginViews?.market();
+}
+
+// The hooks a dictation runs, in order, with the built-in pieces that serve
+// them. Context and transform hooks move; the order is `[plugins] order`.
+function hooksSection() {
+  const box = el("div", { class: "group" });
+  const switches = el("div", { class: "group" });
+  const draw = () => {
+    const { run, builtin } = state.hooks;
+    const ids = [...new Set(run.filter((h) => h.movable).map((h) => h.plugin))];
+    const move = (id, by) => {
+      const next = [...ids];
+      const at = next.indexOf(id);
+      [next[at], next[at + by]] = [next[at + by], next[at]];
+      commit((c) => { c.plugins.order = next; }, { field: "plugins.order" }).then(() => { draw(); });
+    };
+    box.replaceChildren(...(run.length ? run.map((h) => {
+      const at = ids.indexOf(h.plugin);
+      const arrow = (by, glyph, key) => el("button", {
+        type: "button",
+        class: "ghost",
+        disabled: !h.movable || at + by < 0 || at + by >= ids.length,
+        title: tf(key, { name: h.name }),
+        "aria-label": tf(key, { name: h.name }),
+        onclick: () => move(h.plugin, by),
+      }, glyph);
+      return el("div", { class: "row hook" },
+        el("div", { class: "svc" }, el("b", {}, h.name),
+          el("small", {}, t(PROVIDE_NAME[h.hook]), " · ", t(HOOK_RUNS[h.runs]))),
+        arrow(-1, "↑", "gui.hooks.up"),
+        arrow(1, "↓", "gui.hooks.down"));
+    }) : [el("div", { class: "empty-line" }, t("gui.hooks.empty"))]));
+    switches.replaceChildren(...builtin.map((b) => {
+      const sw = el("input", { type: "checkbox", class: "switch", checked: b.on, "aria-label": tf("gui.hooks.switch", { name: b.name }) });
+      sw.addEventListener("change", async () => {
+        await commit((c) => { c.plugins.builtin = { ...(c.plugins.builtin ?? {}), [b.id]: sw.checked }; }, {
+          revert: () => { sw.checked = b.on; },
+        });
+        const fresh = await api("/api/state");
+        state.hooks = fresh.hooks;
+        draw();
+      });
+      return row(b.name, b.help, sw);
+    }), row(t("gui.hooks.replacements_file"), t("gui.hooks.replacements_file_help"), pathLine(state.info.replacements_path), { stack: true }));
+  };
+  draw();
+  return {
+    draw,
+    nodes: [
+      el("section", { class: "section" },
+        el("h2", {}, t("gui.hooks.title")),
+        box,
+        errorSlot("plugins.order"),
+        el("p", { class: "foot-note" }, t("gui.hooks.intro"))),
+      el("section", { class: "section" },
+        el("h2", {}, t("gui.hooks.builtin_group")),
+        switches),
+    ],
+  };
 }
 
 function buildPlugins() {
@@ -1808,7 +1957,8 @@ function buildPlugins() {
         : el("div", { class: "calm" }, el("p", {}, t(marketState.list.length ? "gui.market.no_match" : "gui.plugins.market_empty"))));
     }
   };
-  pluginViews = { installed: drawInstalled, market: drawMarket };
+  const hooks = hooksSection();
+  pluginViews = { installed: drawInstalled, market: drawMarket, hooks: hooks.draw };
   live = (data) => {
     plugins = data.plugins;
     drawInstalled();
@@ -1822,6 +1972,7 @@ function buildPlugins() {
       el("h2", {}, t("gui.plugins.installed_group")),
       installedBox,
       errorLine),
+    ...hooks.nodes,
     el("section", { class: "section" },
       el("h2", {}, t("gui.plugins.market"), el("span", { class: "spacer" }), search),
       marketBox,
@@ -1865,37 +2016,46 @@ document.addEventListener("keydown", (ev) => {
   else if (!ev.shiftKey && at === last) { ev.preventDefault(); first.focus(); }
 });
 
-// The consent: what an enabled plugin receives, and what it asks for.
-function confirmInstall(p, opener) {
-  pendingInstall = p;
-  $("installTitle").textContent = tf("gui.plugins.install_title", { name: p.name });
-  const permissions = p.permissions.length ? p.permissions.join(", ") : t("gui.plugins.no_permissions");
+// The consent, for installing and for enabling: what the plugin receives per
+// kind it provides, where it runs and what it asks for.
+function consent(p, { title, intro, label, run }, opener) {
+  pendingInstall = run;
+  $("installTitle").textContent = title;
+  $("installConfirm").textContent = label;
   $("installBody").replaceChildren(
     el("p", { class: "sheet-sub" }, p.description),
-    el("p", { class: "sheet-sub" }, t("gui.plugins.install_intro")),
-    el("ul", { class: "perms" },
-      el("li", {}, t("gui.plugins.receives_audio")),
-      el("li", {}, tf("gui.plugins.permissions", { list: permissions }))));
+    el("p", { class: "sheet-sub" }, intro),
+    el("ul", { class: "perms" }, ...disclosure(p)));
   showSheet("install", opener);
   $("installConfirm").focus();
 }
 
-async function install() {
-  const p = pendingInstall;
+function confirmInstall(p, opener) {
+  consent(p, {
+    title: tf("gui.plugins.install_title", { name: p.name }),
+    intro: t("gui.plugins.install_intro"),
+    label: t("gui.plugins.install"),
+    run: async () => {
+      installing = p.id;
+      pluginViews?.market();
+      freshPlugin = p.id;
+      await pluginCall("/api/plugins/install", { id: p.id });
+      freshPlugin = null;
+      installing = null;
+      pluginViews?.market();
+    },
+  }, opener);
+}
+
+async function confirmed() {
+  const run = pendingInstall;
   pendingInstall = null;
   hideSheet("install");
-  if (!p) return;
-  installing = p.id;
-  pluginViews?.market();
-  freshPlugin = p.id;
-  await pluginCall("/api/plugins/install", { id: p.id });
-  freshPlugin = null;
-  installing = null;
-  pluginViews?.market();
+  await run?.();
 }
 
 $("installCancel").addEventListener("click", () => { pendingInstall = null; hideSheet("install"); });
-$("installConfirm").addEventListener("click", install);
+$("installConfirm").addEventListener("click", confirmed);
 $("install").addEventListener("click", (ev) => { if (ev.target === ev.currentTarget) { pendingInstall = null; hideSheet("install"); } });
 $("install").addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); pendingInstall = null; hideSheet("install"); } });
 

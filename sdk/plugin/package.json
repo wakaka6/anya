@@ -1,7 +1,7 @@
 {
   "name": "@wakaka6/anya-plugin",
   "version": "1.0.0",
-  "description": "SDK for Anya engine plugins.",
+  "description": "SDK for Anya plugins: engines and dictation hooks.",
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",

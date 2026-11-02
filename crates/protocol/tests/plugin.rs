@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use anya_protocol::{
-    ErrorCode, HostCommand, HostEvent, INDEX_VERSION, Index, IndexPlugin, IndexVersion, LogLevel,
-    Manifest, PluginKind, Recognition, Text, Utterance,
+    ErrorCode, HookCall, HostCommand, HostEvent, INDEX_VERSION, Index, IndexPlugin, IndexVersion,
+    Limits, LogLevel, Manifest, PluginPackage, Provide, Recognition, Source, Text, Utterance,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -30,17 +30,27 @@ fn host_events() {
     pinned(
         HostEvent::Loaded {
             plugin: "echo".to_owned(),
-            manifest: Manifest {
+            engine: Some(Manifest {
                 id: "echo".to_owned(),
                 title: "Echo".into(),
                 blurb: Text::default(),
                 docs: None,
                 streaming: true,
                 fields: Vec::new(),
-            },
+            }),
+            provides: vec![Provide::Engine, Provide::Action],
         },
         json!({"type": "loaded", "plugin": "echo",
-               "manifest": {"id": "echo", "title": "Echo", "streaming": true, "fields": []}}),
+               "engine": {"id": "echo", "title": "Echo", "streaming": true, "fields": []},
+               "provides": ["engine", "action"]}),
+    );
+    pinned(
+        HostEvent::Loaded {
+            plugin: "polish".to_owned(),
+            engine: None,
+            provides: vec![Provide::Transform],
+        },
+        json!({"type": "loaded", "plugin": "polish", "provides": ["transform"]}),
     );
     pinned(
         HostEvent::LoadFailed {
@@ -91,6 +101,46 @@ fn host_events() {
             message: "slow".to_owned(),
         },
         json!({"type": "log", "plugin": "echo", "level": "warn", "message": "slow"}),
+    );
+    pinned(
+        HostEvent::Pong { seq: 7 },
+        json!({"type": "pong", "seq": 7}),
+    );
+    pinned(
+        HostEvent::ContextDone {
+            call: "c1".to_owned(),
+            hotwords: vec!["rquickjs".to_owned()],
+            language: Some("en".to_owned()),
+        },
+        json!({"type": "context_done", "call": "c1", "hotwords": ["rquickjs"], "language": "en"}),
+    );
+    pinned(
+        HostEvent::ContextDone {
+            call: "c1".to_owned(),
+            hotwords: Vec::new(),
+            language: None,
+        },
+        json!({"type": "context_done", "call": "c1"}),
+    );
+    pinned(
+        HostEvent::Transformed {
+            call: "c2".to_owned(),
+            text: "Hello.".to_owned(),
+        },
+        json!({"type": "transformed", "call": "c2", "text": "Hello."}),
+    );
+    pinned(
+        HostEvent::ActionDone {
+            call: "c3".to_owned(),
+        },
+        json!({"type": "action_done", "call": "c3"}),
+    );
+    pinned(
+        HostEvent::CallFailed {
+            call: "c3".to_owned(),
+            detail: "vault not found".to_owned(),
+        },
+        json!({"type": "call_failed", "call": "c3", "detail": "vault not found"}),
     );
 }
 
@@ -146,6 +196,62 @@ fn host_commands() {
         json!({"type": "close", "session": "s1"}),
     );
     pinned(HostCommand::Shutdown, json!({"type": "shutdown"}));
+    pinned(
+        HostCommand::Ping { seq: 7 },
+        json!({"type": "ping", "seq": 7}),
+    );
+    let about = HookCall {
+        session: Some("s1".to_owned()),
+        source: Source::Dictation,
+        app: Some("com.apple.Notes".to_owned()),
+        settings: BTreeMap::from([("vault".to_owned(), "~/notes".to_owned())]),
+    };
+    pinned(
+        HostCommand::Context {
+            call: "c1".to_owned(),
+            plugin: "code".to_owned(),
+            about: HookCall {
+                session: None,
+                ..about.clone()
+            },
+            language: Some("zh-CN".to_owned()),
+            hotwords: vec!["Anya".to_owned()],
+        },
+        json!({"type": "context", "call": "c1", "plugin": "code", "source": "dictation",
+               "app": "com.apple.Notes", "settings": {"vault": "~/notes"},
+               "language": "zh-CN", "hotwords": ["Anya"]}),
+    );
+    pinned(
+        HostCommand::Transform {
+            call: "c2".to_owned(),
+            plugin: "polish".to_owned(),
+            text: "hello".to_owned(),
+            about: about.clone(),
+        },
+        json!({"type": "transform", "call": "c2", "plugin": "polish", "text": "hello",
+               "session": "s1", "source": "dictation", "app": "com.apple.Notes",
+               "settings": {"vault": "~/notes"}}),
+    );
+    pinned(
+        HostCommand::Action {
+            call: "c3".to_owned(),
+            plugin: "notes".to_owned(),
+            text: "Hello.".to_owned(),
+            about: HookCall {
+                app: None,
+                settings: BTreeMap::new(),
+                ..about
+            },
+        },
+        json!({"type": "action", "call": "c3", "plugin": "notes", "text": "Hello.",
+               "session": "s1", "source": "dictation", "settings": {}}),
+    );
+    pinned(
+        HostCommand::Cancel {
+            call: "c2".to_owned(),
+        },
+        json!({"type": "cancel", "call": "c2"}),
+    );
 }
 
 // A newer host's event or Anya's command reads as Unknown, so the side that
@@ -158,8 +264,8 @@ fn unknown_types_are_skipped() {
     assert_eq!(command, HostCommand::Unknown);
     let level: LogLevel = serde_json::from_str(r#""trace""#).expect("decode");
     assert_eq!(level, LogLevel::Unknown);
-    let kind: PluginKind = serde_json::from_str(r#""sink""#).expect("decode");
-    assert_eq!(kind, PluginKind::Unknown);
+    let kind: Provide = serde_json::from_str(r#""trigger""#).expect("decode");
+    assert_eq!(kind, Provide::Unknown);
 }
 
 #[test]
@@ -176,7 +282,8 @@ fn index() {
                 "integrity": "sha512-AAAA",
                 "anya": ">=0.1.0",
                 "protocol": 1,
-                "kind": "engine",
+                "provides": ["engine", "transform"],
+                "host": true,
                 "streaming": true,
                 "permissions": ["network:api.example.org"]
             }]
@@ -195,7 +302,8 @@ fn index() {
                     integrity: "sha512-AAAA".to_owned(),
                     anya: ">=0.1.0".to_owned(),
                     protocol: 1,
-                    kind: PluginKind::Engine,
+                    provides: vec![Provide::Engine, Provide::Transform],
+                    host: true,
                     streaming: true,
                     permissions: vec!["network:api.example.org".to_owned()],
                 }],
@@ -215,4 +323,33 @@ fn index_ignores_new_fields() {
     }))
     .expect("decode");
     assert_eq!(index.plugins.len(), 1);
+}
+
+// The `anya` field of package.json, as plugin authors write it.
+#[test]
+fn plugin_package() {
+    let package: PluginPackage = serde_json::from_value(json!({
+        "id": "polish",
+        "inline": "./inline.js",
+        "host": "./host.js",
+        "compat": ">=0.1.0",
+        "protocol": 1,
+        "permissions": ["network:api.openai.com"],
+        "fields": [{"key": "api_key", "label": "API key", "kind": "secret", "required": true}],
+        "limits": {"transform_ms": 3000}
+    }))
+    .expect("decode");
+    assert_eq!(package.inline.as_deref(), Some("./inline.js"));
+    assert_eq!(package.host.as_deref(), Some("./host.js"));
+    assert_eq!(package.fields[0].key, "api_key");
+    assert_eq!(
+        package.limits,
+        Limits {
+            transform_ms: Some(3000),
+            ..Limits::default()
+        }
+    );
+    // A misspelt budget is an error, not a budget silently left at its default.
+    let bad = serde_json::from_value::<PluginPackage>(json!({"limits": {"transfrom_ms": 1}}));
+    assert!(bad.is_err());
 }

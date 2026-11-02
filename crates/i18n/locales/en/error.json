@@ -14,6 +14,7 @@
   "error.invalid.scale": "The overlay scale must be a positive number",
   "error.invalid.engine": "Unknown recognition engine: {id}",
   "error.invalid.address": "Cannot listen on {address}: {detail}",
+  "error.invalid.plugin_id": "\"{id}\" in [plugins] is not a usable plugin id",
   "error.plugin.fetch": "Cannot fetch {url}: {reason}",
   "error.plugin.index": "The plugin registry's index is invalid: {reason}",
   "error.plugin.index_version": "The plugin registry's index has format version {found}; this Anya reads version {supported}",

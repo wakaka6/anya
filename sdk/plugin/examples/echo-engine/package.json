@@ -6,7 +6,7 @@
   "main": "engine.js",
   "anya": {
     "id": "echo",
-    "engine": "./engine.js",
+    "host": "./engine.js",
     "compat": ">=0.0.0",
     "protocol": 1,
     "permissions": []

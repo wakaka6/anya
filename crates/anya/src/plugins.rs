@@ -9,7 +9,7 @@ use anya_i18n::Catalog;
 use anya_plugin_host::{
     BunPath, DEFAULT_INDEX_URL, Installed, PluginDirs, PluginError, Registry, Store,
 };
-use anya_protocol::{Index, IndexPlugin, IndexVersion};
+use anya_protocol::{Index, IndexPlugin, IndexVersion, Provide};
 use anya_runtime::PluginIssue;
 
 use crate::builtin;
@@ -120,8 +120,8 @@ pub fn latest<'a>(index: &'a Index, id: &str) -> Option<&'a IndexVersion> {
 }
 
 /// Installs `id` (at `version`, else its newest release) from the index at
-/// `url`, disabled. Provisions Bun first when none is usable; `bun_download`
-/// is called just before a download starts.
+/// `url`, disabled. Provisions Bun first when the release has a host entry
+/// and none is usable; `bun_download` is called just before a download starts.
 pub async fn install(
     dirs: &PluginDirs,
     url: &str,
@@ -138,7 +138,7 @@ pub async fn install(
         })?,
     }
     .clone();
-    if BunPath::detect(&dirs.runtime).await.is_none() {
+    if release.host && BunPath::detect(&dirs.runtime).await.is_none() {
         bun_download();
         BunPath::provision(&dirs.runtime).await?;
     }
@@ -167,13 +167,63 @@ fn permissions(release: &IndexVersion, c: &Catalog) -> String {
     }
 }
 
-fn mode(release: &IndexVersion, c: &Catalog) -> String {
-    c.t(if release.streaming {
-        "cli.plugin.streaming"
+/// What a release provides, in words; an engine says how it listens when
+/// `streaming` is known.
+fn provided(provides: &[Provide], streaming: Option<bool>, c: &Catalog) -> String {
+    if provides.is_empty() {
+        return c.t("cli.plugin.provide.unknown").to_owned();
+    }
+    let words: Vec<String> = provides
+        .iter()
+        .map(|p| match p {
+            Provide::Engine => {
+                let engine = c.t("cli.plugin.provide.engine");
+                match streaming {
+                    Some(true) => format!("{engine} ({})", c.t("cli.plugin.streaming")),
+                    Some(false) => format!("{engine} ({})", c.t("cli.plugin.batch")),
+                    None => engine.to_owned(),
+                }
+            }
+            Provide::Context => c.t("cli.plugin.provide.context").to_owned(),
+            Provide::Transform => c.t("cli.plugin.provide.transform").to_owned(),
+            Provide::Action => c.t("cli.plugin.provide.action").to_owned(),
+            Provide::Unknown => c.t("cli.plugin.provide.unknown").to_owned(),
+        })
+        .collect();
+    words.join(c.t("cli.plugin.provide.join"))
+}
+
+/// Whether a plugin needs Bun, in words.
+fn runs(host: bool, c: &Catalog) -> &str {
+    c.t(if host {
+        "cli.plugin.runs.host"
     } else {
-        "cli.plugin.batch"
+        "cli.plugin.runs.inline"
     })
-    .to_owned()
+}
+
+/// What enabling a release gives it, one sentence each.
+fn notes(release: &IndexVersion, c: &Catalog) -> Vec<String> {
+    let has = |p: Provide| release.provides.contains(&p);
+    let mut notes = Vec::new();
+    if has(Provide::Engine) {
+        notes.push(c.t("cli.plugin.note.engine").to_owned());
+    }
+    if has(Provide::Context) {
+        notes.push(c.t("cli.plugin.note.context").to_owned());
+    }
+    if has(Provide::Transform) || has(Provide::Action) {
+        notes.push(c.t("cli.plugin.note.text").to_owned());
+    }
+    notes.push(
+        c.t(if release.host {
+            "cli.plugin.note.host"
+        } else {
+            "cli.plugin.note.inline"
+        })
+        .to_owned(),
+    );
+    notes
 }
 
 /// Runs `action` against the plugin store under `data`, printing to `out` in
@@ -224,7 +274,11 @@ pub async fn run(
                             ("id", &plugin.id),
                             ("version", &release.version),
                             ("name", name),
-                            ("mode", &mode(release, c)),
+                            (
+                                "provides",
+                                &provided(&release.provides, Some(release.streaming), c)
+                            ),
+                            ("runs", runs(release.host, c)),
                             ("permissions", &permissions(release, c)),
                         ],
                     )
@@ -264,7 +318,10 @@ pub async fn run(
                 )
             )
             .map_err(io)?;
-            writeln!(out, "{}", c.tf("cli.plugin.audio_warning", &[("id", &id)])).map_err(io)?;
+            for note in notes(&release, c) {
+                writeln!(out, "{note}").map_err(io)?;
+            }
+            writeln!(out, "{}", c.tf("cli.plugin.enable_hint", &[("id", &id)])).map_err(io)?;
         }
         Action::Enable(id) => {
             store.enable(&id).map_err(failed)?;
@@ -332,12 +389,14 @@ pub async fn run(
                             ("id", &plugin.id),
                             ("version", &plugin.version),
                             ("state", state),
+                            ("provides", &provided(&plugin.provides, None, c)),
+                            ("runs", runs(plugin.host, c)),
                         ],
                     )
                 )
                 .map_err(io)?;
             }
-            if installed.iter().any(|p| p.enabled) && BunPath::detect(&dirs.runtime).await.is_none()
+            if store.needs_bun().unwrap_or(false) && BunPath::detect(&dirs.runtime).await.is_none()
             {
                 writeln!(out, "{}", c.t("cli.plugin.list.no_bun")).map_err(io)?;
             }
@@ -358,8 +417,8 @@ mod tests {
     fn the_newest_release_is_the_last_one_listed() {
         let i = index(
             r#"{"version":1,"plugins":[{"id":"a","name":"A","versions":[
-            {"version":"1.0.0","artifact":"x","integrity":"y","anya":"*","protocol":1,"kind":"engine"},
-            {"version":"1.1.0","artifact":"x","integrity":"y","anya":"*","protocol":1,"kind":"engine"}]}]}"#,
+            {"version":"1.0.0","artifact":"x","integrity":"y","anya":"*","protocol":1,"provides":["engine"],"host":true},
+            {"version":"1.1.0","artifact":"x","integrity":"y","anya":"*","protocol":1,"provides":["engine"],"host":true}]}]}"#,
         );
         assert_eq!(latest(&i, "a").map(|v| v.version.as_str()), Some("1.1.0"));
         assert!(latest(&i, "b").is_none());
@@ -426,6 +485,37 @@ mod tests {
             assert!(wanted.iter().any(|p| p.id == *id && p.on));
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_list_says_what_each_plugin_provides_and_whether_it_needs_bun() {
+        let data = std::env::temp_dir().join(format!("anya-list-{}", std::process::id()));
+        std::fs::create_dir_all(data.join("plugins")).expect("dir");
+        std::fs::write(
+            data.join("plugins/plugins.json"),
+            r#"{"installed":[
+            {"id":"polish","version":"1.0.0","integrity":"x","enabled":false,"provides":["transform","action"],"host":true},
+            {"id":"caps","version":"1.0.0","integrity":"x","enabled":false,"provides":["context","transform"],"host":false}]}"#,
+        )
+        .expect("record");
+        let mut out = Vec::new();
+        run(
+            Action::List,
+            &Config::default(),
+            std::path::Path::new("/unused/config.toml"),
+            &data,
+            &Catalog::new("en"),
+            &mut out,
+        )
+        .await
+        .expect("list");
+        let out = String::from_utf8(out).expect("utf8");
+        assert!(out.contains("[transform, action]  runs in Bun"), "{out}");
+        assert!(
+            out.contains("[context, transform]  inline only, no Bun"),
+            "{out}"
+        );
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]

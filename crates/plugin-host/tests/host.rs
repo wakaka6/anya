@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use anya_core::audio::Chunk;
 use anya_core::engine::{Engine, SessionParams};
+use anya_core::hooks::{ActionHook, HookError, Runs, TransformHook};
 use anya_core::hub::{Hub, HubInfo, Subscription};
 use anya_plugin_host::{
     BunPath, MIN_BUN_VERSION, PluginDirs, PluginHost, PluginState, Registry, Store,
 };
-use anya_protocol::{EndReason, ErrorCode, Frame, Source, contract};
+use anya_protocol::{EndReason, ErrorCode, Frame, Provide, Source, contract};
 use common::{example, index, tgz, tgz_of_dir};
 use serde_json::json;
 
@@ -32,7 +33,7 @@ fn loud() -> Chunk {
 /// A plugin package whose engine is `engine_js`.
 fn package(name: &str, engine_js: &str) -> Vec<u8> {
     let package_json = json!({"name": name, "version": "1.0.0", "type": "module",
-                              "anya": {"engine": "./engine.js"}})
+                              "anya": {"host": "./engine.js"}})
     .to_string();
     tgz(&[
         ("package.json", package_json.as_bytes()),
@@ -211,6 +212,17 @@ await new Promise(() => {});
 export default defineEngine({ manifest: { id: "stuck", title: "Stuck", streaming: false }, open() {} });
 "#;
 
+// Loops on its first audio without ever yielding, writing all the while.
+const CHATTY: &str = r#"
+import { defineEngine } from "@wakaka6/anya-plugin";
+export default defineEngine({
+  manifest: { id: "chatty", title: "Chatty", streaming: false },
+  open(_, session) {
+    session.on("audio", () => { for (;;) console.log("busy"); });
+  },
+});
+"#;
+
 #[tokio::test]
 async fn a_plugin_exception_ends_only_its_session_and_console_output_stays_off_the_protocol() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -350,6 +362,31 @@ async fn a_stuck_plugin_does_not_hold_up_the_others() {
 }
 
 #[tokio::test]
+async fn a_plugin_that_loops_while_writing_is_killed_and_its_session_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(&dir, &[("chatty", package("chatty", CHATTY))]).await;
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await);
+    let mut stalls = host.stalls();
+
+    let session = hub().open(
+        &*engine(&host, "chatty"),
+        Source::Dictation,
+        SessionParams::default(),
+    );
+    assert!(session.send(loud()).await);
+    let stalled = tokio::time::timeout(Duration::from_secs(15), stalls.recv())
+        .await
+        .expect("the watchdog kills it")
+        .expect("stalls");
+    assert_eq!(stalled, "chatty");
+    let outcome = session.finish(Duration::from_secs(5)).await;
+    assert_eq!(outcome.reason, EndReason::Error);
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn without_a_running_host_a_session_fails_at_once() {
     let dir = tempfile::tempdir().expect("tempdir");
     let Some(bun) = bun(&dir).await else { return };
@@ -377,5 +414,281 @@ async fn without_a_running_host_a_session_fails_at_once() {
         (outcome.reason, outcome.error),
         (EndReason::Error, Some(ErrorCode::Connect))
     );
+    host.shutdown().await;
+}
+
+fn call(settings: &[(&str, &str)]) -> anya_core::hooks::Call {
+    anya_core::hooks::Call {
+        session: None,
+        source: Source::Dictation,
+        app: None,
+        settings: settings
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect(),
+    }
+}
+
+fn transform_of(host: &PluginHost, id: &str) -> std::sync::Arc<dyn TransformHook> {
+    host.transforms()
+        .into_iter()
+        .find(|h| h.plugin() == id)
+        .unwrap_or_else(|| panic!("no transform {id}: {:?}", host.status()))
+}
+
+fn action_of(host: &PluginHost, id: &str) -> std::sync::Arc<dyn ActionHook> {
+    host.actions()
+        .into_iter()
+        .find(|h| h.plugin() == id)
+        .unwrap_or_else(|| panic!("no action {id}: {:?}", host.status()))
+}
+
+const SPINNER: &str = r#"
+import { defineEngine } from "@wakaka6/anya-plugin";
+export default defineEngine({
+  manifest: { id: "spinner", title: "Spinner", streaming: false },
+  open(_, session) {
+    session.on("audio", () => { while (true) {} });
+  },
+});
+"#;
+
+#[tokio::test]
+async fn a_plugin_that_stops_answering_is_killed_and_the_others_go_on() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(
+        &dir,
+        &[
+            ("spinner", package("spinner", SPINNER)),
+            ("echo-engine", tgz_of_dir(&example("echo-engine"))),
+        ],
+    )
+    .await;
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await, "{:?}", host.status());
+    let mut stalls = host.stalls();
+
+    let hub = hub();
+    let healthy = hub.open(
+        &*engine(&host, "echo"),
+        Source::Dictation,
+        SessionParams::default(),
+    );
+    assert!(healthy.send(loud()).await);
+    let stuck = hub.open(
+        &*engine(&host, "spinner"),
+        Source::Dictation,
+        SessionParams::default(),
+    );
+    let blocked = std::time::Instant::now();
+    assert!(stuck.send(loud()).await);
+
+    let outcome = stuck.finish(Duration::from_secs(10)).await;
+    let took = blocked.elapsed();
+    assert_eq!(outcome.reason, EndReason::Error);
+    assert_eq!(outcome.error, Some(ErrorCode::Upstream));
+    assert_eq!(
+        outcome.detail.as_deref(),
+        Some("the plugin stopped answering")
+    );
+    assert!(took < Duration::from_secs(6), "killed after {took:?}");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), stalls.recv())
+            .await
+            .expect("announced")
+            .expect("open"),
+        "spinner"
+    );
+
+    // The other plugin's session never noticed.
+    assert!(healthy.send(loud()).await);
+    let outcome = healthy.finish(Duration::from_secs(10)).await;
+    assert_eq!(
+        (outcome.reason, outcome.text.as_str()),
+        (EndReason::Final, "2560 bytes")
+    );
+    assert!(stalls.try_recv().is_err(), "only the stuck plugin stalled");
+
+    // The stuck plugin comes back after the backoff.
+    assert!(host.settled(SETTLE).await, "{:?}", host.status());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn host_hooks_answer_and_a_budget_spent_leaves_the_plugin_working() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(&dir, &[("hooks", tgz_of_dir(&example("hooks")))]).await;
+    assert!(store.needs_bun().expect("needs"));
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await, "{:?}", host.status());
+    assert_eq!(
+        host.status()[0].provides,
+        [Provide::Transform, Provide::Action]
+    );
+    assert!(host.engines().is_empty());
+    assert!(host.contexts().is_empty());
+
+    let transform = transform_of(&host, "hooks");
+    assert_eq!(transform.runs(), Runs::Host);
+    let tagged = call(&[("suffix", "!")]);
+    let text = transform
+        .transform("  hello   world ", &tagged, Duration::from_secs(2))
+        .await
+        .expect("answers");
+    assert_eq!(text, "hello world!");
+
+    let spent = std::time::Instant::now();
+    let err = transform
+        .transform("slow", &tagged, Duration::from_millis(200))
+        .await
+        .expect_err("past its budget");
+    assert_eq!(err, HookError::Timeout);
+    assert!(spent.elapsed() < Duration::from_secs(2));
+
+    let text = transform
+        .transform("again", &tagged, Duration::from_secs(2))
+        .await
+        .expect("still works");
+    assert_eq!(text, "again!");
+    assert!(!host.status().iter().any(|s| s.state != PluginState::Ready));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn actions_do_their_work_and_a_throwing_one_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(&dir, &[("hooks", tgz_of_dir(&example("hooks")))]).await;
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await);
+    let action = action_of(&host, "hooks");
+
+    let notes = dir.path().join("notes.txt");
+    let with_file = call(&[("file", &notes.display().to_string())]);
+    action
+        .act("first thing", &with_file, Duration::from_secs(2))
+        .await
+        .expect("writes");
+    action
+        .act("second thing", &with_file, Duration::from_secs(2))
+        .await
+        .expect("appends");
+    assert_eq!(
+        std::fs::read_to_string(&notes).expect("notes"),
+        "first thing\nsecond thing\n"
+    );
+
+    let err = action
+        .act("boom", &with_file, Duration::from_secs(2))
+        .await
+        .expect_err("throws");
+    assert_eq!(err, HookError::Failed("action was told to fail".to_owned()));
+    action
+        .act("after", &with_file, Duration::from_secs(2))
+        .await
+        .expect("the plugin goes on");
+    host.shutdown().await;
+}
+
+const HINTS: &str = r#"
+import { defineContext, defineTransform } from "@wakaka6/anya-plugin";
+export default defineContext({
+  context: ({ settings, hotwords }) => settings.shape === "wrong"
+    ? { hotwords: "not a list" }
+    : { hotwords: [...hotwords.map((w) => w.toUpperCase()), "extra"], language: "fr" },
+});
+export const spare = defineTransform({ transform: (t) => t });
+"#;
+
+#[tokio::test]
+async fn a_context_hook_answers_and_a_wrong_shape_is_a_failure() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(&dir, &[("hints", package("hints", HINTS))]).await;
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await, "{:?}", host.status());
+    let hook = host.contexts().pop().expect("a context hook");
+    assert_eq!(hook.plugin(), "hints");
+
+    let words = ["rust".to_owned()];
+    let extra = hook
+        .context(&call(&[]), Some("en"), &words, Duration::from_secs(2))
+        .await
+        .expect("answers");
+    assert_eq!(extra.hotwords, ["RUST", "extra"]);
+    assert_eq!(extra.language.as_deref(), Some("fr"));
+
+    let err = hook
+        .context(
+            &call(&[("shape", "wrong")]),
+            None,
+            &[],
+            Duration::from_secs(2),
+        )
+        .await
+        .expect_err("wrong shape");
+    assert!(matches!(err, HookError::Failed(_)), "{err:?}");
+    host.shutdown().await;
+}
+
+const TWINS: &str = r#"
+import { defineTransform } from "@wakaka6/anya-plugin";
+export const a = defineTransform({ transform: (t) => t });
+export const b = defineTransform({ transform: (t) => t });
+"#;
+
+#[tokio::test]
+async fn a_package_with_two_hooks_of_one_kind_does_not_load() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(&dir, &[("twins", package("twins", TWINS))]).await;
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await);
+    let status = host.status();
+    assert!(
+        matches!(&status[0].state, PluginState::Failed(why) if why.contains("two transform")),
+        "{status:?}"
+    );
+    assert!(host.transforms().is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_hook_call_with_no_process_is_unavailable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(bun) = bun(&dir).await else { return };
+    let store = install(&dir, &[("hooks", tgz_of_dir(&example("hooks")))]).await;
+    let host = PluginHost::start(store.dirs().clone(), bun);
+    assert!(host.settled(SETTLE).await);
+    let stale = transform_of(&host, "hooks");
+
+    store.disable("hooks").expect("disable");
+    host.reload();
+    assert!(host.settled(SETTLE).await);
+    let err = stale
+        .transform("late", &call(&[]), Duration::from_secs(1))
+        .await
+        .expect_err("no process");
+    assert!(matches!(err, HookError::Unavailable(_)), "{err:?}");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_inline_only_package_starts_no_bun() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = install(&dir, &[("inline", tgz_of_dir(&example("inline")))]).await;
+    assert!(!store.needs_bun().expect("needs"));
+
+    // A Bun that cannot start would show up as a plugin that never loads.
+    let host = PluginHost::start(
+        store.dirs().clone(),
+        BunPath(dir.path().join("no-such-bun")),
+    );
+    assert!(host.settled(Duration::from_secs(5)).await);
+    assert!(host.status().is_empty());
+    assert!(!host.running());
+    assert!(host.transforms().is_empty());
     host.shutdown().await;
 }

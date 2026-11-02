@@ -13,12 +13,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anya_core::hooks::{Budgets, chain_budget};
+use anya_protocol::Limits;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 mod hotwords;
+mod replacements;
 
 pub use hotwords::{HotwordsFile, read_hotwords};
+pub use replacements::{
+    REPLACEMENTS_FILE, Replacement, ReplacementsFile, parse_replacements, read_replacements,
+    replacements_path,
+};
 
 /// The engine used when the config names none.
 pub const DEFAULT_ENGINE: &str = "doubao";
@@ -326,12 +333,77 @@ pub struct Plugins {
     /// (docs/decisions/0012).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub builtin: BTreeMap<String, bool>,
+    /// Plugin ids in the order their context and transform hooks run; those
+    /// not listed run after, by id (docs/decisions/0016).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+    /// `[plugins.limits]`
+    #[serde(skip_serializing_if = "PluginLimits::is_empty")]
+    pub limits: PluginLimits,
+    /// `[plugins.settings.<id>]`: a plugin's hook settings, by the keys of the
+    /// fields its package declares.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub settings: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Plugins {
     /// The index URL when the config names one.
     pub fn index(&self) -> Option<&str> {
         Some(self.index.trim()).filter(|u| !u.is_empty())
+    }
+
+    /// The settings of plugin `id`; empty when it has none.
+    pub fn settings_of(&self, id: &str) -> BTreeMap<String, String> {
+        self.settings.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Where `id` stands in the user's order: its index in `order`, else after
+    /// every listed plugin. Sort by this, then by id, for the run order.
+    pub fn rank(&self, id: &str) -> usize {
+        self.order
+            .iter()
+            .position(|o| o == id)
+            .unwrap_or(self.order.len())
+    }
+
+    /// The budgets of plugin `id`: the user's for it, else for every plugin,
+    /// else `asked` by its package, else the defaults; clamped.
+    pub fn budgets(&self, id: &str, asked: Limits) -> Budgets {
+        Budgets::resolve(self.limits.of(id), self.limits.every, asked)
+    }
+
+    /// The whole transform chain's budget.
+    pub fn chain_budget(&self) -> Duration {
+        chain_budget(self.limits.chain_ms)
+    }
+}
+
+/// `[plugins.limits]`: the budgets of every plugin (keys of [`Limits`]), the
+/// transform chain's (`chain_ms`), and one table per plugin id with a
+/// plugin's own. A misspelt key is an error. Values are clamped where they
+/// are used, not here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PluginLimits {
+    /// What every plugin gets unless it has its own.
+    #[serde(flatten)]
+    pub every: Limits,
+    /// Milliseconds the whole transform chain may take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_ms: Option<u32>,
+    /// One plugin's own, by plugin id.
+    #[serde(flatten)]
+    pub plugins: BTreeMap<String, Limits>,
+}
+
+impl PluginLimits {
+    /// Nothing set.
+    pub fn is_empty(&self) -> bool {
+        *self == PluginLimits::default()
+    }
+
+    /// Plugin `id`'s own limits; nothing set when it has none.
+    pub fn of(&self, id: &str) -> Limits {
+        self.plugins.get(id).copied().unwrap_or_default()
     }
 }
 
@@ -429,6 +501,20 @@ pub enum Problem {
     BadScale,
     /// The engine for a role names no engine Anya has.
     UnknownEngine(EngineRole, String),
+    /// A plugin id in `[plugins]` that cannot name a plugin: blank, or with
+    /// spaces around it.
+    BadPluginId(PluginSection, String),
+}
+
+/// Where in `[plugins]` a plugin id was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginSection {
+    /// `order`
+    Order,
+    /// `limits.<id>`
+    Limits,
+    /// `settings.<id>`
+    Settings,
 }
 
 impl Config {
@@ -446,6 +532,27 @@ impl Config {
             let engine = self.recognition.engine_id(role);
             if !engines.contains(&engine) {
                 out.push(Problem::UnknownEngine(role, engine.to_owned()));
+            }
+        }
+        let bad = |id: &&&str| id.is_empty() || id.trim() != **id;
+        let plugins = &self.plugins;
+        let ids = [
+            (
+                PluginSection::Order,
+                plugins.order.iter().map(String::as_str).collect::<Vec<_>>(),
+            ),
+            (
+                PluginSection::Limits,
+                plugins.limits.plugins.keys().map(String::as_str).collect(),
+            ),
+            (
+                PluginSection::Settings,
+                plugins.settings.keys().map(String::as_str).collect(),
+            ),
+        ];
+        for (section, ids) in ids {
+            for id in ids.iter().filter(bad) {
+                out.push(Problem::BadPluginId(section, (*id).to_owned()));
             }
         }
         out
@@ -743,6 +850,99 @@ mod tests {
         assert_eq!(expand_home("~"), h);
         assert_eq!(expand_home("/x/~/y"), PathBuf::from("/x/~/y"));
         assert_eq!(expand_home("~other/x"), PathBuf::from("~other/x"));
+    }
+
+    #[test]
+    fn plugin_hook_tables_parse_save_and_refuse_misspelt_keys() {
+        let text = "[plugins]\norder = [\"replace\", \"polish\"]\n\n[plugins.limits]\ninline_ms = 30\nchain_ms = 3000\n\n[plugins.limits.polish]\ntransform_ms = 4000\n\n[plugins.settings.polish]\napi_key = \"k\"\n";
+        let cfg = parse(Path::new("c.toml"), text).expect("parses");
+        let p = &cfg.plugins;
+        assert_eq!(p.order, ["replace", "polish"]);
+        assert_eq!(p.limits.every.inline_ms, Some(30));
+        assert_eq!(p.limits.chain_ms, Some(3000));
+        assert_eq!(p.limits.of("polish").transform_ms, Some(4000));
+        assert_eq!(p.limits.of("other"), Limits::default());
+        assert_eq!(p.settings_of("polish")["api_key"], "k");
+        assert!(p.settings_of("other").is_empty());
+
+        let dir = temp();
+        let path = dir.join("config.toml");
+        save(&cfg, &path).expect("save");
+        assert_eq!(load(&path).expect("load"), cfg);
+
+        for bad in [
+            "[plugins.limits]\ninline_mss = 3\n",
+            "[plugins.limits.polish]\nchain_ms = 3\n",
+            "[plugins.limits.polish]\nbogus = 3\n",
+            "[plugins.limits]\nbogus = 3\n",
+        ] {
+            assert!(
+                matches!(
+                    parse(Path::new("c.toml"), bad),
+                    Err(ConfigError::Parse { .. })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn budgets_follow_the_users_word_then_the_packages_then_the_defaults() {
+        let mut p = Plugins::default();
+        let asked = Limits {
+            transform_ms: Some(500),
+            context_ms: Some(100),
+            ..Limits::default()
+        };
+        assert_eq!(p.budgets("x", asked).transform, Duration::from_millis(500));
+        assert_eq!(
+            p.budgets("x", Limits::default()).transform,
+            Duration::from_millis(2000)
+        );
+        p.limits.every.transform_ms = Some(900);
+        assert_eq!(p.budgets("x", asked).transform, Duration::from_millis(900));
+        p.limits.plugins.insert(
+            "x".into(),
+            Limits {
+                transform_ms: Some(1), // below the range: clamped
+                ..Limits::default()
+            },
+        );
+        assert_eq!(p.budgets("x", asked).transform, Duration::from_millis(100));
+        assert_eq!(p.budgets("x", asked).context, Duration::from_millis(100));
+        assert_eq!(p.chain_budget(), Duration::from_millis(4000));
+        p.limits.chain_ms = Some(99_999);
+        assert_eq!(p.chain_budget(), Duration::from_millis(15_000));
+    }
+
+    #[test]
+    fn the_order_ranks_listed_plugins_first() {
+        let p = Plugins {
+            order: vec!["b".into(), "a".into()],
+            ..Plugins::default()
+        };
+        assert!(p.rank("b") < p.rank("a"));
+        assert!(p.rank("a") < p.rank("z"));
+        assert_eq!(p.rank("y"), p.rank("z"));
+    }
+
+    #[test]
+    fn problems_name_plugin_ids_that_cannot_be_plugins() {
+        let mut cfg = Config::default();
+        cfg.plugins.order = vec!["ok".into(), "".into()];
+        cfg.plugins
+            .limits
+            .plugins
+            .insert(" x".into(), Limits::default());
+        cfg.plugins.settings.insert("y ".into(), BTreeMap::new());
+        assert_eq!(
+            cfg.problems(&["doubao"]),
+            [
+                Problem::BadPluginId(PluginSection::Order, "".into()),
+                Problem::BadPluginId(PluginSection::Limits, " x".into()),
+                Problem::BadPluginId(PluginSection::Settings, "y ".into()),
+            ]
+        );
     }
 
     #[tokio::test]

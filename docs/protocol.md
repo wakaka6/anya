@@ -6,9 +6,9 @@ For anyone writing a program that reads what Anya hears or uses Anya as an ASR g
 
 | | Plugin | App (this page) |
 |---|---|---|
-| Runs | inside Anya's Bun host, installed with `anya plugin add` | as its own program, any language |
-| Can | add an engine, a trigger or a sink | read frames; send its own audio for dictation when its token allows it |
-| Talks | JSON lines over stdin/stdout (docs/decisions/0004) | WebSocket or `anya subscribe` |
+| Runs | inside Anya, in QuickJS or a Bun process of its own, installed with `anya plugin install` | as its own program, any language |
+| Can | add an engine; add context to a dictation, rewrite its text before the paste, act on it beside the paste | read frames; send its own audio for dictation when its token allows it |
+| Talks | the SDK (docs/plugins.md, docs/decisions/0015) | WebSocket or `anya subscribe` |
 
 ## Connecting
 

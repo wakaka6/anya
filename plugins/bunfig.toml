@@ -1,0 +1,3 @@
+# `bun test` in this directory: plugins import the SDK as Anya's host serves it.
+[test]
+preload = ["./sdk-for-tests.js"]

@@ -1,0 +1,14 @@
+{
+  "name": "inline-example",
+  "version": "1.0.0",
+  "description": "Example inline hooks: terminal vocabulary for the terminal, a capital letter at the start.",
+  "type": "module",
+  "main": "inline.js",
+  "anya": {
+    "id": "inline",
+    "inline": "./inline.js",
+    "compat": ">=0.0.0",
+    "protocol": 1,
+    "permissions": []
+  }
+}

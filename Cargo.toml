@@ -11,6 +11,7 @@ members = [
     "crates/hotkey",
     "crates/output",
     "crates/overlay",
+    "crates/focus",
     "crates/engines/doubao",
     "crates/engines/dashscope",
     "crates/engines/openai",
@@ -18,6 +19,7 @@ members = [
     "crates/engines/mimo",
     "crates/server",
     "crates/plugin-host",
+    "crates/script",
     "crates/update",
     "crates/config",
     "crates/i18n",
@@ -46,6 +48,7 @@ anya-audio = { path = "crates/audio" }
 anya-hotkey = { path = "crates/hotkey" }
 anya-output = { path = "crates/output" }
 anya-overlay = { path = "crates/overlay" }
+anya-focus = { path = "crates/focus" }
 anya-engine-doubao = { path = "crates/engines/doubao" }
 anya-engine-dashscope = { path = "crates/engines/dashscope" }
 anya-engine-openai = { path = "crates/engines/openai" }
@@ -53,6 +56,7 @@ anya-engine-auralwise = { path = "crates/engines/auralwise" }
 anya-engine-mimo = { path = "crates/engines/mimo" }
 anya-server = { path = "crates/server" }
 anya-plugin-host = { path = "crates/plugin-host" }
+anya-script = { path = "crates/script" }
 anya-update = { path = "crates/update" }
 anya-config = { path = "crates/config" }
 anya-i18n = { path = "crates/i18n" }
@@ -84,6 +88,8 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 tar = { version = "0.4", default-features = false }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 semver = "1"
+# Inline plugins: QuickJS inside Anya (docs/decisions/0015-plugin-runtimes.md).
+rquickjs = "0.14"
 tempfile = "3"
 
 [workspace.lints.rust]

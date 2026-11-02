@@ -1210,6 +1210,8 @@ impl App {
             Invalid::BadScale => Field::Scale,
             Invalid::UnknownEngine { role, .. } => Field::of_role(*role),
             Invalid::BadAddress { .. } => Field::Address,
+            // The TUI edits no plugin ids; a bad one comes from the file.
+            Invalid::BadPluginId { .. } => FIELDS[0],
         }
     }
 

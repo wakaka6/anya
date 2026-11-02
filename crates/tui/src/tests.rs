@@ -7,13 +7,14 @@ use std::time::Duration;
 
 use anya_config::{Config, EngineRole, Mode};
 use anya_core::audio::{Device, DeviceKind};
+use anya_core::hooks::HookFailure;
 use anya_i18n::Catalog;
-use anya_protocol::{Field as EngineField, FieldKind, Manifest, Scope, Source, Text};
+use anya_protocol::{Field as EngineField, FieldKind, Manifest, Provide, Scope, Source, Text};
 use anya_runtime::{
-    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
-    InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient, Pairing, PluginIssue,
-    PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
-    UpdateIssue, UpdateState, UpdateVia,
+    BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
+    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient,
+    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status,
+    Subscription, UpdateIssue, UpdateState, UpdateVia,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -125,6 +126,7 @@ impl Control for Fake {
             desktop: "darwin".into(),
             version: "0.0.0".into(),
             config_path: PathBuf::from("/home/u/.config/anya/config.toml"),
+            replacements_path: PathBuf::from("/home/u/.config/anya/replacements.txt"),
         }
     }
 
@@ -244,6 +246,14 @@ impl Control for Fake {
         Err(PluginIssue::Bun {
             reason: "no plugins".to_owned(),
         })
+    }
+
+    fn hooks(&self) -> Vec<HookInfo> {
+        Vec::new()
+    }
+
+    fn builtin_hooks(&self) -> Vec<BuiltinHooks> {
+        Vec::new()
     }
 
     fn remove_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
@@ -533,8 +543,16 @@ fn a_typed_field_is_checked_then_saved() {
 #[test]
 fn installed_plugins_show_their_load_state_in_both_locales() {
     for (locale, ready, failed) in [
-        ("en", "echo (ready)", "broken (failed: no entry)"),
-        ("zh-CN", "echo（已就绪）", "broken（失败：no entry）"),
+        (
+            "en",
+            "echo (engine+transform; ready)",
+            "broken (failed: no entry)",
+        ),
+        (
+            "zh-CN",
+            "echo（引擎+文本转换；已就绪）",
+            "broken（失败：no entry）",
+        ),
     ] {
         let fake = Fake::new();
         *fake.plugins.lock().expect("lock") = ["echo", "broken"]
@@ -552,11 +570,54 @@ fn installed_plugins_show_their_load_state_in_both_locales() {
                 },
                 title: None,
                 description: None,
+                provides: if id == "echo" {
+                    vec![Provide::Engine, Provide::Transform]
+                } else {
+                    Vec::new()
+                },
+                host: true,
+                permissions: Vec::new(),
+                fields: Vec::new(),
             })
             .collect();
         let (mut app, _) = app(&fake, locale);
         shows(&mut app, ready);
         shows(&mut app, failed);
+    }
+}
+
+#[test]
+fn failed_hooks_and_stalled_plugins_show_in_the_log_in_both_locales() {
+    for (locale, failed, stalled) in [
+        (
+            "en",
+            "Plugin polish: its transform hook took too long",
+            "Plugin polish stopped answering and was restarted",
+        ),
+        (
+            "zh-CN",
+            "插件 polish：文本转换钩子超时",
+            "插件 polish 停止响应，已重启",
+        ),
+    ] {
+        let fake = Fake::new();
+        {
+            let mut log = fake.activity.lock().expect("lock");
+            log.push(Entry::HookFailed {
+                at: now_ms(),
+                plugin: "polish".to_owned(),
+                hook: Provide::Transform,
+                failure: HookFailure::Timeout,
+                session: None,
+            });
+            log.push(Entry::PluginStalled {
+                at: now_ms(),
+                plugin: "polish".to_owned(),
+            });
+        }
+        let (mut app, _) = app(&fake, locale);
+        shows(&mut app, failed);
+        shows(&mut app, stalled);
     }
 }
 

@@ -211,6 +211,7 @@ fn fields(page: &Page, invalid: &Invalid, config: &Config) -> Vec<&'static str> 
             EngineRole::Remote => vec!["recognition.remote"],
         },
         Invalid::BadAddress { .. } => vec!["subscription.address"],
+        Invalid::BadPluginId { .. } => vec!["plugins.order", "plugins.settings"],
     }
 }
 

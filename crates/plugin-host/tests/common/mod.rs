@@ -97,7 +97,8 @@ pub fn release(version: &str, artifact: &str, tgz: &[u8]) -> Value {
         "integrity": integrity_of(tgz),
         "anya": ">=0.0.0",
         "protocol": 1,
-        "kind": "engine",
+        "provides": ["engine"],
+        "host": true,
         "streaming": true,
         "permissions": []
     })

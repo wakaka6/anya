@@ -97,7 +97,7 @@ export type Engine = {
   open(params: OpenParams, session: EngineSession): void | Promise<void>;
 };
 
-/** Declares an engine; export the result as the entry file's default. */
+/** Declares an engine; export the result from the entry file. */
 export function defineEngine(engine: Engine): Engine;
 
 /** The kinds `session.error` takes. */
@@ -123,3 +123,85 @@ export function deliver<E extends keyof SessionEvents>(
 export function end(session: EngineSession): void;
 /** The plugin sent its final result or an error. */
 export function isEnded(session: EngineSession): boolean;
+
+/** Where a dictation came from. */
+export type Source = "dictation" | "continuous";
+
+/** What every hook is told about the dictation. */
+export type HookContext = {
+  /** What opened the session. */
+  source: Source;
+  /** The focused app's id (bundle id on macOS, window class on X11), when the desktop tells it. */
+  app?: string;
+  /** The values of the package's `anya.fields`, by key. */
+  settings: Record<string, string>;
+  /** Aborted when Anya stops waiting for the call (its budget is spent). */
+  signal: AbortSignal;
+};
+
+/** What a context hook is given: before the session opens. */
+export type ContextCall = HookContext & {
+  /** BCP-47 tag the session would open with; undefined leaves it to the engine. */
+  language?: string;
+  /** The hotwords the session would open with. */
+  hotwords: string[];
+};
+
+/** What a context hook adds. */
+export type Context = {
+  /** Words to favour, added to the session's. */
+  hotwords?: string[];
+  /** The language to open with; the first plugin in the user's order that names one sets it. */
+  language?: string;
+};
+
+/** What a transform or action hook is given: the session is over. */
+export type TextCall = HookContext & {
+  /** The session's id. */
+  session?: string;
+};
+
+/** A context hook as a plugin's entry file exports it. */
+export type ContextHook = {
+  /** Returns hotwords to add and a language; nothing adds nothing. */
+  context(ctx: ContextCall): Context | undefined | void | Promise<Context | undefined | void>;
+};
+
+/** A transform hook as a plugin's entry file exports it. */
+export type TransformHook = {
+  /** Returns the text that goes on; at most 64 KiB. */
+  transform(text: string, ctx: TextCall): string | Promise<string>;
+};
+
+/** An action hook as a plugin's entry file exports it. */
+export type ActionHook = {
+  /** Does something with the final text. The return value is ignored; a throw is reported. */
+  act(text: string, ctx: TextCall): void | Promise<void>;
+};
+
+/** Declares a context hook; export the result from the entry file. */
+export function defineContext(hook: ContextHook): ContextHook;
+/** Declares a transform hook; export the result from the entry file. */
+export function defineTransform(hook: TransformHook): TransformHook;
+/** Declares an action hook; export the result from the entry file. */
+export function defineAction(hook: ActionHook): ActionHook;
+
+/** Which `define*` made `value`, if one did. */
+export function kindOf(value: unknown): "engine" | "context" | "transform" | "action" | undefined;
+
+/** Checks a context hook's answer; throws a TypeError when it has the wrong shape. */
+export function checkContext(answer: unknown): { hotwords: string[]; language?: string };
+/** Checks a transform hook's answer; throws a TypeError unless it is a string. */
+export function checkTransform(answer: unknown): string;
+/** Checks an action hook's answer; throws a TypeError unless it is nothing. */
+export function checkAction(answer: unknown): void;
+
+/** Test helper: runs a context hook as the host does, `ctx` over defaults. */
+export function callContext(
+  hook: ContextHook,
+  ctx?: Partial<ContextCall>,
+): Promise<{ hotwords: string[]; language?: string }>;
+/** Test helper: runs a transform hook as the host does; returns the text. */
+export function callTransform(hook: TransformHook, text: string, ctx?: Partial<TextCall>): Promise<string>;
+/** Test helper: runs an action hook as the host does. */
+export function callAction(hook: ActionHook, text: string, ctx?: Partial<TextCall>): Promise<void>;

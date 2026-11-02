@@ -9,7 +9,7 @@ Read LESSONS.md before changing code: what recent merged work got wrong and the 
 ## Commands
 
 ```bash
-cargo xtask ci       # the gate CI runs: fmt, clippy -D warnings, tests (with the layer rules), cargo-deny
+cargo xtask ci       # the gate CI runs: fmt, clippy -D warnings, tests (with the layer rules), cargo-deny, bun test in plugins/
 cargo xtask check    # layer rules only
 cargo test --workspace
 ```

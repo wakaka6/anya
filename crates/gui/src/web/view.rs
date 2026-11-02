@@ -3,12 +3,13 @@
 
 use anya_config::{Config, DEFAULT_ADDRESS, EngineRole, LANGUAGES, POSITIONS};
 use anya_core::audio::DeviceKind;
+use anya_core::hooks::{HookFailure, Runs};
 use anya_i18n::{Catalog, LOCALES};
-use anya_protocol::{EndReason, FieldKind, Manifest};
+use anya_protocol::{EndReason, Field, FieldKind, Manifest, Provide};
 use anya_runtime::{
-    DebugEvent, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, InstalledPlugin, Lan,
-    MarketPlugin, Notice, Origin, PluginLoad, RouteEvent, Sink, Step, Subscription, UpdateIssue,
-    UpdateState, UpdateVia,
+    BuiltinHooks, DebugEvent, Delivered, Dictation, EngineInfo, Entry, HookInfo, HotkeyRole,
+    InstalledPlugin, Lan, MarketPlugin, Notice, Origin, PluginLoad, RouteEvent, Sink, Step,
+    Subscription, UpdateIssue, UpdateState, UpdateVia,
 };
 use serde_json::{Value, json};
 
@@ -35,6 +36,12 @@ pub(super) fn state(page: &Page, catalog: &Catalog) -> Value {
         "lan": lan(&page.control.status().lan, catalog),
         "clients": page.control.clients(),
         "plugins": plugins(&page.control.plugins(), catalog),
+        "hooks": hooks(
+            &page.control.hooks(),
+            &page.control.builtin_hooks(),
+            &page.control.plugins(),
+            catalog,
+        ),
         "config": config,
     })
 }
@@ -67,9 +74,93 @@ pub(super) fn plugins(list: &[InstalledPlugin], catalog: &Catalog) -> Vec<Value>
                 "id": p.id, "name": name, "version": p.version,
                 "enabled": p.enabled, "state": state, "line": line,
                 "description": p.description.as_ref().map(|d| d.get(catalog.locale())).unwrap_or(""),
+                "provides": provides(&p.provides),
+                "host": p.host,
+                "permissions": p.permissions,
+                "fields": fields(&p.fields, catalog.locale()),
             })
         })
         .collect()
+}
+
+/// What a plugin provides, as the words the page translates; a kind this
+/// Anya does not know is left out.
+fn provides(list: &[Provide]) -> Vec<&'static str> {
+    list.iter().filter_map(|p| provide_name(*p)).collect()
+}
+
+fn provide_name(provide: Provide) -> Option<&'static str> {
+    match provide {
+        Provide::Engine => Some("engine"),
+        Provide::Context => Some("context"),
+        Provide::Transform => Some("transform"),
+        Provide::Action => Some("action"),
+        Provide::Unknown => None,
+    }
+}
+
+/// The dictation hooks in run order, and the built-in pieces that serve them
+/// with their switches. A hook's `name` is its plugin's title; `movable` ones
+/// (context and transform) take part in `[plugins] order`.
+fn hooks(
+    list: &[HookInfo],
+    builtin: &[BuiltinHooks],
+    installed: &[InstalledPlugin],
+    catalog: &Catalog,
+) -> Value {
+    let name = |id: &str| -> String {
+        if let Some((key, _)) = builtin_keys(id) {
+            return catalog.t(key).to_owned();
+        }
+        match installed
+            .iter()
+            .find(|p| p.id == id)
+            .and_then(|p| p.title.as_ref())
+            .map(|t| t.get(catalog.locale()))
+        {
+            Some(n) if !n.is_empty() => n.to_owned(),
+            _ => id.to_owned(),
+        }
+    };
+    let run = list
+        .iter()
+        .filter_map(|h| {
+            let hook = provide_name(h.hook)?;
+            Some(json!({
+                "plugin": h.plugin,
+                "name": name(&h.plugin),
+                "hook": hook,
+                "runs": match h.runs {
+                    Runs::Builtin => "builtin",
+                    Runs::Inline => "inline",
+                    Runs::Host => "host",
+                },
+                "movable": matches!(h.hook, Provide::Context | Provide::Transform),
+            }))
+        })
+        .collect::<Vec<_>>();
+    let builtin = builtin
+        .iter()
+        .map(|b| {
+            json!({
+                "id": b.id,
+                "name": name(&b.id),
+                "help": builtin_keys(&b.id).map_or("", |(_, help)| catalog.t(help)),
+                "provides": provides(&b.provides),
+                "on": b.on,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({ "run": run, "builtin": builtin })
+}
+
+/// The catalog keys of a built-in hook piece's name and help.
+fn builtin_keys(id: &str) -> Option<(&'static str, &'static str)> {
+    match id {
+        "replace" => Some(("gui.hooks.replace", "gui.hooks.replace_help")),
+        "community-hooks" => Some(("gui.hooks.community", "gui.hooks.community_help")),
+        _ => None,
+    }
 }
 
 /// The registry's plugins as the page lists them.
@@ -82,6 +173,8 @@ pub(super) fn market(list: &[MarketPlugin], catalog: &Catalog) -> Vec<Value> {
                 "description": p.description.get(catalog.locale()),
                 "version": p.version,
                 "streaming": p.streaming,
+                "provides": provides(&p.provides),
+                "host": p.host,
                 "permissions": p.permissions,
             })
         })
@@ -158,9 +251,24 @@ fn engine(m: &Manifest, ready: bool, enabled: Option<bool>, locale: &str) -> Val
         "" => m.id.as_str(),
         t => t,
     };
-    let fields: Vec<Value> = m
-        .fields
-        .iter()
+    let fields = fields(&m.fields, locale);
+    json!({
+        "id": m.id,
+        "title": title,
+        "blurb": m.blurb.get(locale),
+        "docs": m.docs,
+        "streaming": m.streaming,
+        "ready": ready,
+        "custom": false,
+        "plugin": enabled.is_none(),
+        "enabled": enabled,
+        "fields": fields,
+    })
+}
+
+/// Settings fields as the page's form draws them.
+fn fields(list: &[Field], locale: &str) -> Vec<Value> {
+    list.iter()
         .map(|f| {
             let (kind, options) = match &f.kind {
                 FieldKind::Text => ("text", Vec::new()),
@@ -177,19 +285,7 @@ fn engine(m: &Manifest, ready: bool, enabled: Option<bool>, locale: &str) -> Val
                 "advanced": f.advanced,
             })
         })
-        .collect();
-    json!({
-        "id": m.id,
-        "title": title,
-        "blurb": m.blurb.get(locale),
-        "docs": m.docs,
-        "streaming": m.streaming,
-        "ready": ready,
-        "custom": false,
-        "plugin": enabled.is_none(),
-        "enabled": enabled,
-        "fields": fields,
-    })
+        .collect()
 }
 
 fn devices(page: &Page, catalog: &Catalog) -> (Vec<Value>, Option<String>) {
@@ -770,6 +866,44 @@ fn entry(entry: &Entry, engines: &[EngineInfo], catalog: &Catalog) -> Value {
                 "text": text, "note": "",
             })
         }
+        Entry::HookFailed {
+            at,
+            plugin,
+            hook,
+            failure,
+            session,
+        } => {
+            let kind = match hook {
+                Provide::Engine => "gui.hook.kind_engine",
+                Provide::Context => "gui.hook.kind_context",
+                Provide::Transform => "gui.hook.kind_transform",
+                Provide::Action => "gui.hook.kind_action",
+                Provide::Unknown => "gui.hook.kind_unknown",
+            };
+            let kind = catalog.t(kind);
+            let failure = catalog.t(match failure {
+                HookFailure::Timeout => "gui.hook.failure_timeout",
+                HookFailure::Memory => "gui.hook.failure_memory",
+                HookFailure::Invalid => "gui.hook.failure_invalid",
+                HookFailure::Failed => "gui.hook.failure_failed",
+                HookFailure::Unavailable => "gui.hook.failure_unavailable",
+                HookFailure::Busy => "gui.hook.failure_busy",
+                HookFailure::Unknown => "gui.hook.failure_unknown",
+            });
+            json!({
+                "at": at, "kind": "hook", "source": null, "level": "warn",
+                "text": catalog.tf(
+                    "gui.hook.failed",
+                    &[("plugin", plugin), ("hook", kind), ("failure", failure)],
+                ),
+                "session": session, "note": "",
+            })
+        }
+        Entry::PluginStalled { at, plugin } => json!({
+            "at": at, "kind": "hook", "source": null, "level": "warn",
+            "text": catalog.tf("gui.hook.stalled", &[("plugin", plugin)]),
+            "note": "",
+        }),
         Entry::Notice { at, notice, detail } => {
             let (key, level) = match notice {
                 Notice::ContinuousOn => ("gui.notice.continuous_on", "info"),

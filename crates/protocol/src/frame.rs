@@ -8,10 +8,11 @@ pub struct SessionId(pub String);
 /// What opened a session. Subscribers are granted sources, not sessions:
 /// dictation reaches an outside app only with the user's grant for that app
 /// (docs/decisions/0005-privacy-defaults.md).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     /// The user holds or toggles a hotkey and talks into the microphone.
+    #[default]
     Dictation,
     /// The switched-on transcription of a device, usually a loopback one.
     Continuous,

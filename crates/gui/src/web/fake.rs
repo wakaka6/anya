@@ -13,12 +13,15 @@ use std::time::Duration;
 
 use anya_config::{Config, EngineRole, Problem};
 use anya_core::audio::{Device, DeviceKind};
-use anya_protocol::{ErrorCode, Field, FieldKind, Manifest, PairingOffer, Scope, Source, Text};
+use anya_core::hooks::Runs;
+use anya_protocol::{
+    ErrorCode, Field, FieldKind, Manifest, PairingOffer, Provide, Scope, Source, Text,
+};
 use anya_runtime::{
-    ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HotkeyRole, Info,
-    InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient, Pairing,
-    PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats, Status,
-    Subscription, UpdateIssue, UpdateState,
+    BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
+    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient,
+    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats,
+    Status, Subscription, UpdateIssue, UpdateState,
 };
 
 /// A running Anya that exists only in memory.
@@ -145,6 +148,8 @@ impl FakeControl {
                     ]),
                     version: "1.0.0".to_owned(),
                     streaming: true,
+                    provides: vec![Provide::Engine],
+                    host: true,
                     permissions: vec!["network:example.com".to_owned()],
                 },
                 MarketPlugin {
@@ -156,6 +161,8 @@ impl FakeControl {
                     ]),
                     version: "0.4.2".to_owned(),
                     streaming: false,
+                    provides: vec![Provide::Engine],
+                    host: true,
                     permissions: Vec::new(),
                 },
                 MarketPlugin {
@@ -167,7 +174,35 @@ impl FakeControl {
                     ]),
                     version: "2.1.0".to_owned(),
                     streaming: true,
+                    provides: vec![Provide::Engine],
+                    host: true,
                     permissions: vec!["network:api.deepgram.com".to_owned()],
+                },
+                MarketPlugin {
+                    id: "polish".to_owned(),
+                    name: "Polish".into(),
+                    description: Text::localized([
+                        ("en", "Tidies punctuation and casing with a language model"),
+                        ("zh-CN", "用语言模型整理标点和大小写"),
+                    ]),
+                    version: "0.3.0".to_owned(),
+                    streaming: false,
+                    provides: vec![Provide::Transform],
+                    host: true,
+                    permissions: vec!["network:api.openai.com".to_owned()],
+                },
+                MarketPlugin {
+                    id: "swap".to_owned(),
+                    name: "Swap".into(),
+                    description: Text::localized([
+                        ("en", "Rewrites a few spoken phrases into symbols"),
+                        ("zh-CN", "把几个口述短语改写成符号"),
+                    ]),
+                    version: "1.2.0".to_owned(),
+                    streaming: false,
+                    provides: vec![Provide::Context, Provide::Transform],
+                    host: false,
+                    permissions: Vec::new(),
                 },
             ])),
             devices: Mutex::new(Ok(vec![Device {
@@ -235,6 +270,7 @@ impl FakeControl {
                 Problem::UnknownPosition(value) => Invalid::UnknownPosition { value },
                 Problem::BadScale => Invalid::BadScale,
                 Problem::UnknownEngine(role, id) => Invalid::UnknownEngine { role, id },
+                Problem::BadPluginId(_, id) => Invalid::BadPluginId { id },
             });
         }
         let address = config.subscription.address();
@@ -273,6 +309,7 @@ impl Control for FakeControl {
             .to_owned(),
             version: "0.0.0".to_owned(),
             config_path: PathBuf::from("/home/me/.config/anya/config.toml"),
+            replacements_path: PathBuf::from("/home/me/.config/anya/replacements.txt"),
         }
     }
 
@@ -342,6 +379,63 @@ impl Control for FakeControl {
         lock(&self.plugins).clone()
     }
 
+    fn hooks(&self) -> Vec<HookInfo> {
+        let config = lock(&self.config).clone();
+        let on = |id: &str| config.plugins.builtin.get(id).copied().unwrap_or(true);
+        let plugins = lock(&self.plugins).clone();
+        let mut movable: Vec<HookInfo> = Vec::new();
+        if on("replace") {
+            movable.push(HookInfo {
+                plugin: "replace".to_owned(),
+                hook: Provide::Transform,
+                runs: Runs::Builtin,
+            });
+        }
+        let mut actions = Vec::new();
+        if on("community-hooks") {
+            for p in plugins.iter().filter(|p| p.enabled) {
+                for hook in &p.provides {
+                    let info = HookInfo {
+                        plugin: p.id.clone(),
+                        hook: *hook,
+                        runs: if p.host { Runs::Host } else { Runs::Inline },
+                    };
+                    match hook {
+                        Provide::Context | Provide::Transform => movable.push(info),
+                        Provide::Action => actions.push(info),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // Listed ids first, in the list's order; the rest by id.
+        movable.sort_by_key(
+            |h| match config.plugins.order.iter().position(|id| *id == h.plugin) {
+                Some(i) => (0, i, String::new()),
+                None => (1, 0, h.plugin.clone()),
+            },
+        );
+        movable.extend(actions);
+        movable
+    }
+
+    fn builtin_hooks(&self) -> Vec<BuiltinHooks> {
+        let config = lock(&self.config).clone();
+        let on = |id: &str| config.plugins.builtin.get(id).copied().unwrap_or(true);
+        vec![
+            BuiltinHooks {
+                id: "replace".to_owned(),
+                provides: vec![Provide::Transform],
+                on: on("replace"),
+            },
+            BuiltinHooks {
+                id: "community-hooks".to_owned(),
+                provides: vec![Provide::Context, Provide::Transform, Provide::Action],
+                on: on("community-hooks"),
+            },
+        ]
+    }
+
     fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
         self.call("plugin_market".to_owned());
         lock(&self.market).clone()
@@ -366,6 +460,10 @@ impl Control for FakeControl {
             load: PluginLoad::Off,
             title: Some(release.name),
             description: Some(release.description),
+            provides: release.provides,
+            host: release.host,
+            permissions: release.permissions,
+            fields: Vec::new(),
         });
         Ok(())
     }

@@ -1,0 +1,22 @@
+{
+  "name": "hooks-example",
+  "version": "1.0.0",
+  "description": "Example host hooks: a transform that tidies and tags the text, an action that appends it to a file.",
+  "type": "module",
+  "main": "hooks.js",
+  "anya": {
+    "id": "hooks",
+    "host": "./hooks.js",
+    "compat": ">=0.0.0",
+    "protocol": 1,
+    "permissions": ["fs:write:notes-file"],
+    "fields": [
+      { "key": "suffix", "label": "Suffix", "help": "Added after every dictation.", "kind": "text" },
+      { "key": "file", "label": "Notes file", "help": "Every dictation is appended here, one line each.", "kind": "text" }
+    ],
+    "limits": { "transform_ms": 3000 }
+  },
+  "devDependencies": {
+    "@wakaka6/anya-plugin": "^1.0.0"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "daily-notes",
+  "version": "1.0.0",
+  "description": "Keeps every dictation in a Markdown note per day.",
+  "type": "module",
+  "main": "host.js",
+  "files": ["host.js"],
+  "anya": {
+    "id": "daily-notes",
+    "name": { "en": "Daily notes", "zh-CN": "每日笔记" },
+    "description": {
+      "en": "Appends every dictation, with its time and app, to a Markdown note per day",
+      "zh-CN": "把每次听写连同时间和应用，追加到当天的 Markdown 笔记里"
+    },
+    "host": "./host.js",
+    "compat": ">=0.0.0",
+    "protocol": 1,
+    "permissions": ["fs:write:notes-folder"],
+    "fields": [
+      {
+        "key": "folder",
+        "label": { "en": "Notes folder", "zh-CN": "笔记文件夹" },
+        "help": {
+          "en": "One file per day goes here, like 2026-10-31.md; ~ is your home folder",
+          "zh-CN": "每天一个文件放在这里，例如 2026-10-31.md；~ 表示主目录"
+        },
+        "kind": "text",
+        "required": true
+      }
+    ]
+  },
+  "devDependencies": {
+    "@wakaka6/anya-plugin": "^1.0.0"
+  }
+}

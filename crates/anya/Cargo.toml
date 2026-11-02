@@ -13,6 +13,7 @@ anya-config.workspace = true
 anya-continuous.workspace = true
 anya-core.workspace = true
 anya-dictation.workspace = true
+anya-focus.workspace = true
 anya-engine-auralwise.workspace = true
 anya-engine-dashscope.workspace = true
 anya-engine-doubao.workspace = true
@@ -28,6 +29,7 @@ anya-update.workspace = true
 anya-plugin-rt.workspace = true
 anya-protocol.workspace = true
 anya-runtime.workspace = true
+anya-script.workspace = true
 anya-server.workspace = true
 anya-tui.workspace = true
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context"] }

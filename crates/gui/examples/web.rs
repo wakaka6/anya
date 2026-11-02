@@ -17,11 +17,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anya_config::EngineRole;
+use anya_core::hooks::HookFailure;
 use anya_gui::{Shell, ShellKind, web};
-use anya_protocol::{Scope, SessionId, Source};
+use anya_protocol::{Field, FieldKind, Provide, Scope, SessionId, Source};
 use anya_runtime::{
-    Delivered, Dictation, Entry, Lan, LiveRoute, Origin, PairedClient, ROUTE_LOG, RouteEvent, Sink,
-    Step,
+    Delivered, Dictation, Entry, InstalledPlugin, Lan, LiveRoute, Origin, PairedClient, PluginLoad,
+    ROUTE_LOG, RouteEvent, Sink, Step,
 };
 
 #[path = "../src/web/fake.rs"]
@@ -268,6 +269,52 @@ fn main() {
                 url: "wss://192.168.1.20:7591/asr".to_owned(),
                 fingerprint: "3f:a9:0c:51".to_owned(),
             };
+            lock(&control.plugins).extend([
+                InstalledPlugin {
+                    id: "polish".to_owned(),
+                    version: "0.3.0".to_owned(),
+                    enabled: true,
+                    load: PluginLoad::Ready,
+                    title: Some("Polish".into()),
+                    description: Some("Tidies punctuation".into()),
+                    provides: vec![Provide::Transform, Provide::Action],
+                    host: true,
+                    permissions: vec!["network:api.openai.com".to_owned()],
+                    fields: vec![Field {
+                        key: "api_key".to_owned(),
+                        label: "API key".into(),
+                        help: "Kept in the config file".into(),
+                        kind: FieldKind::Secret,
+                        required: true,
+                        advanced: false,
+                    }],
+                },
+                InstalledPlugin {
+                    id: "swap".to_owned(),
+                    version: "1.2.0".to_owned(),
+                    enabled: false,
+                    load: PluginLoad::Off,
+                    title: Some("Swap".into()),
+                    description: Some("Rewrites a few phrases".into()),
+                    provides: vec![Provide::Context, Provide::Transform],
+                    host: false,
+                    permissions: Vec::new(),
+                    fields: Vec::new(),
+                },
+            ]);
+            lock(&control.activity).extend([
+                Entry::HookFailed {
+                    at: now_ms(),
+                    plugin: "polish".to_owned(),
+                    hook: Provide::Transform,
+                    failure: HookFailure::Timeout,
+                    session: None,
+                },
+                Entry::PluginStalled {
+                    at: now_ms(),
+                    plugin: "polish".to_owned(),
+                },
+            ]);
             lock(&control.clients).push(PairedClient {
                 id: "c1".to_owned(),
                 name: "Kitchen iPad".to_owned(),
