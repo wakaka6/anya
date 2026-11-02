@@ -103,3 +103,19 @@ pub(super) fn sign_in(location: &str, cookie: &str) -> Reply {
     }
     res
 }
+
+/// A plugin's icon. Its name is its content's hash, so it never changes; an
+/// SVG opened on its own is only ever drawn, never run.
+pub(super) fn icon(content_type: &'static str, bytes: Vec<u8>) -> Reply {
+    let mut res = base(
+        StatusCode::OK,
+        content_type,
+        "private, max-age=31536000, immutable",
+        bytes.into(),
+    );
+    res.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"),
+    );
+    res
+}

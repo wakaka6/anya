@@ -23,14 +23,18 @@ pub struct PluginDirs {
     pub plugins: PathBuf,
     /// Holds the downloaded Bun and the host's script files.
     pub runtime: PathBuf,
+    /// Holds plugin icons, each named after its content ([`crate::Icons`]).
+    pub icons: PathBuf,
 }
 
 impl PluginDirs {
-    /// The usual layout under one data directory: `plugins/` and `runtime/`.
+    /// The usual layout under one data directory: `plugins/`, `runtime/` and
+    /// `plugin-icons/`.
     pub fn under(data: &Path) -> PluginDirs {
         PluginDirs {
             plugins: data.join("plugins"),
             runtime: data.join("runtime"),
+            icons: data.join("plugin-icons"),
         }
     }
 }

@@ -1498,6 +1498,43 @@ async fn the_registry_is_read_when_asked_and_its_failure_is_told_beside_what_is_
 }
 
 #[tokio::test]
+async fn a_plugin_icon_is_listed_as_a_url_and_served_only_as_a_picture() {
+    let h = harness(ShellKind::Web).await;
+    let market = h.post("/api/plugins/market", &json!({})).await.json()["plugins"].clone();
+    let echo = market
+        .as_array()
+        .expect("list")
+        .iter()
+        .find(|p| p["id"] == "echo")
+        .expect("echo");
+    let url = format!("/api/plugins/icon/{}", super::fake::ECHO_ICON);
+    assert_eq!(echo["icon"], url);
+    assert_eq!(market[1]["icon"], json!(null), "no icon, no URL");
+
+    let res = h.get(&url).await;
+    assert_eq!(res.status, 200);
+    assert_eq!(res.header("content-type"), Some("image/svg+xml"));
+    assert_eq!(
+        res.header("content-security-policy"),
+        Some("default-src 'none'; style-src 'unsafe-inline'"),
+        "an SVG opened on its own runs nothing"
+    );
+    assert!(res.body.starts_with("<svg"), "{}", res.body);
+
+    let res = h.post("/api/plugins/install", &json!({"id": "echo"})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    let installed = res.json()["plugins"].clone();
+    assert_eq!(installed[0]["icon"], url, "installed, it keeps its icon");
+
+    assert_eq!(
+        h.get("/api/plugins/icon/ffffffffffffffffffffffffffffffff")
+            .await
+            .status,
+        404
+    );
+}
+
+#[tokio::test]
 async fn installing_a_plugin_leaves_it_off_until_it_is_enabled() {
     let h = harness(ShellKind::Web).await;
     let res = h.post("/api/plugins/install", &json!({"id": "nope"})).await;
@@ -1609,6 +1646,7 @@ async fn a_failed_plugin_says_why_in_the_users_language() {
         permissions: Vec::new(),
         fields: Vec::new(),
         missing: Vec::new(),
+        icon: None,
     });
     let h = harness_with(control, ShellKind::Web).await;
     let p = h.get("/api/status").await.json()["plugins"][0].clone();
@@ -2035,6 +2073,7 @@ fn installed(
             advanced: false,
         }],
         missing: Vec::new(),
+        icon: None,
     }
 }
 

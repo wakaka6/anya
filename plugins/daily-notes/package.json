@@ -5,7 +5,7 @@
   "description": "Keeps every dictation in a Markdown note per day.",
   "type": "module",
   "main": "host.js",
-  "files": ["host.js"],
+  "files": ["host.js", "icon.svg"],
   "anya": {
     "id": "daily-notes",
     "name": { "en": "Daily notes", "zh-CN": "每日笔记" },
@@ -13,6 +13,7 @@
       "en": "Appends every dictation, with its time and app, to a Markdown note per day",
       "zh-CN": "把每次听写连同时间和应用，追加到当天的 Markdown 笔记里"
     },
+    "icon": "./icon.svg",
     "host": "./host.js",
     "compat": ">=0.0.0",
     "protocol": 1,

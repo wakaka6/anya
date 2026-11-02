@@ -37,9 +37,9 @@ use anya_protocol::{ErrorCode, PairingOffer, Scope, Source};
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation,
     EngineInfo, Entry, HookInfo, HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market,
-    MarketPlugin, Notice, PairError, PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue,
-    PreviewView, Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
-    UpdateVia,
+    MarketPlugin, Notice, PairError, PairedClient, Pairing, PluginIcon, PluginIssue, PluginLoad,
+    PreviewIssue, PreviewView, Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue,
+    UpdateState, UpdateVia,
 };
 use anya_server::{
     Address, Audience, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address,
@@ -53,6 +53,7 @@ mod community;
 mod doctor;
 mod hooks;
 mod hotwords;
+mod icons;
 mod indicator;
 mod install;
 mod official;
@@ -288,6 +289,8 @@ struct App {
     router: Arc<Mutex<route::Router>>,
     data_dir: PathBuf,
     plugin_store: Store,
+    /// Plugin icons, for the settings.
+    plugin_icons: icons::PluginIcons,
     /// Running once a plugin is enabled and a Bun is found.
     plugin_host: Arc<Mutex<Option<PluginHost>>>,
     /// What the update check knows (docs/decisions/0014).
@@ -397,6 +400,7 @@ impl App {
             audiences: Arc::default(),
             router: Arc::default(),
             plugin_store: Store::new(PluginDirs::under(&data_dir)),
+            plugin_icons: icons::PluginIcons::new(PluginDirs::under(&data_dir).icons),
             data_dir,
             plugin_host: Arc::new(Mutex::new(None)),
             update: Arc::new(Mutex::new(UpdateState::Unknown)),
@@ -1362,6 +1366,9 @@ impl Control for App {
                         .unwrap_or_default(),
                     fields,
                     missing,
+                    icon: package
+                        .as_ref()
+                        .and_then(|k| self.plugin_icons.of_package(k)),
                 }
             })
             .collect()
@@ -1378,9 +1385,15 @@ impl Control for App {
                      official,
                  }| {
                     let release = p.versions.last()?;
+                    let icon = if official {
+                        official::find(&p.id).and_then(|(b, _)| self.plugin_icons.of_bundled(b))
+                    } else {
+                        self.plugin_icons.of_release(release)
+                    };
                     Some(MarketPlugin {
                         version: release.version.clone(),
                         official,
+                        icon,
                         streaming: release.streaming,
                         provides: release.provides.clone(),
                         host: release.host,
@@ -1396,6 +1409,10 @@ impl Control for App {
             plugins,
             unreachable: unreachable.map(|e| plugins::issue(&e)),
         }
+    }
+
+    fn plugin_icon(&self, name: &str) -> Option<PluginIcon> {
+        self.runtime.block_on(self.plugin_icons.get(name))
     }
 
     fn install_plugin(&self, id: &str) -> Result<(), PluginIssue> {

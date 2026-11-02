@@ -96,6 +96,7 @@ pub(super) fn plugins(list: &[InstalledPlugin], catalog: &Catalog) -> Vec<Value>
                 "permissions": p.permissions,
                 "fields": fields(&p.fields, catalog.locale()),
                 "missing": p.missing,
+                "icon": icon_url(p.icon.as_deref()),
             })
         })
         .collect()
@@ -195,9 +196,17 @@ pub(super) fn market(list: &[MarketPlugin], catalog: &Catalog) -> Vec<Value> {
                 "provides": provides(&p.provides),
                 "host": p.host,
                 "permissions": p.permissions,
+                "icon": icon_url(p.icon.as_deref()),
             })
         })
         .collect()
+}
+
+/// Where the page loads a plugin's icon from; `null` without one.
+fn icon_url(name: Option<&str>) -> Value {
+    name.map_or(Value::Null, |n| {
+        Value::from(format!("/api/plugins/icon/{n}"))
+    })
 }
 
 /// The LAN listener as the page shows it: a state, a line, and for a

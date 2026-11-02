@@ -331,6 +331,13 @@ pub struct IndexVersion {
     /// `network:api.example.com`, shown to the user before they enable it.
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// URL of the plugin's icon, which the registry keeps beside the
+    /// tarballs; absent when the package gives none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Subresource Integrity hash of the icon: `sha512-<base64>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_integrity: Option<String>,
 }
 
 /// One thing a plugin provides (docs/decisions/0016-dictation-hooks.md).
@@ -366,6 +373,11 @@ pub struct PluginPackage {
     /// One line under the name; the package's `description` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<Text>,
+    /// Its icon: a file in the package (PNG, JPEG, GIF, WebP, ICO or SVG, at
+    /// most 1 MiB) or a `data:image/…` URI. Never a URL: showing it must
+    /// not reach the author's server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// The module QuickJS runs inside Anya: context and transform hooks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline: Option<String>,

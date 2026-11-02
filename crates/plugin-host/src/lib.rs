@@ -8,6 +8,7 @@
 //! - [`Store`] installs a release into the plugins directory after checking
 //!   its integrity hash, and records which plugins the user enabled.
 //! - [`Bundled`] is a plugin built into Anya, which installs from the binary.
+//! - [`Icons`] keeps plugin icons, from packages, the binary and the registry.
 //! - [`read_package`] reads a package's `package.json`.
 //! - [`BunPath`] finds or downloads the runtime.
 //! - [`PluginHost`] runs the enabled plugins, watches them, and hands out
@@ -22,6 +23,7 @@ mod engine;
 mod error;
 mod hooks;
 mod host;
+mod icon;
 mod link;
 mod package;
 mod registry;
@@ -33,6 +35,7 @@ pub use engine::PluginEngine;
 pub use error::PluginError;
 pub use hooks::HostHook;
 pub use host::{PluginHost, PluginState, PluginStatus};
+pub use icon::{IconFormat, Icons, MAX_ICON_BYTES, check_icon, package_icon};
 pub use package::{Package, read_package};
 pub use registry::{
     DEFAULT_INDEX_URL, Registry, find_release, integrity_of, parse_index, verify_integrity,

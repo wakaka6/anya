@@ -285,7 +285,9 @@ fn index() {
                 "provides": ["engine", "transform"],
                 "host": true,
                 "streaming": true,
-                "permissions": ["network:api.example.org"]
+                "permissions": ["network:api.example.org"],
+                "icon": "https://example.org/icons/echo-1.2.0.svg",
+                "icon_integrity": "sha512-BBBB"
             }]
         }]
     });
@@ -306,6 +308,8 @@ fn index() {
                     host: true,
                     streaming: true,
                     permissions: vec!["network:api.example.org".to_owned()],
+                    icon: Some("https://example.org/icons/echo-1.2.0.svg".to_owned()),
+                    icon_integrity: Some("sha512-BBBB".to_owned()),
                 }],
             }],
         },
@@ -330,6 +334,7 @@ fn index_ignores_new_fields() {
 fn plugin_package() {
     let package: PluginPackage = serde_json::from_value(json!({
         "id": "polish",
+        "icon": "./icon.svg",
         "inline": "./inline.js",
         "host": "./host.js",
         "compat": ">=0.1.0",
@@ -340,6 +345,7 @@ fn plugin_package() {
     }))
     .expect("decode");
     assert_eq!(package.inline.as_deref(), Some("./inline.js"));
+    assert_eq!(package.icon.as_deref(), Some("./icon.svg"));
     assert_eq!(package.host.as_deref(), Some("./host.js"));
     assert_eq!(package.fields[0].key, "api_key");
     assert_eq!(

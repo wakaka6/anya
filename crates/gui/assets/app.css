@@ -885,6 +885,7 @@ select:active { background-color: var(--field-hover); }
 
 .tile { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 7px; color: #fff; font-size: 12px; font-weight: 700; }
 .tile.add { background: var(--field); color: var(--muted); font-size: 16px; font-weight: 400; }
+.tile.icon { object-fit: contain; }
 .svc { display: grid; flex: 1; min-width: 0; gap: 1px; }
 .svc b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .svc small { color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }

@@ -1,17 +1,20 @@
 //! A plugin built into Anya, as its user sees it: listed like a registry
 //! entry, installed from the binary with the checks of a download.
 
-use anya_plugin_host::{Bundled, PluginDirs, PluginError, Store, read_package};
+use anya_plugin_host::{Bundled, PluginDirs, PluginError, Store, package_icon, read_package};
 use anya_protocol::Provide;
+
+const NOTES_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"/>"#;
 
 const NOTES: Bundled = Bundled {
     provides: &[Provide::Action],
     files: &[
         (
             "package.json",
-            r#"{"name":"notes","version":"1.2.0","private":true,"anya":{"name":"Notes","host":"./host.js","compat":">=0.1.0","protocol":1,"permissions":["fs:write:notes"]}}"#,
+            br#"{"name":"notes","version":"1.2.0","private":true,"anya":{"name":"Notes","icon":"./icon.svg","host":"./host.js","compat":">=0.1.0","protocol":1,"permissions":["fs:write:notes"]}}"#,
         ),
-        ("host.js", "export const action = () => {};"),
+        ("host.js", b"export const action = () => {};"),
+        ("icon.svg", NOTES_SVG),
     ],
 };
 
@@ -27,9 +30,9 @@ const NOTES_NEXT: Bundled = Bundled {
     files: &[
         (
             "package.json",
-            r#"{"name":"notes","version":"1.3.0","private":true,"anya":{"name":"Notes","host":"./host.js","compat":">=0.1.0","protocol":1}}"#,
+            br#"{"name":"notes","version":"1.3.0","private":true,"anya":{"name":"Notes","host":"./host.js","compat":">=0.1.0","protocol":1}}"#,
         ),
-        ("host.js", "export const action = () => 1;"),
+        ("host.js", b"export const action = () => 1;"),
     ],
 };
 
@@ -98,6 +101,14 @@ fn it_reads_as_a_registry_entry_with_one_release() {
     assert!(release.host);
     assert_eq!(release.permissions, ["fs:write:notes"]);
     assert_eq!(
+        (
+            release.icon.as_deref(),
+            NOTES.icon().expect("icon").as_deref()
+        ),
+        (None, Some(NOTES_SVG)),
+        "its icon comes from the binary, never from a URL"
+    );
+    assert_eq!(
         NOTES.entry().expect("again").versions[0].integrity,
         release.integrity,
         "the same files hash the same"
@@ -128,6 +139,10 @@ fn it_installs_without_the_network_and_waits_for_enable() {
         std::fs::read_to_string(package.dir.join("host.js")).expect("host.js"),
         "export const action = () => {};"
     );
+    assert_eq!(
+        package_icon(&package).expect("icon").as_deref(),
+        Some(NOTES_SVG)
+    );
 }
 
 #[test]
@@ -140,7 +155,7 @@ fn it_is_refused_where_it_cannot_run_and_when_its_package_is_broken() {
         provides: &[Provide::Action],
         files: &[(
             "package.json",
-            r#"{"name":"gone","version":"1.0.0","anya":{"host":"./host.js","compat":"*"}}"#,
+            br#"{"name":"gone","version":"1.0.0","anya":{"host":"./host.js","compat":"*"}}"#,
         )],
     };
     let err = store

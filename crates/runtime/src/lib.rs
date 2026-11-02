@@ -194,6 +194,9 @@ pub struct InstalledPlugin {
     /// The keys of its required settings left blank; its hooks do not run
     /// until they are set.
     pub missing: Vec<String>,
+    /// The name its icon is asked for by ([`Control::plugin_icon`]); `None`
+    /// when its package gives none, or none Anya can show.
+    pub icon: Option<String>,
 }
 
 /// What the plugin market offers: the official plugins, which are built into
@@ -228,6 +231,18 @@ pub struct MarketPlugin {
     pub host: bool,
     /// What it asks for, as the registry declares it (`network:host`, …).
     pub permissions: Vec<String>,
+    /// The name its icon is asked for by ([`Control::plugin_icon`]); `None`
+    /// when it gives none.
+    pub icon: Option<String>,
+}
+
+/// A plugin's icon, checked: one of the formats Anya shows, at most 1 MiB.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginIcon {
+    /// The picture.
+    pub bytes: Vec<u8>,
+    /// Its MIME type.
+    pub content_type: &'static str,
 }
 
 /// One hook a dictation runs now, as the settings list them.
@@ -1042,6 +1057,12 @@ pub trait Control: Send + Sync {
     /// thread. The official plugins are there without it; the UI translates
     /// why the registry was unreachable.
     fn plugin_market(&self) -> Market;
+
+    /// The icon named `name` by [`InstalledPlugin::icon`] or
+    /// [`MarketPlugin::icon`]; `None` when there is none to show. A registry
+    /// plugin's icon is downloaded the first time, so it may block on the
+    /// network: call it off the UI thread.
+    fn plugin_icon(&self, name: &str) -> Option<PluginIcon>;
 
     /// Installs plugin `id`, disabled: an official plugin from Anya itself,
     /// any other at its newest release from the registry. Blocks while

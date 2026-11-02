@@ -44,7 +44,8 @@
 //! | `POST /api/pairing` | | `{code, expires_in, url, fingerprint, qr}` (`qr` an SVG of the pairing offer, `expires_in` in seconds); 409 when LAN sharing is off or down |
 //! | `POST /api/clients/scopes` | `{id, scopes}` | `{clients}`; 400 for an unknown scope, 404 for an unknown client |
 //! | `POST /api/clients/remove` | `{id}` | `{clients}`; 404 for an unknown client |
-//! | `POST /api/plugins/market` | | `{plugins: [{id, name, description, version, streaming, permissions}]}` from the registry; 502 when it cannot be read |
+//! | `POST /api/plugins/market` | | `{plugins: [{id, name, description, version, streaming, permissions, icon}]}` from the registry; 502 when it cannot be read; `icon`, here and on installed plugins, is the URL of the plugin's icon or `null` |
+//! | `GET /api/plugins/icon/<name>` | | the icon's bytes, cached as immutable; 404 when there is none to show |
 //! | `POST /api/plugins/install` | `{id}` | `{plugins}` the installed list; the plugin is installed disabled; 409 with the reason when refused |
 //! | `POST /api/plugins/enable` | `{id, on}` | `{plugins}`; 404 for a plugin that is not installed |
 //! | `POST /api/plugins/remove` | `{id}` | `{plugins}`; 404 for a plugin that is not installed |

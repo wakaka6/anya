@@ -240,6 +240,10 @@ impl Control for Fake {
         }
     }
 
+    fn plugin_icon(&self, _name: &str) -> Option<anya_runtime::PluginIcon> {
+        None
+    }
+
     fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
         Err(PluginIssue::Bun {
             reason: "no registry".to_owned(),
@@ -583,6 +587,7 @@ fn installed_plugins_show_their_load_state_in_both_locales() {
                 permissions: Vec::new(),
                 fields: Vec::new(),
                 missing: Vec::new(),
+                icon: None,
             })
             .collect();
         let (mut app, _) = app(&fake, locale);

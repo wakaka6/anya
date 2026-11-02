@@ -175,6 +175,10 @@ impl Control for Fake {
         }
     }
 
+    fn plugin_icon(&self, _name: &str) -> Option<anya_runtime::PluginIcon> {
+        None
+    }
+
     fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {
         Err(PluginIssue::Bun {
             reason: "no registry".to_owned(),

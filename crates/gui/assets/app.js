@@ -1366,8 +1366,14 @@ const openEngines = new Set();
 // Repaints what depends on which services are usable; set by the engine page.
 let engineViews = null;
 
-// A coloured tile with the name's first letter: the same colour every time.
-function tileFor(id, title) {
+// The plugin's icon when it has one that loads; else a coloured tile with
+// the name's first letter, the same colour every time.
+function tileFor(id, title, icon) {
+  if (icon) {
+    const img = el("img", { class: "tile icon", src: icon, alt: "", "aria-hidden": "true" });
+    img.addEventListener("error", () => img.replaceWith(tileFor(id, title)), { once: true });
+    return img;
+  }
   let h = 0;
   for (const ch of id) h = (h * 31 + ch.codePointAt(0)) >>> 0;
   const letter = ([...title.trim()][0] ?? "?").toUpperCase();
@@ -1736,7 +1742,7 @@ function pluginSettings(p) {
 
 function installedItem(p) {
   const row = el("div", { class: p.id === freshPlugin ? "row plugin fresh" : "row plugin" },
-    tileFor(p.id, p.name),
+    tileFor(p.id, p.name, p.icon),
     el("div", { class: "svc" },
       el("b", { title: p.name }, p.name, el("span", { class: "ver" }, `v${p.version}`)),
       el("small", { class: p.enabled ? `state-${p.state}` : "" }, p.enabled ? p.line : t("gui.plugins.disabled_note")),
@@ -1794,7 +1800,7 @@ function marketCard(p) {
   const busy = installing === p.id;
   return el("div", { class: "plugin-card" },
     el("div", { class: "top" },
-      tileFor(p.id, p.name),
+      tileFor(p.id, p.name, p.icon),
       el("div", { class: "svc" }, el("b", { title: p.name }, p.name), el("small", {}, `v${p.version}`)),
       el("button", {
         type: "button",

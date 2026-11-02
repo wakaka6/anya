@@ -13,11 +13,15 @@ pub const PLUGINS: &[Bundled] = &[
         files: &[
             (
                 "package.json",
-                include_str!("../../../plugins/spoken-punctuation/package.json"),
+                include_bytes!("../../../plugins/spoken-punctuation/package.json"),
             ),
             (
                 "inline.js",
-                include_str!("../../../plugins/spoken-punctuation/inline.js"),
+                include_bytes!("../../../plugins/spoken-punctuation/inline.js"),
+            ),
+            (
+                "icon.svg",
+                include_bytes!("../../../plugins/spoken-punctuation/icon.svg"),
             ),
         ],
     },
@@ -26,11 +30,15 @@ pub const PLUGINS: &[Bundled] = &[
         files: &[
             (
                 "package.json",
-                include_str!("../../../plugins/app-hotwords/package.json"),
+                include_bytes!("../../../plugins/app-hotwords/package.json"),
             ),
             (
                 "inline.js",
-                include_str!("../../../plugins/app-hotwords/inline.js"),
+                include_bytes!("../../../plugins/app-hotwords/inline.js"),
+            ),
+            (
+                "icon.svg",
+                include_bytes!("../../../plugins/app-hotwords/icon.svg"),
             ),
         ],
     },
@@ -39,11 +47,15 @@ pub const PLUGINS: &[Bundled] = &[
         files: &[
             (
                 "package.json",
-                include_str!("../../../plugins/daily-notes/package.json"),
+                include_bytes!("../../../plugins/daily-notes/package.json"),
             ),
             (
                 "host.js",
-                include_str!("../../../plugins/daily-notes/host.js"),
+                include_bytes!("../../../plugins/daily-notes/host.js"),
+            ),
+            (
+                "icon.svg",
+                include_bytes!("../../../plugins/daily-notes/icon.svg"),
             ),
         ],
     },
@@ -77,7 +89,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    use anya_plugin_host::{PluginDirs, Store, read_package};
+    use anya_plugin_host::{PluginDirs, Store, package_icon, read_package};
     use anya_script::InlinePlugin;
     use serde_json::Value;
 
@@ -128,6 +140,17 @@ mod tests {
             assert!(!installed.enabled);
             let package = read_package(&dirs.plugins.join(&entry.id).join(&installed.version))
                 .expect("unpacked");
+            assert_eq!(
+                package_icon(&package).unwrap_or_else(|e| panic!("{}'s icon reads: {e}", entry.id)),
+                bundled.icon().expect("icon"),
+                "{} shows the icon it installs with",
+                entry.id
+            );
+            assert!(
+                bundled.icon().expect("icon").is_some(),
+                "{} has an icon",
+                entry.id
+            );
             if let Some(inline) = &package.anya.inline {
                 let budgets = anya_config::Config::default()
                     .plugins

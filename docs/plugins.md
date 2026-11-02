@@ -25,6 +25,7 @@ my-plugin/
   package.json
   host.js          # anya.host: runs in Bun
   inline.js        # anya.inline: runs in QuickJS, one file
+  icon.svg         # anya.icon: optional
 ```
 
 ```json
@@ -35,6 +36,7 @@ my-plugin/
   "type": "module",
   "anya": {
     "id": "my-plugin",
+    "icon": "./icon.svg",
     "host": "./host.js",
     "inline": "./inline.js",
     "compat": ">=0.1.0",
@@ -50,6 +52,7 @@ my-plugin/
 - `anya.host` and `anya.inline` name the entries; a package has at least one. What a package provides is what its entries export; the registry's CI reads it from them, so there is nothing to declare.
 - `anya.id` is the plugin id (default: `name`): lowercase letters, digits and `-`. An engine's manifest `id` must equal it.
 - `anya.name` and `anya.description` (default: the package's `name` and `description`) are shown in the plugin list; they may be `Text`, a string or a `{ "en": …, "zh-CN": … }` map.
+- `anya.icon` is the plugin's picture in the plugin list and the market: a file in the package (list it in `files` so `npm pack` keeps it) or a `data:image/…` URI, never a URL, so showing it reaches no one's server. PNG, JPEG, GIF, WebP, ICO or SVG, told by content, at most 1 MiB; square, drawn at 28 px. An SVG is shown only as an image, never run; the registry refuses one with scripts, event handlers or outside references. Without an icon, or with one that does not read, the list shows a coloured tile with the name's first letter.
 - `anya.compat` is a semver range of Anya versions. `anya.protocol` is the plugin protocol, currently `1`. Anya installs only releases of its own protocol.
 - `anya.permissions` are strings the user sees: `network:<host>`, `env:<NAME>`, `fs:read:<path>`. They are declarations for review and display; Anya does not sandbox a host entry.
 - `anya.fields` are the settings of the plugin's hooks, drawn as a form in the settings window and stored under `[plugins.settings.<id>]`. An engine keeps its own in its manifest. A field with `"required": true` must be set before the plugin's hooks run: until then Anya skips them, and the Plugins page and `anya plugin list` say which settings are missing. Mark only what the hooks cannot work without.
@@ -212,7 +215,7 @@ The script runs the registry's checks and writes the release into `index.json`. 
 
 ## Registry index format (version 1)
 
-`https://raw.githubusercontent.com/wakaka6/anya/registry/index.json`, the `registry` branch of this repository, written by the plugin-release workflow and read by Anya when the user opens the marketplace or checks for updates. Tarballs sit beside it in `registry/tgz/`. Types: `anya_protocol::Index`.
+`https://raw.githubusercontent.com/wakaka6/anya/registry/index.json`, the `registry` branch of this repository, written by the plugin-release workflow and read by Anya when the user opens the marketplace or checks for updates. Tarballs sit beside it in `registry/tgz/`, icons in `registry/icons/`. Types: `anya_protocol::Index`.
 
 | Field | Meaning |
 | --- | --- |
@@ -228,6 +231,8 @@ The script runs the registry's checks and writes the release into `index.json`. 
 | `versions[].host` | Whether it has a host entry, and so runs in Bun. |
 | `versions[].streaming` | An engine's `manifest.streaming`, for listing before install. |
 | `versions[].permissions` | Strings shown before enabling. |
+| `versions[].icon` | URL of the release's icon in `registry/icons/`; absent when the package gives none. |
+| `versions[].icon_integrity` | `sha512-<base64>` of the icon. Anya downloads the icon the first time the market shows it, checks this and keeps it under a name made from it; an icon that fails is not asked for again for an hour. |
 
 Unknown fields are ignored. Anya installs a release only when it provides something and nothing this Anya does not know, `protocol` equals its own and `anya` matches its version.
 
@@ -244,8 +249,8 @@ Bun comes from `PATH` if it is version 1.2.0 or newer; otherwise Anya downloads 
 The Anya repository holds one directory per plugin under `plugins/<id>/` and the workflow `.github/workflows/plugin-release.yml`. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. The official plugins are built into Anya instead (docs/decisions/0017): their packages are `"private": true`, and the workflow refuses to release them. Releasing:
 
 1. A maintainer tags the merged commit `<plugin-id>-v<version>` (for example `echo-v1.2.0`). The tag version must equal `package.json`'s.
-2. The workflow packs the plugin (`npm pack`) and runs `scripts/validate-plugin.mjs` against the SDK in the same commit, which checks: id and version format; at least one of `anya.host` and `anya.inline`; `anya.compat` (not unbounded), `anya.protocol`, `anya.permissions`, `anya.fields` and `anya.limits` are well formed; an inline entry is one file without `import` or `require`; each entry loads and exports at least one hook, at most one of each kind; an engine's `manifest.id` equals the plugin id and its `streaming` is a boolean; the version is not already in the index. It writes `provides` and `host` from what the entries export.
-3. It computes the tarball's `sha512` integrity, appends the entry to `index.json` and commits the tarball (`tgz/`) and the index to the `registry` branch. There is no GitHub release and no GitHub Pages site.
+2. The workflow packs the plugin (`npm pack`) and runs `scripts/validate-plugin.mjs` against the SDK in the same commit, which checks: id and version format; at least one of `anya.host` and `anya.inline`; `anya.compat` (not unbounded), `anya.protocol`, `anya.permissions`, `anya.fields` and `anya.limits` are well formed; an inline entry is one file without `import` or `require`; each entry loads and exports at least one hook, at most one of each kind; an engine's `manifest.id` equals the plugin id and its `streaming` is a boolean; `anya.icon`, if any, is a picture as above; the version is not already in the index. It writes `provides` and `host` from what the entries export.
+3. It computes the tarball's `sha512` integrity, appends the entry to `index.json` and commits the tarball (`tgz/`), the icon (`icons/`, named after its hash) and the index to the `registry` branch. There is no GitHub release and no GitHub Pages site.
 
 Nothing to copy: the workflow and the validation script live in this repository, and the SDK it validates against is the one in the tagged commit.
 

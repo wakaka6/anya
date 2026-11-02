@@ -5,7 +5,7 @@
   "description": "Hotwords for the app in front: the editor gets your project's names, the terminal its commands.",
   "type": "module",
   "main": "inline.js",
-  "files": ["inline.js"],
+  "files": ["inline.js", "icon.svg"],
   "anya": {
     "id": "app-hotwords",
     "name": { "en": "Hotwords per app", "zh-CN": "按应用加热词" },
@@ -13,6 +13,7 @@
       "en": "Adds the hotwords you list for the app in front when a dictation starts",
       "zh-CN": "开始听写时，按前台应用加上你为它列的热词"
     },
+    "icon": "./icon.svg",
     "inline": "./inline.js",
     "compat": ">=0.0.0",
     "protocol": 1,

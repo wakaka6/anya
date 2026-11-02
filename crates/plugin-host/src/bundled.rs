@@ -9,6 +9,7 @@ use std::path::Path;
 use anya_protocol::{IndexPlugin, IndexVersion, PLUGIN_PROTOCOL, Provide};
 
 use crate::PluginError;
+use crate::icon::{check_icon, icon_bytes};
 use crate::package::parse;
 use crate::registry::integrity_of;
 
@@ -19,7 +20,7 @@ pub struct Bundled {
     /// written in Rust.
     pub provides: &'static [Provide],
     /// Its files by path inside the package, `package.json` among them.
-    pub files: &'static [(&'static str, &'static str)],
+    pub files: &'static [(&'static str, &'static [u8])],
 }
 
 impl Bundled {
@@ -29,20 +30,44 @@ impl Bundled {
         Ok(self.release()?.0)
     }
 
-    /// The entry and the package as an npm tarball.
-    pub(crate) fn release(&self) -> Result<(IndexPlugin, Vec<u8>), PluginError> {
+    /// The icon its `anya.icon` names, checked; `None` when it names none.
+    pub fn icon(&self) -> Result<Option<Vec<u8>>, PluginError> {
+        let package = self.package()?;
+        let Some(icon) = package.anya.icon.as_deref() else {
+            return Ok(None);
+        };
+        let bytes = icon_bytes(icon, |file| {
+            self.files
+                .iter()
+                .find(|(path, _)| Path::new(path) == file)
+                .map(|(_, bytes)| bytes.to_vec())
+                .ok_or_else(|| PluginError::Io {
+                    path: icon.to_owned(),
+                    reason: "not a file of the built-in plugin".to_owned(),
+                })
+        })?;
+        check_icon(icon, &bytes)?;
+        Ok(Some(bytes))
+    }
+
+    fn package(&self) -> Result<crate::Package, PluginError> {
         let json = self
             .files
             .iter()
             .find(|(path, _)| *path == "package.json")
-            .map(|(_, text)| *text)
+            .map(|(_, bytes)| *bytes)
             .ok_or_else(|| PluginError::Io {
                 path: "package.json".to_owned(),
                 reason: "a built-in plugin has no package.json".to_owned(),
             })?;
-        let package = parse(json.as_bytes(), "package.json", Path::new(""), |file| {
+        parse(json, "package.json", Path::new(""), |file| {
             self.files.iter().any(|(path, _)| Path::new(path) == file)
-        })?;
+        })
+    }
+
+    /// The entry and the package as an npm tarball.
+    pub(crate) fn release(&self) -> Result<(IndexPlugin, Vec<u8>), PluginError> {
+        let package = self.package()?;
         let tgz = self.tarball()?;
         let release = IndexVersion {
             artifact: format!("{}-{}.tgz", package.id, package.version),
@@ -54,6 +79,9 @@ impl Bundled {
             host: package.anya.host.is_some(),
             streaming: false,
             permissions: package.anya.permissions,
+            // Shown from the binary ([`Bundled::icon`]), not fetched.
+            icon: None,
+            icon_integrity: None,
         };
         let entry = IndexPlugin {
             id: package.id,
@@ -73,13 +101,13 @@ impl Bundled {
         };
         let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         let mut tar = tar::Builder::new(gz);
-        for (path, text) in self.files {
+        for (path, bytes) in self.files {
             let mut header = tar::Header::new_gnu();
             header.set_entry_type(tar::EntryType::Regular);
-            header.set_size(text.len() as u64);
+            header.set_size(bytes.len() as u64);
             header.set_mode(0o644);
             header.set_mtime(0);
-            tar.append_data(&mut header, format!("package/{path}"), text.as_bytes())
+            tar.append_data(&mut header, format!("package/{path}"), *bytes)
                 .map_err(failed)?;
         }
         let mut gz = tar.into_inner().map_err(failed)?;

@@ -1,18 +1,21 @@
 // Registry CI: validates a plugin release and merges its entry into index.json.
-//   bun scripts/validate-plugin.mjs <package-dir> <tarball.tgz> <artifact-url> <index.json> <sdk/index.js>
+//   bun scripts/validate-plugin.mjs <package-dir> <tarball.tgz> <artifact-url> <index.json> <sdk/index.js> <icons-dir> <icons-url>
 // <package-dir> is the unpacked tarball (its package.json at the root);
 // <sdk/index.js> is the @wakaka6/anya-plugin SDK of the Anya release the plugin targets.
+// The icon "anya.icon" names is checked as Anya checks it and written to
+// <icons-dir> under a name made from its content; the index entry points at
+// it under <icons-url>, so the market shows it before install.
 //
 // A package has "anya.host" (runs in Bun), "anya.inline" (runs in QuickJS
 // inside Anya), or both. The script loads each entry and writes what they
 // export into the index entry as `provides`, so the two cannot disagree
 // (docs/decisions/0015-plugin-runtimes.md).
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 
-const [dir, tarball, artifact, indexFile, sdkFile] = process.argv.slice(2);
+const [dir, tarball, artifact, indexFile, sdkFile, iconsDir, iconsUrl] = process.argv.slice(2);
 const PROTOCOL = 1;
 const KINDS = ["engine", "context", "transform", "action"];
 const LIMIT_KEYS = ["inline_ms", "inline_memory_mib", "context_ms", "transform_ms", "action_ms"];
@@ -41,6 +44,8 @@ need(
 );
 need(!/^v?\d+$/.test(anya.compat ?? "") && !/\*\s*$/.test(anya.compat ?? "") && anya.compat !== "*", "compat must not accept every Anya");
 
+const icon = anya.icon === undefined ? undefined : readIcon(anya.icon);
+
 const fields = anya.fields ?? [];
 need(Array.isArray(fields), '"anya.fields" must be a list');
 if (Array.isArray(fields)) validateFields(fields, '"anya.fields"');
@@ -63,6 +68,59 @@ function validateFields(list, where) {
     need(FIELD_KINDS.includes(f?.kind), `${where}: field ${f?.key} has kind ${JSON.stringify(f?.kind)}; use ${FIELD_KINDS.join(", ")}`);
     need(f?.kind !== "choice" || Array.isArray(f?.options), `${where}: field ${f?.key}: kind "choice" needs options`);
   }
+}
+
+// The icon's bytes and type, checked as Anya checks them (crates/plugin-host/src/icon.rs).
+function readIcon(name) {
+  if (typeof name !== "string" || name.trim() === "") {
+    problems.push('"anya.icon" must be a file in the package or a data:image URI');
+    return undefined;
+  }
+  let bytes;
+  const trimmed = name.trim();
+  if (/^data:image\//i.test(trimmed)) {
+    const comma = trimmed.indexOf(",");
+    const body = comma < 0 ? "" : trimmed.slice(comma + 1);
+    bytes = /;base64$/i.test(trimmed.slice(0, Math.max(comma, 0)))
+      ? Buffer.from(body.replace(/\s/g, ""), "base64")
+      : Buffer.concat(body.split(/(%[0-9a-fA-F]{2})/).map((part) =>
+          /^%[0-9a-fA-F]{2}$/.test(part) ? Buffer.from([parseInt(part.slice(1), 16)]) : Buffer.from(part)));
+  } else if (trimmed.includes("://")) {
+    problems.push('"anya.icon" must be a file in the package or a data:image URI, not a URL');
+    return undefined;
+  } else {
+    const file = path.resolve(dir, trimmed);
+    if (path.isAbsolute(trimmed) || path.relative(path.resolve(dir), file).startsWith("..")) {
+      problems.push('"anya.icon" lies outside the package');
+      return undefined;
+    }
+    if (!existsSync(file)) {
+      problems.push(`"anya.icon" ${trimmed} is not a file in the package`);
+      return undefined;
+    }
+    bytes = readFileSync(file);
+  }
+  const type = sniffIcon(bytes);
+  need(bytes.length > 0, '"anya.icon" is empty');
+  need(bytes.length <= 1 << 20, '"anya.icon" is larger than 1 MiB');
+  need(type !== undefined, '"anya.icon" is not PNG, JPEG, GIF, WebP, ICO or SVG');
+  if (type === "svg") {
+    const text = bytes.toString("utf8");
+    need(!/<script[\s>]/i.test(text) && !/\son\w+\s*=/i.test(text), '"anya.icon" is an SVG with scripts or event handlers');
+    need(!/(href|src)\s*=\s*["']\s*(https?:)?\/\//i.test(text), '"anya.icon" is an SVG that loads something from outside it');
+  }
+  return { bytes, type };
+}
+
+function sniffIcon(b) {
+  const starts = (...sig) => sig.every((x, i) => b[i] === x);
+  if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "png";
+  if (starts(0xff, 0xd8, 0xff)) return "jpg";
+  if (b.subarray(0, 6).toString("latin1") === "GIF87a" || b.subarray(0, 6).toString("latin1") === "GIF89a") return "gif";
+  if (b.length >= 12 && b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "webp";
+  if (starts(0, 0, 1, 0)) return "ico";
+  if (b.subarray(0, 1024).toString("latin1").toLowerCase().includes("<svg")) return "svg";
+  return undefined;
 }
 
 // An entry's file, which must lie inside the package.
@@ -163,6 +221,14 @@ if (problems.length) {
 }
 
 const sorted = KINDS.filter((k) => provides.has(k));
+let iconEntry = {};
+if (icon) {
+  const sum = createHash("sha512").update(icon.bytes).digest();
+  const file = `${sum.subarray(0, 16).toString("hex")}.${icon.type}`;
+  mkdirSync(iconsDir, { recursive: true });
+  writeFileSync(path.join(iconsDir, file), icon.bytes);
+  iconEntry = { icon: `${iconsUrl.replace(/\/$/, "")}/${file}`, icon_integrity: "sha512-" + sum.toString("base64") };
+}
 const integrity = "sha512-" + createHash("sha512").update(readFileSync(tarball)).digest("base64");
 const index = existsSync(indexFile) ? JSON.parse(readFileSync(indexFile, "utf8")) : { version: 1, plugins: [] };
 let plugin = index.plugins.find((p) => p.id === id);
@@ -184,6 +250,7 @@ plugin.versions.push({
   host: anya.host !== undefined,
   streaming: engine?.streaming ?? false,
   permissions,
+  ...iconEntry,
 });
 writeFileSync(indexFile, JSON.stringify(index, null, 2) + "\n");
 console.log(`ok: ${id} ${pkg.version} ${sorted.join(",")} ${integrity}`);

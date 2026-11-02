@@ -20,9 +20,13 @@ use anya_protocol::{
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
     HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market, MarketPlugin, Notice, PairError,
-    PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError,
-    Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
+    PairedClient, Pairing, PluginIcon, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route,
+    SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
 };
+
+/// The name the `echo` plugin's icon goes by, and the icon.
+pub(crate) const ECHO_ICON: &str = "0123456789abcdef0123456789abcdef";
+const ECHO_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#5856d6"/></svg>"##;
 
 /// A running Anya that exists only in memory.
 pub(crate) struct FakeControl {
@@ -153,6 +157,7 @@ impl FakeControl {
                         provides: vec![Provide::Engine],
                         host: true,
                         permissions: vec!["network:example.com".to_owned()],
+                        icon: Some(ECHO_ICON.to_owned()),
                     },
                     MarketPlugin {
                         id: "whisper-local".to_owned(),
@@ -167,6 +172,7 @@ impl FakeControl {
                         provides: vec![Provide::Engine],
                         host: true,
                         permissions: Vec::new(),
+                        icon: None,
                     },
                     MarketPlugin {
                         id: "deepgram".to_owned(),
@@ -181,6 +187,7 @@ impl FakeControl {
                         provides: vec![Provide::Engine],
                         host: true,
                         permissions: vec!["network:api.deepgram.com".to_owned()],
+                        icon: None,
                     },
                     MarketPlugin {
                         id: "polish".to_owned(),
@@ -195,6 +202,7 @@ impl FakeControl {
                         provides: vec![Provide::Transform],
                         host: true,
                         permissions: vec!["network:api.openai.com".to_owned()],
+                        icon: None,
                     },
                     MarketPlugin {
                         id: "swap".to_owned(),
@@ -209,6 +217,7 @@ impl FakeControl {
                         provides: vec![Provide::Context, Provide::Transform],
                         host: false,
                         permissions: Vec::new(),
+                        icon: None,
                     },
                 ],
                 unreachable: None,
@@ -461,6 +470,13 @@ impl Control for FakeControl {
         lock(&self.market).clone()
     }
 
+    fn plugin_icon(&self, name: &str) -> Option<PluginIcon> {
+        (name == ECHO_ICON).then(|| PluginIcon {
+            bytes: ECHO_SVG.to_vec(),
+            content_type: "image/svg+xml",
+        })
+    }
+
     fn install_plugin(&self, id: &str) -> Result<(), PluginIssue> {
         self.call(format!("install_plugin {id}"));
         let release = lock(&self.market)
@@ -486,6 +502,7 @@ impl Control for FakeControl {
             permissions: release.permissions,
             fields: Vec::new(),
             missing: Vec::new(),
+            icon: release.icon,
         });
         Ok(())
     }

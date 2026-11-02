@@ -5,7 +5,7 @@
   "description": "Say \"逗号\", \"句号\" or \"换行\" while dictating and get the mark.",
   "type": "module",
   "main": "inline.js",
-  "files": ["inline.js"],
+  "files": ["inline.js", "icon.svg"],
   "anya": {
     "id": "spoken-punctuation",
     "name": { "en": "Spoken punctuation", "zh-CN": "口述标点" },
@@ -13,6 +13,7 @@
       "en": "Say 逗号, 句号, 问号, 换行 and the like while dictating Chinese and get the mark",
       "zh-CN": "听写时说“逗号”“句号”“问号”“换行”等，得到对应的标点"
     },
+    "icon": "./icon.svg",
     "inline": "./inline.js",
     "compat": ">=0.0.0",
     "protocol": 1,
