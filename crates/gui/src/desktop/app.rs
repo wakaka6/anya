@@ -160,6 +160,12 @@ pub(super) fn run(
 
     watcher.abort();
     set_forward(None);
+    // Take the tray and windows down while the loop's thread is still ours:
+    // an input method still attached to a hidden web view at process exit is
+    // what macOS logs as a mach port error.
+    app.tray = None;
+    app.settings.window.set_visible(false);
+    app.panel.window.set_visible(false);
     drop(instance);
     let failure = app.failure.take();
     drop(app);
