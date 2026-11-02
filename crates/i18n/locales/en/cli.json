@@ -43,6 +43,8 @@
   "cli.plugin.note.inline": "It runs inline in Anya, with no network and no disk.",
   "cli.plugin.enable_hint": "If you accept that, turn it on with: anya plugin enable {id}",
   "cli.plugin.enabled": "Enabled {id}. Restart Anya to load it.",
+  "cli.plugin.needs_settings": "It needs settings first: {fields}. Fill them in on the settings window's Plugins page, or under [plugins.settings.{id}] in the config file; its hooks do not run until then.",
+  "cli.plugin.list.needs_settings": "needs settings: {fields}",
   "cli.plugin.disabled": "Disabled {id}. Restart Anya to stop it.",
   "cli.plugin.removed": "Removed {id}. Restart Anya if it was running.",
   "cli.plugin.list.none": "No plugins installed",

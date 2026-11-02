@@ -579,6 +579,7 @@ fn installed_plugins_show_their_load_state_in_both_locales() {
                 host: true,
                 permissions: Vec::new(),
                 fields: Vec::new(),
+                missing: Vec::new(),
             })
             .collect();
         let (mut app, _) = app(&fake, locale);

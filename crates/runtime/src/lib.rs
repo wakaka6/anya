@@ -191,6 +191,9 @@ pub struct InstalledPlugin {
     pub permissions: Vec<String>,
     /// The settings of its hooks, kept under `[plugins.settings.<id>]`.
     pub fields: Vec<Field>,
+    /// The keys of its required settings left blank; its hooks do not run
+    /// until they are set.
+    pub missing: Vec<String>,
 }
 
 /// A plugin the registry offers, at its newest release.

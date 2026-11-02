@@ -1601,6 +1601,7 @@ async fn a_failed_plugin_says_why_in_the_users_language() {
         host: true,
         permissions: Vec::new(),
         fields: Vec::new(),
+        missing: Vec::new(),
     });
     let h = harness_with(control, ShellKind::Web).await;
     let p = h.get("/api/status").await.json()["plugins"][0].clone();
@@ -2026,6 +2027,7 @@ fn installed(
             required: false,
             advanced: false,
         }],
+        missing: Vec::new(),
     }
 }
 
@@ -2057,6 +2059,36 @@ async fn installed_plugins_say_what_they_provide_and_where_they_run() {
         .expect("swap in the market");
     assert_eq!(swap["provides"], json!(["context", "transform"]));
     assert_eq!(swap["host"], false);
+}
+
+#[tokio::test]
+async fn an_enabled_plugin_with_a_required_setting_blank_says_which_until_it_is_set() {
+    use anya_protocol::Provide;
+    let control = FakeControl::sample();
+    let mut notes = installed("notes", vec![Provide::Action], true);
+    notes.fields[0].key = "folder".to_owned();
+    notes.fields[0].label = "Notes folder".into();
+    notes.fields[0].required = true;
+    let mut off = notes.clone();
+    off.id = "off".to_owned();
+    off.enabled = false;
+    off.load = anya_runtime::PluginLoad::Off;
+    lock(&control.plugins).extend([notes, off]);
+    let h = harness_with(control, ShellKind::Web).await;
+    let plugins = h.get("/api/state").await.json()["plugins"].clone();
+    assert_eq!(plugins[0]["state"], "setup");
+    assert_eq!(plugins[0]["missing"], json!(["folder"]));
+    let line = plugins[0]["line"].as_str().unwrap_or_default();
+    assert!(line.contains("Notes folder"), "{line}");
+    assert_eq!(plugins[1]["state"], "off", "an off plugin says it is off");
+
+    lock(&h.control.config).plugins.settings.insert(
+        "notes".to_owned(),
+        [("folder".to_owned(), "~/Notes".to_owned())].into(),
+    );
+    let plugins = h.get("/api/state").await.json()["plugins"].clone();
+    assert_eq!(plugins[0]["state"], "ok");
+    assert_eq!(plugins[0]["missing"], json!([]));
 }
 
 #[tokio::test]

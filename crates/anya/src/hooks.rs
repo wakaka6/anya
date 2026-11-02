@@ -47,6 +47,22 @@ impl Plan {
             .map(|p| info(p.hook.plugin(), Provide::Action, p.hook.runs()));
         contexts.chain(transforms).chain(actions).collect()
     }
+
+    /// The hooks a dictation runs: those of plugins with a required setting
+    /// left blank wait until it is set, instead of failing every time.
+    pub fn runnable(mut self, declared: &BTreeMap<String, Declared>) -> Plan {
+        let ready = |plugin: &str, settings: &BTreeMap<String, String>| {
+            declared
+                .get(plugin)
+                .is_none_or(|d| anya_config::unset(&d.required, Some(settings)).is_empty())
+        };
+        self.contexts
+            .retain(|p| ready(p.hook.plugin(), &p.settings));
+        self.transforms
+            .retain(|p| ready(p.hook.plugin(), &p.settings));
+        self.actions.retain(|p| ready(p.hook.plugin(), &p.settings));
+        self
+    }
 }
 
 /// What `points` serve now, planned by `cfg`: plugins in `[plugins] order`,
@@ -233,6 +249,7 @@ mod tests {
                     inline_ms: Some(50),
                     ..Limits::default()
                 },
+                required: Vec::new(),
             },
         )]);
         let p = plan(&cfg, &points, &declared);
@@ -246,5 +263,41 @@ mod tests {
         assert_eq!(p.contexts[0].budget, Duration::from_millis(300));
         assert_eq!(p.chain, Duration::from_millis(4000));
         drop(ctx);
+    }
+
+    #[test]
+    fn a_plugin_runs_only_once_its_required_settings_are_set() {
+        let points = Points::default();
+        let _held = serve_transforms(&points, &[("notes", Runs::Host), ("tidy", Runs::Inline)]);
+        let declared = BTreeMap::from([(
+            "notes".to_owned(),
+            Declared {
+                limits: Limits::default(),
+                required: vec!["folder".to_owned()],
+            },
+        )]);
+        let mut cfg = Config::default();
+        let full = plan(&cfg, &points, &declared);
+        assert_eq!(ids(&full), ["notes", "tidy"], "the settings list them all");
+        assert_eq!(ids(&full.runnable(&declared)), ["tidy"]);
+
+        cfg.plugins.settings.insert(
+            "notes".into(),
+            [("folder".to_owned(), "  ".to_owned())].into(),
+        );
+        assert_eq!(
+            ids(&plan(&cfg, &points, &declared).runnable(&declared)),
+            ["tidy"],
+            "blank is unset"
+        );
+
+        cfg.plugins.settings.insert(
+            "notes".into(),
+            [("folder".to_owned(), "~/Notes".to_owned())].into(),
+        );
+        assert_eq!(
+            ids(&plan(&cfg, &points, &declared).runnable(&declared)),
+            ["notes", "tidy"]
+        );
     }
 }

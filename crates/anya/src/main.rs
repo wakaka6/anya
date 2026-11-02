@@ -149,7 +149,9 @@ fn with_context(
     declared: &BTreeMap<String, community::Declared>,
     desktop: Desktop,
 ) -> Arc<dyn Engine> {
-    let hooks = hooks::plan(cfg, points, declared).contexts;
+    let hooks = hooks::plan(cfg, points, declared)
+        .runnable(declared)
+        .contexts;
     if hooks.is_empty() {
         return engine;
     }
@@ -685,7 +687,7 @@ impl App {
             while let Some(done) = finished.recv().await {
                 let cfg = lock(&config).clone();
                 let declared = community.declared();
-                let plan = hooks::plan(&cfg, &points, &declared);
+                let plan = hooks::plan(&cfg, &points, &declared).runnable(&declared);
                 let mut text = done.text;
                 if !plan.transforms.is_empty() || !plan.actions.is_empty() {
                     let app = tokio::task::spawn_blocking(move || anya_focus::focused_app(desktop))
@@ -1323,6 +1325,12 @@ impl Control for App {
                     .as_ref()
                     .map(|k| k.anya.fields.clone())
                     .unwrap_or_default();
+                let required: Vec<String> = fields
+                    .iter()
+                    .filter(|f| f.required)
+                    .map(|f| f.key.clone())
+                    .collect();
+                let missing = lock(&self.config).plugins.unset(&p.id, &required);
                 InstalledPlugin {
                     title: seen
                         .and_then(|s| s.manifest.as_ref())
@@ -1343,6 +1351,7 @@ impl Control for App {
                         .map(|k| k.anya.permissions.clone())
                         .unwrap_or_default(),
                     fields,
+                    missing,
                 }
             })
             .collect()

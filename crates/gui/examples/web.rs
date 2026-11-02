@@ -283,6 +283,7 @@ fn main() {
                         required: true,
                         advanced: false,
                     }],
+                    missing: Vec::new(),
                 },
                 InstalledPlugin {
                     id: "swap".to_owned(),
@@ -295,6 +296,7 @@ fn main() {
                     host: false,
                     permissions: Vec::new(),
                     fields: Vec::new(),
+                    missing: Vec::new(),
                 },
             ]);
             lock(&control.activity).extend([

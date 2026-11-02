@@ -353,6 +353,11 @@ impl Plugins {
         self.settings.get(id).cloned().unwrap_or_default()
     }
 
+    /// The keys in `required` that plugin `id`'s settings leave blank.
+    pub fn unset(&self, id: &str, required: &[String]) -> Vec<String> {
+        unset(required, self.settings.get(id))
+    }
+
     /// Where `id` stands in the user's order: its index in `order`, else after
     /// every listed plugin. Sort by this, then by id, for the run order.
     pub fn rank(&self, id: &str) -> usize {
@@ -372,6 +377,20 @@ impl Plugins {
     pub fn chain_budget(&self) -> Duration {
         chain_budget(self.limits.chain_ms)
     }
+}
+
+/// The keys in `required` that `settings` leaves blank: absent, or only
+/// spaces. A plugin's hooks wait until none are.
+pub fn unset(required: &[String], settings: Option<&BTreeMap<String, String>>) -> Vec<String> {
+    required
+        .iter()
+        .filter(|key| {
+            settings
+                .and_then(|s| s.get(*key))
+                .is_none_or(|v| v.trim().is_empty())
+        })
+        .cloned()
+        .collect()
 }
 
 /// `[plugins.limits]`: the budgets of every plugin (keys of [`Limits`]), the

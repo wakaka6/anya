@@ -7,7 +7,7 @@ use std::io::Write;
 use anya_config::Config;
 use anya_i18n::Catalog;
 use anya_plugin_host::{
-    BunPath, DEFAULT_INDEX_URL, Installed, PluginDirs, PluginError, Registry, Store,
+    BunPath, DEFAULT_INDEX_URL, Installed, PluginDirs, PluginError, Registry, Store, read_package,
 };
 use anya_protocol::{Index, IndexPlugin, IndexVersion, Provide};
 use anya_runtime::PluginIssue;
@@ -193,6 +193,26 @@ fn provided(provides: &[Provide], streaming: Option<bool>, c: &Catalog) -> Strin
     words.join(c.t("cli.plugin.provide.join"))
 }
 
+/// The labels of `plugin`'s required settings that `config` leaves blank,
+/// in words; `None` when none are, or its package cannot be read.
+fn unset_labels(store: &Store, plugin: &Installed, config: &Config, c: &Catalog) -> Option<String> {
+    let fields = read_package(&store.package_dir(plugin)).ok()?.anya.fields;
+    let required: Vec<String> = fields
+        .iter()
+        .filter(|f| f.required)
+        .map(|f| f.key.clone())
+        .collect();
+    let unset = config.plugins.unset(&plugin.id, &required);
+    (!unset.is_empty()).then(|| {
+        fields
+            .iter()
+            .filter(|f| unset.contains(&f.key))
+            .map(|f| f.label.get(c.locale()))
+            .collect::<Vec<_>>()
+            .join(c.t("cli.plugin.provide.join"))
+    })
+}
+
 /// Whether a plugin needs Bun, in words.
 fn runs(host: bool, c: &Catalog) -> &str {
     c.t(if host {
@@ -326,6 +346,22 @@ pub async fn run(
         Action::Enable(id) => {
             store.enable(&id).map_err(failed)?;
             writeln!(out, "{}", c.tf("cli.plugin.enabled", &[("id", &id)])).map_err(io)?;
+            let enabled = store.installed().map_err(failed)?;
+            if let Some(fields) = enabled
+                .iter()
+                .find(|p| p.id == id)
+                .and_then(|p| unset_labels(&store, p, config, c))
+            {
+                writeln!(
+                    out,
+                    "{}",
+                    c.tf(
+                        "cli.plugin.needs_settings",
+                        &[("id", &id), ("fields", &fields)]
+                    )
+                )
+                .map_err(io)?;
+            }
         }
         Action::Disable(id) => {
             store.disable(&id).map_err(failed)?;
@@ -395,6 +431,14 @@ pub async fn run(
                     )
                 )
                 .map_err(io)?;
+                if let Some(fields) = plugin
+                    .enabled
+                    .then(|| unset_labels(&store, plugin, config, c))
+                    .flatten()
+                {
+                    let line = c.tf("cli.plugin.list.needs_settings", &[("fields", &fields)]);
+                    writeln!(out, "    {line}").map_err(io)?;
+                }
             }
             if store.needs_bun().unwrap_or(false) && BunPath::detect(&dirs.runtime).await.is_none()
             {

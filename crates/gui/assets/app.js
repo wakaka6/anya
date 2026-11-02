@@ -1505,7 +1505,7 @@ function fieldInput(f, value, oninput, onchange) {
     type: f.kind === "secret" ? "password" : "text",
     spellcheck: "false",
     autocomplete: "off",
-    placeholder: t("gui.engine.default"),
+    placeholder: t(f.required ? "gui.engine.required" : "gui.engine.default"),
     "aria-label": f.label,
   });
   input.value = value;
@@ -1727,7 +1727,8 @@ function pluginSettings(p) {
         }, { field: "plugins.settings" });
       }),
       f.help ? el("small", {}, f.help) : null)));
-  return el("details", { class: "plugin-settings" },
+  // A plugin waiting for a required setting opens on it.
+  return el("details", { class: "plugin-settings", open: p.enabled && p.missing.length > 0 },
     el("summary", {}, t("gui.plugins.settings")),
     ...rows,
     errorSlot("plugins.settings"));

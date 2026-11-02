@@ -47,11 +47,28 @@ pub(super) fn state(page: &Page, catalog: &Catalog) -> Value {
 }
 
 /// Installed plugins as the page lists them: a name, a state and a line
-/// saying it in the catalog's language.
+/// saying it in the catalog's language. An enabled plugin with a required
+/// setting left blank says which, unless it failed to load.
 pub(super) fn plugins(list: &[InstalledPlugin], catalog: &Catalog) -> Vec<Value> {
     list.iter()
         .map(|p| {
+            let unset = || {
+                p.fields
+                    .iter()
+                    .filter(|f| p.missing.contains(&f.key))
+                    .map(|f| f.label.get(catalog.locale()))
+                    .collect::<Vec<_>>()
+                    .join(catalog.t("gui.list_separator"))
+            };
             let (state, line) = match &p.load {
+                PluginLoad::Failed { .. } | PluginLoad::Off => None,
+                _ if p.missing.is_empty() => None,
+                _ => Some((
+                    "setup",
+                    catalog.tf("gui.plugins.state_needs_settings", &[("fields", &unset())]),
+                )),
+            }
+            .unwrap_or_else(|| match &p.load {
                 PluginLoad::HostDown => (
                     "missing",
                     catalog.t("gui.plugins.state_host_down").to_owned(),
@@ -65,7 +82,7 @@ pub(super) fn plugins(list: &[InstalledPlugin], catalog: &Catalog) -> Vec<Value>
                     "missing",
                     catalog.tf("gui.plugins.state_failed", &[("detail", detail)]),
                 ),
-            };
+            });
             let name = match p.title.as_ref().map(|t| t.get(catalog.locale())) {
                 Some(n) if !n.is_empty() => n,
                 _ => p.id.as_str(),
@@ -78,6 +95,7 @@ pub(super) fn plugins(list: &[InstalledPlugin], catalog: &Catalog) -> Vec<Value>
                 "host": p.host,
                 "permissions": p.permissions,
                 "fields": fields(&p.fields, catalog.locale()),
+                "missing": p.missing,
             })
         })
         .collect()

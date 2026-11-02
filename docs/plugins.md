@@ -52,7 +52,7 @@ my-plugin/
 - `anya.name` and `anya.description` (default: the package's `name` and `description`) are shown in the plugin list; they may be `Text`, a string or a `{ "en": …, "zh-CN": … }` map.
 - `anya.compat` is a semver range of Anya versions. `anya.protocol` is the plugin protocol, currently `1`. Anya installs only releases of its own protocol.
 - `anya.permissions` are strings the user sees: `network:<host>`, `env:<NAME>`, `fs:read:<path>`. They are declarations for review and display; Anya does not sandbox a host entry.
-- `anya.fields` are the settings of the plugin's hooks, drawn as a form in the settings window and stored under `[plugins.settings.<id>]`. An engine keeps its own in its manifest.
+- `anya.fields` are the settings of the plugin's hooks, drawn as a form in the settings window and stored under `[plugins.settings.<id>]`. An engine keeps its own in its manifest. A field with `"required": true` must be set before the plugin's hooks run: until then Anya skips them, and the Plugins page and `anya plugin list` say which settings are missing. Mark only what the hooks cannot work without.
 - `anya.limits` asks for budgets other than the defaults (below). The user's settings win.
 
 Dependencies a host entry needs at run time must be bundled into the package (`bun build --target=bun`, or `bundledDependencies`): Anya unpacks the tarball and runs it, it does not run `npm install`. An inline entry must be one bundled file.

@@ -43,6 +43,8 @@
   "cli.plugin.note.inline": "它在 Anya 内联运行，不能访问网络和磁盘。",
   "cli.plugin.enable_hint": "如果接受，请用这条命令启用：anya plugin enable {id}",
   "cli.plugin.enabled": "已启用 {id}。重启 Anya 后加载。",
+  "cli.plugin.needs_settings": "它还需要设置：{fields}。请在设置窗口的“插件”页填写，或写进配置文件的 [plugins.settings.{id}]；在此之前它的钩子不会运行。",
+  "cli.plugin.list.needs_settings": "需要设置：{fields}",
   "cli.plugin.disabled": "已停用 {id}。重启 Anya 后停止运行。",
   "cli.plugin.removed": "已删除 {id}。如果 Anya 正在运行，请重启。",
   "cli.plugin.list.none": "没有已安装的插件",

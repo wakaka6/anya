@@ -87,6 +87,8 @@ struct Loaded {
 pub struct Declared {
     /// The budgets it asks for.
     pub limits: Limits,
+    /// The keys of its required settings.
+    pub required: Vec<String>,
 }
 
 /// The community plugins' hooks and the inline modules behind some of them.
@@ -175,6 +177,13 @@ impl Community {
                 installed.id.clone(),
                 Declared {
                     limits: package.anya.limits,
+                    required: package
+                        .anya
+                        .fields
+                        .iter()
+                        .filter(|f| f.required)
+                        .map(|f| f.key.clone())
+                        .collect(),
                 },
             );
             let Some(file) = package.anya.inline.as_deref() else {

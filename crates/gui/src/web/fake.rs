@@ -377,7 +377,18 @@ impl Control for FakeControl {
     }
 
     fn plugins(&self) -> Vec<InstalledPlugin> {
-        lock(&self.plugins).clone()
+        let config = lock(&self.config).plugins.clone();
+        let mut plugins = lock(&self.plugins).clone();
+        for p in &mut plugins {
+            let required: Vec<String> = p
+                .fields
+                .iter()
+                .filter(|f| f.required)
+                .map(|f| f.key.clone())
+                .collect();
+            p.missing = config.unset(&p.id, &required);
+        }
+        plugins
     }
 
     fn hooks(&self) -> Vec<HookInfo> {
@@ -465,6 +476,7 @@ impl Control for FakeControl {
             host: release.host,
             permissions: release.permissions,
             fields: Vec::new(),
+            missing: Vec::new(),
         });
         Ok(())
     }

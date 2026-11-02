@@ -891,6 +891,7 @@ select:active { background-color: var(--field-hover); }
 .ver { margin-left: 6px; color: var(--muted); font-size: 11px; font-weight: 400; }
 .svc small.state-ok { color: var(--ok); }
 .svc small.state-missing { color: var(--error); }
+.svc small.state-setup { color: var(--warn); }
 .chip.tag.plug { color: var(--warn); background: var(--warn-soft); }
 .status-ok, .status-no { font-size: 12px; white-space: nowrap; }
 .status-ok { color: var(--ok); }
