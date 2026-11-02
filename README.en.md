@@ -26,7 +26,7 @@ Anya is a local speech-to-text service for Linux and macOS. A small core only ca
 
 - **Dictate into any field**: hold or tap a hotkey, speak, and the result is pasted at the cursor or put on the clipboard.
 - **Transcribe any sound**: continuous transcription of the microphone or of what the system is playing (a CoreAudio process tap on macOS, the PulseAudio/PipeWire monitor on Linux; no virtual audio driver).
-- **Your choice of engine**: Doubao, DashScope, OpenAI-compatible, AuralWise and MiMo are built in; dictation, continuous transcription and LAN apps can each use a different one.
+- **Your choice of engine**: Doubao, DashScope, OpenAI-compatible, AuralWise, MiMo and whisper.cpp on this computer (you run `whisper-server`; the audio stays on the machine) are built in; dictation, continuous transcription and LAN apps can each use a different one.
 - **Plugins**: community npm packages that add engines, add hotwords before a dictation, rewrite its text before the paste, or send it elsewhere at the same time; checked against an integrity hash before install.
 - **An ASR gateway**: a phone, a browser or another computer pairs with Anya and sends its own microphone for recognition, without an engine account of its own.
 - **Build on it**: meeting notes, live captions, translation, an agent that listens, all reading the same frames.

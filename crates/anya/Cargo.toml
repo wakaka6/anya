@@ -19,6 +19,7 @@ anya-engine-dashscope.workspace = true
 anya-engine-doubao.workspace = true
 anya-engine-mimo.workspace = true
 anya-engine-openai.workspace = true
+anya-engine-whisper-cpp.workspace = true
 anya-gui.workspace = true
 anya-hotkey.workspace = true
 anya-i18n.workspace = true

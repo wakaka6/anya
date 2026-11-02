@@ -81,6 +81,7 @@ dependencies = [
  "anya-engine-doubao",
  "anya-engine-mimo",
  "anya-engine-openai",
+ "anya-engine-whisper-cpp",
  "anya-focus",
  "anya-gui",
  "anya-hotkey",
@@ -227,6 +228,19 @@ dependencies = [
 
 [[package]]
 name = "anya-engine-openai"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "anya-engine-whisper-cpp"
 version = "0.0.0"
 dependencies = [
  "anya-core",

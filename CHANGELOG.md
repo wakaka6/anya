@@ -4,6 +4,7 @@ User-visible changes, newest first.
 
 ## Unreleased
 
+- New built-in engine `whisper-cpp`: recognizes on this computer with a whisper.cpp `whisper-server` (default `http://127.0.0.1:8080`, the one setting), so the audio stays on it; hotwords become whisper's prompt. It is on the Engine page with the other built-in engines and can be turned off like them.
 - Three plugins ship in `plugins/`: `spoken-punctuation`, which turns spoken “逗号”, “句号”, “换行” and the like into marks and hands those words to the engine as hotwords; `app-hotwords`, hotwords per app in front; and `daily-notes`, which appends every dictation to a Markdown note per day. `cargo xtask ci` runs their tests with Bun.
 - A failed dictation is kept in the activity list with its reason (an engine plugin's own words beside it); it only showed in the tray panel until the next dictation.
 - A plugin that writes to its console in a loop that never yields is now killed and restarted like a silent one; its output counted as an answer to Anya's ping.

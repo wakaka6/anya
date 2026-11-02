@@ -43,6 +43,7 @@ pub fn engines() -> Vec<Arc<dyn Engine>> {
             anya_engine_doubao::engine(),
             anya_engine_dashscope::engine(),
             anya_engine_openai::engine(),
+            anya_engine_whisper_cpp::engine(),
             anya_engine_auralwise::engine(),
             anya_engine_mimo::engine(),
         ]

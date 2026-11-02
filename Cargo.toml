@@ -15,6 +15,7 @@ members = [
     "crates/engines/doubao",
     "crates/engines/dashscope",
     "crates/engines/openai",
+    "crates/engines/whisper-cpp",
     "crates/engines/auralwise",
     "crates/engines/mimo",
     "crates/server",
@@ -52,6 +53,7 @@ anya-focus = { path = "crates/focus" }
 anya-engine-doubao = { path = "crates/engines/doubao" }
 anya-engine-dashscope = { path = "crates/engines/dashscope" }
 anya-engine-openai = { path = "crates/engines/openai" }
+anya-engine-whisper-cpp = { path = "crates/engines/whisper-cpp" }
 anya-engine-auralwise = { path = "crates/engines/auralwise" }
 anya-engine-mimo = { path = "crates/engines/mimo" }
 anya-server = { path = "crates/server" }
