@@ -11,7 +11,6 @@
 //! dictates through the gateway, so the live states and the route page show.
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -40,10 +39,6 @@ impl Shell for BrowserShell {
 
     fn open_url(&self, _url: &str) -> Result<(), String> {
         Err("a browser opens links itself".to_owned())
-    }
-
-    fn pick_file(&self, _start: Option<&Path>) -> Result<Option<PathBuf>, String> {
-        Err("a browser cannot hand over a path".to_owned())
     }
 
     fn show_settings(&self) {}

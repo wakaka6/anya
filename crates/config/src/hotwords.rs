@@ -1,29 +1,37 @@
-//! Hotwords from the config and from `[recognition] hotwords_file`.
+//! Hotwords from the config and from `hotwords.txt` next to the config file.
 
-use std::path::PathBuf;
-use std::time::SystemTime;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
-use crate::{Recognition, expand_home};
+use crate::Recognition;
+
+/// The hotwords file's name, in the config file's directory.
+pub const HOTWORDS_FILE: &str = "hotwords.txt";
+
+/// The hotwords file that goes with the config file at `config_path`.
+pub fn hotwords_path(config_path: &Path) -> PathBuf {
+    config_path.with_file_name(HOTWORDS_FILE)
+}
 
 /// What reading the hotwords file found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotwordsFile {
-    /// No file is configured.
+    /// There is none: the config's own words are used alone.
     None,
     /// Read; its words are merged in.
     Read,
-    /// It could not be read; the config's own words are used alone.
+    /// It is there but could not be read; used as if there were none.
     Unreadable {
-        /// The expanded path.
+        /// Where it is.
         path: PathBuf,
         /// Why, for the log.
         error: String,
     },
 }
 
-/// The words to favour: the config's, then the file's, trimmed, `#` comments
-/// and blank lines dropped, duplicates removed keeping the first.
-pub fn read_hotwords(recognition: &Recognition) -> (Vec<String>, HotwordsFile) {
+/// The words to favour: the config's, then those in `file`, trimmed, `#`
+/// comments and blank lines dropped, duplicates removed keeping the first.
+pub fn read_hotwords(recognition: &Recognition, file: &Path) -> (Vec<String>, HotwordsFile) {
     let mut words = Vec::new();
     let mut push = |w: &str| {
         let w = w.trim();
@@ -32,39 +40,21 @@ pub fn read_hotwords(recognition: &Recognition) -> (Vec<String>, HotwordsFile) {
         }
     };
     recognition.hotwords.iter().for_each(|w| push(w));
-    let file = recognition.hotwords_file.trim();
-    if file.is_empty() {
-        return (words, HotwordsFile::None);
-    }
-    let path = expand_home(file);
-    match std::fs::read_to_string(&path) {
+    match std::fs::read_to_string(file) {
         Ok(text) => {
             text.lines()
                 .filter(|l| !l.trim_start().starts_with('#'))
                 .for_each(push);
             (words, HotwordsFile::Read)
         }
+        Err(e) if e.kind() == ErrorKind::NotFound => (words, HotwordsFile::None),
         Err(e) => (
             words,
             HotwordsFile::Unreadable {
-                path,
+                path: file.to_owned(),
                 error: e.to_string(),
             },
         ),
-    }
-}
-
-impl Recognition {
-    /// When the hotwords file last changed, so a long session can tell it
-    /// needs to reconnect; `None` without a readable file.
-    pub fn hotwords_stamp(&self) -> Option<SystemTime> {
-        let file = self.hotwords_file.trim();
-        if file.is_empty() {
-            return None;
-        }
-        std::fs::metadata(expand_home(file))
-            .and_then(|m| m.modified())
-            .ok()
     }
 }
 
@@ -76,28 +66,32 @@ mod tests {
     fn the_file_adds_to_the_config_without_repeats() {
         let dir = std::env::temp_dir().join(format!("anya-hotwords-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
-        let path = dir.join("words.txt");
+        let path = hotwords_path(&dir.join("config.toml"));
+        assert_eq!(path, dir.join("hotwords.txt"));
         std::fs::write(&path, "# team names\nAnya\n\n  Bond \nLoid\n").expect("write");
         let r = Recognition {
             hotwords: vec!["Loid".into(), " ".into()],
-            hotwords_file: path.display().to_string(),
             ..Recognition::default()
         };
         assert_eq!(
-            read_hotwords(&r),
+            read_hotwords(&r, &path),
             (
                 vec!["Loid".into(), "Anya".into(), "Bond".into()],
                 HotwordsFile::Read
             )
         );
-        assert!(r.hotwords_stamp().is_some());
 
-        let gone = Recognition {
-            hotwords_file: dir.join("gone").display().to_string(),
-            ..r
-        };
-        let (words, file) = read_hotwords(&gone);
+        std::fs::remove_file(&path).expect("remove");
+        assert_eq!(
+            read_hotwords(&r, &path),
+            (vec!["Loid".into()], HotwordsFile::None),
+            "no file is not an error"
+        );
+
+        std::fs::create_dir(&path).expect("a directory in its place");
+        let (words, file) = read_hotwords(&r, &path);
         assert_eq!(words, ["Loid"]);
-        assert!(matches!(file, HotwordsFile::Unreadable { .. }));
+        assert!(matches!(file, HotwordsFile::Unreadable { .. }), "{file:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

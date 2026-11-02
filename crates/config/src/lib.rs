@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 mod hotwords;
 mod replacements;
 
-pub use hotwords::{HotwordsFile, read_hotwords};
+pub use hotwords::{HOTWORDS_FILE, HotwordsFile, hotwords_path, read_hotwords};
 pub use replacements::{
     REPLACEMENTS_FILE, Replacement, ReplacementsFile, parse_replacements, read_replacements,
     replacements_path,
@@ -180,11 +180,8 @@ pub struct Recognition {
     pub remote: String,
     /// BCP-47 tag; empty leaves it to the engine.
     pub language: String,
-    /// Words to favour.
+    /// Words to favour; `hotwords.txt` next to the config file adds more.
     pub hotwords: Vec<String>,
-    /// A file of more hotwords, one per line, `#` comments, `~` expanded;
-    /// read at every session, so another program can keep it current.
-    pub hotwords_file: String,
     /// Each engine's settings under its id, kept when another is chosen.
     pub engines: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -197,7 +194,6 @@ impl Default for Recognition {
             remote: DEFAULT_ENGINE.to_owned(),
             language: "zh-CN".to_owned(),
             hotwords: Vec::new(),
-            hotwords_file: String::new(),
             engines: BTreeMap::new(),
         }
     }
@@ -624,17 +620,6 @@ pub fn runtime_dir() -> Result<PathBuf, ConfigError> {
     }
 }
 
-/// A leading `~` or `~/` as the home directory; anything else unchanged.
-pub fn expand_home(path: &str) -> PathBuf {
-    let path = path.trim();
-    match (path.strip_prefix('~'), home()) {
-        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
-            home.join(rest.trim_start_matches('/'))
-        }
-        _ => PathBuf::from(path),
-    }
-}
-
 /// Reads `path`. A missing file is the defaults.
 pub fn load(path: &Path) -> Result<Config, ConfigError> {
     match std::fs::read_to_string(path) {
@@ -841,15 +826,6 @@ mod tests {
                 Problem::UnknownEngine(EngineRole::Continuous, "nope".into())
             ]
         );
-    }
-
-    #[test]
-    fn home_is_expanded_only_at_the_start() {
-        let Some(h) = home() else { return };
-        assert_eq!(expand_home("~/a/b"), h.join("a/b"));
-        assert_eq!(expand_home("~"), h);
-        assert_eq!(expand_home("/x/~/y"), PathBuf::from("/x/~/y"));
-        assert_eq!(expand_home("~other/x"), PathBuf::from("~other/x"));
     }
 
     #[test]

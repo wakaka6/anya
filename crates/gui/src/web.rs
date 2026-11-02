@@ -49,7 +49,6 @@
 //! | `POST /api/plugins/enable` | `{id, on}` | `{plugins}`; 404 for a plugin that is not installed |
 //! | `POST /api/plugins/remove` | `{id}` | `{plugins}`; 404 for a plugin that is not installed |
 //! | `POST /api/open` | `{url}` | 204; app shell and engine docs links only, else 403 |
-//! | `POST /api/pick-file` | `{path}` | `{path}` (`~/…` under home, `""` cancelled); app shell only, else 404 |
 //! | `POST /api/window` | `{action: "settings" \| "quit" \| "privacy"}` | 204, then acts (`privacy` opens the system's Accessibility pane); app shell only, else 404 |
 //! | `POST /api/copy` | `{text}` | 204; puts text on the clipboard |
 

@@ -53,7 +53,6 @@ pub(crate) enum Field {
     EngineSettings,
     Language,
     Hotwords,
-    HotwordsFile,
     ContinuousEnabled,
     ContinuousDevice,
     ContinuousHotkey,
@@ -85,7 +84,6 @@ pub(crate) const FIELDS: &[Field] = &[
     Field::EngineSettings,
     Field::Language,
     Field::Hotwords,
-    Field::HotwordsFile,
     Field::ContinuousEnabled,
     Field::ContinuousDevice,
     Field::ContinuousHotkey,
@@ -161,7 +159,7 @@ impl Tab {
                     ],
                 },
                 Card {
-                    fields: &[Language, Hotwords, HotwordsFile],
+                    fields: &[Language, Hotwords],
                 },
             ],
             Tab::Continuous => &[
@@ -237,8 +235,8 @@ impl Field {
             | IdleVisible | ShowText | UpdateCheck | DebugMode => Kind::Switch,
             UiLanguage | DictationDevice | Mode | Output | Language | ContinuousDevice
             | Position => Kind::Select,
-            Gain | Hotkeys | StopDelay | Hotwords | HotwordsFile | ContinuousHotkey | Address
-            | LanPort | Scale => Kind::Text,
+            Gain | Hotkeys | StopDelay | Hotwords | ContinuousHotkey | Address | LanPort
+            | Scale => Kind::Text,
             DictationEngine | ContinuousEngine | RemoteEngine | EngineSettings | UpdateNow => {
                 Kind::Action
             }
@@ -282,7 +280,6 @@ impl Field {
             EngineSettings => ("tui.field.engine_settings", "tui.help.engine_settings"),
             Language => ("tui.field.language", "tui.help.language"),
             Hotwords => ("tui.field.hotwords", "tui.help.hotwords"),
-            HotwordsFile => ("tui.field.hotwords_file", "tui.help.hotwords_file"),
             ContinuousEnabled => (
                 "tui.field.continuous_enabled",
                 "tui.help.continuous_enabled",
@@ -332,7 +329,6 @@ impl Field {
             EngineSettings => String::new(),
             Language => c.recognition.language.clone(),
             Hotwords => c.recognition.hotwords.join(", "),
-            HotwordsFile => c.recognition.hotwords_file.clone(),
             ContinuousEnabled => c.continuous.enabled.to_string(),
             ContinuousDevice => c.continuous.device.clone(),
             ContinuousHotkey => c.continuous.hotkey.clone(),
@@ -393,7 +389,7 @@ impl Field {
             UpdateCheck => c.updates.check = on,
             UpdateNow => {}
             DebugMode => c.debug.enabled = on,
-            Gain | StopDelay | Hotwords | HotwordsFile | Address | LanPort | Scale => {
+            Gain | StopDelay | Hotwords | Address | LanPort | Scale => {
                 // Typed fields go through `parse`; a value that does not
                 // parse leaves the config as it was.
                 let _ = self.parse(c, value);
@@ -421,7 +417,6 @@ impl Field {
                 _ => return Err(Msg::invalid(&Invalid::BadScale)),
             },
             Field::Hotwords => c.recognition.hotwords = split_words(text),
-            Field::HotwordsFile => c.recognition.hotwords_file = text.to_owned(),
             Field::Address => {
                 c.subscription.address = if text.is_empty() {
                     DEFAULT_ADDRESS
@@ -465,10 +460,6 @@ impl Field {
                 .recognition
                 .hotwords
                 .clone_from(&from.recognition.hotwords),
-            HotwordsFile => to
-                .recognition
-                .hotwords_file
-                .clone_from(&from.recognition.hotwords_file),
             ContinuousEnabled => to.continuous.enabled = from.continuous.enabled,
             ContinuousDevice => to.continuous.device.clone_from(&from.continuous.device),
             ContinuousHotkey => to.continuous.hotkey.clone_from(&from.continuous.hotkey),

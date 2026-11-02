@@ -309,6 +309,7 @@ impl Control for FakeControl {
             .to_owned(),
             version: "0.0.0".to_owned(),
             config_path: PathBuf::from("/home/me/.config/anya/config.toml"),
+            hotwords_path: PathBuf::from("/home/me/.config/anya/hotwords.txt"),
             replacements_path: PathBuf::from("/home/me/.config/anya/replacements.txt"),
         }
     }

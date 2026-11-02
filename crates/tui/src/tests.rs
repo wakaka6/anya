@@ -126,6 +126,7 @@ impl Control for Fake {
             desktop: "darwin".into(),
             version: "0.0.0".into(),
             config_path: PathBuf::from("/home/u/.config/anya/config.toml"),
+            hotwords_path: PathBuf::from("/home/u/.config/anya/hotwords.txt"),
             replacements_path: PathBuf::from("/home/u/.config/anya/replacements.txt"),
         }
     }

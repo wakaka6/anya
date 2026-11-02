@@ -25,8 +25,6 @@ use crate::{Shell, ShellKind};
 struct FakeShell {
     kind: ShellKind,
     opened: Mutex<Vec<String>>,
-    pick: Mutex<Result<Option<PathBuf>, String>>,
-    pick_start: Mutex<Option<Option<PathBuf>>>,
     settings: AtomicUsize,
     quits: AtomicUsize,
 }
@@ -36,8 +34,6 @@ impl FakeShell {
         FakeShell {
             kind,
             opened: Mutex::new(Vec::new()),
-            pick: Mutex::new(Ok(None)),
-            pick_start: Mutex::new(None),
             settings: AtomicUsize::new(0),
             quits: AtomicUsize::new(0),
         }
@@ -52,11 +48,6 @@ impl Shell for FakeShell {
     fn open_url(&self, url: &str) -> Result<(), String> {
         lock(&self.opened).push(url.to_owned());
         Ok(())
-    }
-
-    fn pick_file(&self, start: Option<&Path>) -> Result<Option<PathBuf>, String> {
-        *lock(&self.pick_start) = Some(start.map(Path::to_path_buf));
-        lock(&self.pick).clone()
     }
 
     fn show_settings(&self) {
@@ -1111,50 +1102,6 @@ async fn open_takes_engine_docs_in_the_app_only() {
         .await;
     assert_eq!(res.status, 403);
     assert!(lock(&web.shell.opened).is_empty());
-}
-
-#[tokio::test]
-async fn pick_file_starts_next_to_the_current_file_and_answers_home_relative() {
-    let h = harness(ShellKind::App).await;
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let chosen = home
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("/srv"))
-        .join("notes/words.txt");
-    *lock(&h.shell.pick) = Ok(Some(chosen.clone()));
-    let res = h
-        .post("/api/pick-file", &json!({"path": "/srv/lists/old.txt"}))
-        .await;
-    assert_eq!(res.status, 200);
-    let want = match home {
-        Some(_) => "~/notes/words.txt".to_owned(),
-        None => chosen.display().to_string(),
-    };
-    assert_eq!(res.json()["path"], want);
-    assert_eq!(
-        *lock(&h.shell.pick_start),
-        Some(Some(PathBuf::from("/srv/lists")))
-    );
-
-    *lock(&h.shell.pick) = Ok(None);
-    assert_eq!(
-        h.post("/api/pick-file", &json!({"path": ""})).await.json()["path"],
-        ""
-    );
-    assert_eq!(*lock(&h.shell.pick_start), Some(None));
-
-    *lock(&h.shell.pick) = Err("no portal".to_owned());
-    let failed = h.post("/api/pick-file", &json!({"path": ""})).await;
-    assert_eq!(failed.status, 500);
-    assert_eq!(
-        failed.json()["error"],
-        "Cannot open the file chooser: no portal"
-    );
-
-    let web = harness(ShellKind::Web).await;
-    let res = web.post("/api/pick-file", &json!({"path": ""})).await;
-    assert_eq!(res.status, 404);
-    assert_eq!(res.json()["error"], en("gui.api.unsupported"));
 }
 
 async fn eventually(check: impl Fn() -> bool) -> bool {

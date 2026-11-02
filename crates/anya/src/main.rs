@@ -51,6 +51,7 @@ mod cli;
 mod community;
 mod doctor;
 mod hooks;
+mod hotwords;
 mod indicator;
 mod install;
 mod plugins;
@@ -76,12 +77,14 @@ fn now_ms() -> u64 {
 }
 
 /// The engine `role` uses, read from the config each time a session opens so
-/// a saved change applies to the next session of that use. With `context`, the engine asks the
+/// a saved change applies to the next session of that use; the hotwords
+/// file at `hotwords` is read then too. With `context`, the engine asks the
 /// context hooks served now before each session opens, about the app that is
 /// in front then (docs/decisions/0016).
 fn choice(
     config: Arc<Mutex<Config>>,
     points: Points,
+    hotwords: PathBuf,
     role: EngineRole,
     context: Option<(Arc<Community>, Desktop)>,
 ) -> Choice {
@@ -96,7 +99,7 @@ fn choice(
             .ok_or_else(|| EngineError::NotConfigured("engine".to_owned()))?;
         let settings = cfg.recognition.settings(&id);
         engine.check(&settings)?;
-        let (hotwords, _) = anya_config::read_hotwords(&cfg.recognition);
+        let (hotwords, _) = anya_config::read_hotwords(&cfg.recognition, &hotwords);
         let engine = match &context {
             Some((community, desktop)) => {
                 with_context(engine, &cfg, &points, &community.declared(), *desktop)
@@ -221,35 +224,9 @@ async fn watch_updates(
     }
 }
 
-/// How often the hotwords are compared with what the last session was given.
-const HOTWORDS_POLL: Duration = Duration::from_secs(2);
-
 /// Where [`App::audiences`] keeps each server's audience.
 const SUBSCRIPTION: usize = 0;
 const LAN: usize = 1;
-
-/// Bumps `params` whenever the merged hotwords (the config's and the file's)
-/// change, so a long continuous session reconnects once and takes them.
-async fn watch_hotwords(config: Arc<Mutex<Config>>, params: watch::Sender<u64>, poll: Duration) {
-    fn read(config: &Mutex<Config>) -> Vec<String> {
-        let recognition = lock(config).recognition.clone();
-        anya_config::read_hotwords(&recognition).0
-    }
-    let mut last = read(&config);
-    let mut tick = tokio::time::interval(poll);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        tick.tick().await;
-        let shared = config.clone();
-        let Ok(now) = tokio::task::spawn_blocking(move || read(&shared)).await else {
-            return;
-        };
-        if now != last {
-            last = now;
-            params.send_modify(|value| *value = value.wrapping_add(1));
-        }
-    }
-}
 
 /// The running servers' audiences, read once for one route.
 struct Servers {
@@ -336,7 +313,16 @@ impl App {
             session_prefix: format!("anya-{}", now_ms()),
         });
         let audio: Arc<dyn AudioSource> = Arc::new(AudioSystem::new(cfg.audio.gain));
-        let choice_for = |role, context| choice(config.clone(), points.clone(), role, context);
+        let words_file = anya_config::hotwords_path(&path);
+        let choice_for = |role, context| {
+            choice(
+                config.clone(),
+                points.clone(),
+                words_file.clone(),
+                role,
+                context,
+            )
+        };
         let remote_choice = choice_for(EngineRole::Remote, None);
         let (dictation, status_rx, finished_rx) = anya_dictation::spawn(
             hub.clone(),
@@ -427,7 +413,21 @@ impl App {
         tokio::spawn(app.clone().drive_overlay(status_rx.clone(), done_rx));
         tokio::spawn(app.clone().drive_router());
         app.spawn_observers(status_rx, finished_rx, done_tx);
-        tokio::spawn(watch_hotwords(config.clone(), params_tx, HOTWORDS_POLL));
+        let notes = app.clone();
+        tokio::spawn(hotwords::watch(
+            config.clone(),
+            words_file,
+            params_tx,
+            move |path, error| {
+                notes.activity.push(Entry::Notice {
+                    at: now_ms(),
+                    notice: Notice::HotwordsUnreadable,
+                    detail: Some(format!("{}: {error}", path.display())),
+                });
+            },
+            hotwords::POLL,
+            hotwords::GAP,
+        ));
         let mut edits = anya_config::watch(app.config_path.clone());
         let editor = app.clone();
         tokio::spawn(async move {
@@ -1154,6 +1154,7 @@ impl Control for App {
             desktop: self.desktop.to_string(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             config_path: self.config_path.clone(),
+            hotwords_path: anya_config::hotwords_path(&self.config_path),
             replacements_path: anya_config::replacements_path(&self.config_path),
         }
     }
@@ -1579,9 +1580,6 @@ impl Shell for WebShell {
     fn open_url(&self, _url: &str) -> Result<(), String> {
         Ok(())
     }
-    fn pick_file(&self, _start: Option<&Path>) -> Result<Option<PathBuf>, String> {
-        Ok(None)
-    }
     fn show_settings(&self) {}
     fn quit(&self) {
         self.control.quit();
@@ -1869,9 +1867,22 @@ mod tests {
         cfg.recognition.set_engine(EngineRole::Continuous, "beta");
         cfg.recognition.set_engine(EngineRole::Remote, "gamma");
         let config = Arc::new(Mutex::new(cfg));
-        let dictation = choice(config.clone(), points.clone(), EngineRole::Dictation, None);
-        let continuous = choice(config.clone(), points.clone(), EngineRole::Continuous, None);
-        let remote = choice(config.clone(), points, EngineRole::Remote, None);
+        let words = std::env::temp_dir().join("anya-no-hotwords.txt");
+        let dictation = choice(
+            config.clone(),
+            points.clone(),
+            words.clone(),
+            EngineRole::Dictation,
+            None,
+        );
+        let continuous = choice(
+            config.clone(),
+            points.clone(),
+            words.clone(),
+            EngineRole::Continuous,
+            None,
+        );
+        let remote = choice(config.clone(), points, words, EngineRole::Remote, None);
         assert_eq!(opens_on(&dictation), "alpha");
         assert_eq!(opens_on(&continuous), "beta");
         assert_eq!(opens_on(&remote), "gamma");
@@ -1890,29 +1901,5 @@ mod tests {
             .set_engine(EngineRole::Continuous, "nope");
         assert!(continuous().is_err());
         assert_eq!(opens_on(&dictation), "alpha");
-    }
-
-    #[tokio::test]
-    async fn a_changed_hotwords_file_bumps_the_params_once() {
-        let file = std::env::temp_dir().join(format!("anya-hotwords-{}.txt", std::process::id()));
-        std::fs::write(&file, "Wayland\n").expect("write");
-        let mut cfg = Config::default();
-        cfg.recognition.hotwords_file = file.to_string_lossy().into_owned();
-        let config = Arc::new(Mutex::new(cfg));
-        let (tx, mut rx) = watch::channel(0_u64);
-        let task = tokio::spawn(watch_hotwords(config, tx, Duration::from_millis(10)));
-
-        tokio::time::sleep(Duration::from_millis(60)).await;
-        assert!(!rx.has_changed().expect("open"), "nothing changed yet");
-        std::fs::write(&file, "Wayland\nSway\n").expect("write");
-        tokio::time::timeout(Duration::from_secs(2), rx.changed())
-            .await
-            .expect("the edit is noticed")
-            .expect("open");
-        assert_eq!(*rx.borrow_and_update(), 1);
-        tokio::time::sleep(Duration::from_millis(60)).await;
-        assert!(!rx.has_changed().expect("open"), "one edit, one bump");
-        task.abort();
-        let _ = std::fs::remove_file(&file);
     }
 }

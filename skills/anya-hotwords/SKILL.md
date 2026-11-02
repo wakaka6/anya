@@ -1,6 +1,6 @@
 ---
 name: anya-hotwords
-description: Refresh an Anya hotwords_file from the words you fix by hand after dictating, the words Anya misheard lately, and the agent sessions you are working in. Run it on a loop with a config path, e.g. `/loop 10m /anya-hotwords ~/.config/anya/config.toml`.
+description: Refresh Anya's hotwords.txt (next to its config file) from the words you fix by hand after dictating, the words Anya misheard lately, and the agent sessions you are working in. Run it on a loop with a config path, e.g. `/loop 10m /anya-hotwords ~/.config/anya/config.toml`.
 ---
 
 # Anya 热词表
@@ -14,7 +14,8 @@ description: Refresh an Anya hotwords_file from the words you fix by hand after 
 从配置文件的 `[recognition]` 取：
 
 - `hotwords`：用户固定的词，只读，不要复制进热词文件。
-- `hotwords_file`：要写的文件，`~` 是 home。为空就停下，告诉用户先在配置里设上它。
+
+要写的热词文件是配置文件同目录下的 `hotwords.txt`（配置是 `~/.config/anya/config.toml` 时就是 `~/.config/anya/hotwords.txt`）。还没有就新建。
 
 配置文件本身只读不写。Anya 每次开始识别前都会重读热词文件，持续转写也会在文件变化后重连一次，所以改完不需要重启。
 

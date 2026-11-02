@@ -90,10 +90,7 @@ pub(super) fn run(
         event_loop.set_activation_policy(ActivationPolicy::Accessory);
     }
     let proxy = event_loop.create_proxy();
-    let shell = Arc::new(AppShell::new(
-        proxy.clone(),
-        catalog.t("tray.pick_file").to_owned(),
-    ));
+    let shell = Arc::new(AppShell::new(proxy.clone()));
     let server = runtime.block_on(crate::web::serve(
         Arc::clone(&control),
         Arc::clone(&shell) as Arc<dyn Shell>,
@@ -136,7 +133,6 @@ pub(super) fn run(
         language: control.config().ui.language,
         control,
         catalog,
-        shell,
         settings,
         panel,
         panel_height: PANEL_HEIGHT,
@@ -146,8 +142,6 @@ pub(super) fn run(
         next_relabel: Instant::now() + RELABEL_EVERY,
         exiting: false,
         failure: None,
-        #[cfg(target_os = "linux")]
-        picker: None,
     };
     event_loop.run_return(|event, target, flow| {
         app.handle(event, target);
@@ -478,7 +472,6 @@ struct App {
     control: Arc<dyn Control>,
     language: String,
     catalog: Catalog,
-    shell: Arc<AppShell>,
     // Dropped before the windows.
     tray: Option<Tray>,
     settings: Surface,
@@ -491,9 +484,6 @@ struct App {
     next_relabel: Instant,
     exiting: bool,
     failure: Option<DesktopError>,
-    /// The open file dialog, kept alive until it answers.
-    #[cfg(target_os = "linux")]
-    picker: Option<gtk::FileChooserNative>,
 }
 
 impl App {
@@ -563,12 +553,6 @@ impl App {
                 self.exiting = true;
             }
             Event::UserEvent(UserEvent::Exit) => self.exiting = true,
-            #[cfg(target_os = "linux")]
-            Event::UserEvent(UserEvent::PickFile {
-                title,
-                directory,
-                reply,
-            }) => self.pick_file(&title, directory, reply),
             _ => {}
         }
     }
@@ -630,42 +614,6 @@ impl App {
         }
     }
 
-    /// Opens the file dialog over the settings window without blocking the
-    /// loop: the portal's dialog where there is one, GTK's otherwise.
-    #[cfg(target_os = "linux")]
-    fn pick_file(
-        &mut self,
-        title: &str,
-        directory: Option<std::path::PathBuf>,
-        reply: std::sync::mpsc::Sender<Option<std::path::PathBuf>>,
-    ) {
-        use gtk::prelude::{FileChooserExt, NativeDialogExt};
-        use tao::platform::unix::WindowExtUnix;
-        let dialog = gtk::FileChooserNative::new(
-            Some(title),
-            Some(self.settings.window.gtk_window()),
-            gtk::FileChooserAction::Open,
-            None,
-            None,
-        );
-        dialog.set_modal(true);
-        if let Some(directory) = directory {
-            dialog.set_current_folder(directory);
-        }
-        dialog.connect_response(move |dialog, response| {
-            let chosen = (response == gtk::ResponseType::Accept)
-                .then(|| dialog.filename())
-                .flatten();
-            let _ = reply.send(chosen);
-        });
-        dialog.show();
-        // A second request replaces the first, whose caller then hears
-        // that it closed without an answer.
-        if let Some(old) = self.picker.replace(dialog) {
-            old.destroy();
-        }
-    }
-
     fn show_settings(&mut self) {
         self.toggle.hidden();
         self.panel.window.set_visible(false);
@@ -698,7 +646,6 @@ impl App {
         let title = self.catalog.t("tray.window_title");
         self.settings.window.set_title(title);
         self.panel.window.set_title(title);
-        self.shell.set_pick_title(self.catalog.t("tray.pick_file"));
         if let Some(tray) = &self.tray {
             tray.menu.relabel(&self.catalog);
             if let Err(e) = tray.icon.set_tooltip(Some(self.catalog.t("tray.tooltip"))) {

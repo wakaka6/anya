@@ -80,6 +80,7 @@ impl Control for Pretend {
             desktop: "pretend".to_owned(),
             version: "0.0.0".to_owned(),
             config_path: PathBuf::from("/tmp/anya-example/config.toml"),
+            hotwords_path: PathBuf::from("/tmp/anya-example/hotwords.txt"),
             replacements_path: PathBuf::from("/tmp/anya-example/replacements.txt"),
         }
     }

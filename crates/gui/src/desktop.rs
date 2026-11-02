@@ -63,16 +63,6 @@ enum UserEvent {
     Quit,
     /// The binary asked the app to end.
     Exit,
-    /// Open the file dialog on GTK's thread and send back the choice.
-    #[cfg(target_os = "linux")]
-    PickFile {
-        /// The dialog's title.
-        title: String,
-        /// Where it starts.
-        directory: Option<PathBuf>,
-        /// Where the choice goes; `None` when cancelled.
-        reply: std::sync::mpsc::Sender<Option<PathBuf>>,
-    },
 }
 
 /// The lock held by this process once [`activate_existing`] found no other

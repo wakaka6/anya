@@ -28,6 +28,8 @@ pub struct Info {
     pub version: String,
     /// The file saves go to.
     pub config_path: PathBuf,
+    /// The hotwords file, next to the config file.
+    pub hotwords_path: PathBuf,
     /// The built-in replacement list, next to the config file.
     pub replacements_path: PathBuf,
 }

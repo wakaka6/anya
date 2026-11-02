@@ -4,8 +4,6 @@
 //! [`web`] serves the page and its JSON API for any [`Shell`]; [`desktop`]
 //! is the tray app, a [`Shell`] that opens the page in its own windows.
 
-use std::path::{Path, PathBuf};
-
 pub mod desktop;
 pub mod web;
 
@@ -31,9 +29,6 @@ pub trait Shell: Send + Sync {
 
     /// Opens `url` in the system browser.
     fn open_url(&self, url: &str) -> Result<(), String>;
-
-    /// Asks the user for a file, starting at `start`; `Ok(None)` when cancelled.
-    fn pick_file(&self, start: Option<&Path>) -> Result<Option<PathBuf>, String>;
 
     /// Shows, unhides and focuses the settings window, hiding the tray panel.
     fn show_settings(&self);

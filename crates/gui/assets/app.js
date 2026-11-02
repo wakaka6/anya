@@ -1442,7 +1442,7 @@ function buildEngine() {
     group(t("gui.engine.group_recognition"), [
       row(t("gui.language.label"), t("gui.language.help"), ctl(bindSelect("recognition.language", state.languages, t("gui.language.label")))),
       row(t("gui.hotwords.label"), t("gui.hotwords.help"), ctl(hotwordsField()), { stack: true }),
-      row(t("gui.hotwords_file.label"), t("gui.hotwords_file.help"), hotwordsFileField(), { stack: true })]),
+      row(t("gui.hotwords_file.label"), t("gui.hotwords_file.help"), pathLine(state.info.hotwords_path), { stack: true })]),
   ];
 }
 
@@ -1649,39 +1649,6 @@ function hotwordsField() {
   return box;
 }
 
-// The desktop window picks the hotwords file with the native dialog; a
-// browser cannot hand over a picked file's path, so --web types it.
-function hotwordsFileField() {
-  const path = "recognition.hotwords_file";
-  const input = el("input", {
-    type: "text",
-    spellcheck: "false",
-    "aria-label": t("gui.hotwords_file.label"),
-    placeholder: isApp() ? t("gui.hotwords_file.none") : t("gui.hotwords_file.example"),
-  });
-  input.value = getPath(cfg(), path);
-  input.readOnly = isApp();
-  const set = (value) => commit((c) => setPath(c, path, value), { field: path }).then(() => {
-    input.value = getPath(cfg(), path);
-    clear.hidden = !isApp() || !input.value;
-  });
-  const pick = async () => {
-    try {
-      const { path: chosen } = await api("/api/pick-file", { path: input.value });
-      if (chosen) set(chosen);
-    } catch (err) {
-      notify(err.message, "error");
-    }
-  };
-  const clear = el("button", { type: "button", class: "ghost", onclick: () => set("") }, t("gui.hotwords_file.clear"));
-  clear.hidden = !isApp() || !input.value;
-  if (isApp()) input.addEventListener("click", pick);
-  else input.addEventListener("change", () => set(input.value));
-  const choose = el("button", { type: "button", class: "ghost", onclick: pick }, t("gui.hotwords_file.pick"));
-  choose.hidden = !isApp();
-  input.className = "path";
-  return el("div", { class: "ctl fill" }, input, clear, choose);
-}
 
 // ---- 5. plugins ----
 //

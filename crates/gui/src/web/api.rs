@@ -1,12 +1,11 @@
 //! The routes (listed in the module docs of [`super`]).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anya_config::{Config, DEFAULT_ADDRESS, DEFAULT_LAN_PORT, EngineRole, expand_home};
+use anya_config::{Config, DEFAULT_ADDRESS, DEFAULT_LAN_PORT, EngineRole};
 use anya_i18n::Catalog;
 use anya_protocol::{PairingOffer, Scope};
 use anya_runtime::{
@@ -75,7 +74,6 @@ pub(super) async fn handle(page: &Arc<Page>, req: Request<Incoming>) -> Reply {
         (false, "/api/hotkey/record") => Some(record_hotkey(page, &catalog).await),
         (false, "/api/hotkey/suspend") => Some(suspend(page, &catalog, req).await),
         (false, "/api/open") => Some(open(page, &catalog, req).await),
-        (false, "/api/pick-file") => Some(pick_file(page, &catalog, req).await),
         (false, "/api/window") => Some(window(page, &catalog, req).await),
         (false, "/api/copy") => Some(copy_text(page, &catalog, req).await),
         _ => None,
@@ -231,7 +229,6 @@ fn normalize(mut c: Config) -> Config {
     trim(&mut c.recognition.continuous);
     trim(&mut c.recognition.remote);
     trim(&mut c.recognition.language);
-    trim(&mut c.recognition.hotwords_file);
     trim(&mut c.subscription.address);
     if c.subscription.address.is_empty() {
         c.subscription.address = DEFAULT_ADDRESS.to_owned();
@@ -441,53 +438,6 @@ async fn open(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
             StatusCode::INTERNAL_SERVER_ERROR,
             &catalog.tf("gui.api.open_failed", &[("detail", &e.to_string())]),
         ),
-    }
-}
-
-#[derive(Deserialize)]
-struct PathBody {
-    #[serde(default)]
-    path: String,
-}
-
-async fn pick_file(page: &Page, catalog: &Catalog, req: Request<Incoming>) -> Reply {
-    let PathBody { path } = match body(req, SMALL, catalog).await {
-        Ok(b) => b,
-        Err(refusal) => return refusal,
-    };
-    if page.shell.kind() != ShellKind::App {
-        return reply::error(StatusCode::NOT_FOUND, catalog.t("gui.api.unsupported"));
-    }
-    // Start next to the current file.
-    let start = match path.trim() {
-        "" => None,
-        p => expand_home(p).parent().map(Path::to_path_buf),
-    };
-    let shell = page.shell.clone();
-    let picked = tokio::task::spawn_blocking(move || shell.pick_file(start.as_deref())).await;
-    let detail = match picked {
-        Ok(Ok(chosen)) => {
-            let path = chosen.map(|p| home_relative(&p)).unwrap_or_default();
-            return reply::json(StatusCode::OK, &json!({ "path": path }));
-        }
-        Ok(Err(detail)) => detail,
-        Err(e) => e.to_string(),
-    };
-    reply::error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        &catalog.tf("gui.api.pick_failed", &[("detail", &detail)]),
-    )
-}
-
-/// `path` as `~/…` when it lies under the home directory.
-fn home_relative(path: &Path) -> String {
-    let home = std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from);
-    match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
     }
 }
 

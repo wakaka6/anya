@@ -61,7 +61,7 @@ The config file is `~/.config/anya/config.toml`, saved atomically and readable o
 
 ### Hotwords
 
-`[recognition] hotwords` holds fixed words, and `hotwords_file` points to another file (one word per line, `#` for comments). It is read again before every session, so another program can keep it current.
+`[recognition] hotwords` holds fixed words, and more go in `hotwords.txt` next to the config file (by default `~/.config/anya/hotwords.txt`; one word per line, `#` for comments). Without that file, the config's words are used alone. It is read again before every session, so another program can keep it current. Continuous transcription without the silence gate is one long session: when the words change it reconnects once to take them, at most once every 30 seconds.
 
 [`skills/anya-hotwords`](skills/anya-hotwords/SKILL.md) is a skill for your local coding agent. Run on a loop, it compares what Anya pasted with the message you then sent to the agent, finds the words you fixed by hand, and, with your current work in mind, refreshes the hotwords file into the short list of words you are most likely to say and most likely to be misheard.
 

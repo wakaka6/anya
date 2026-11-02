@@ -61,7 +61,7 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 
 ### 热词
 
-`[recognition] hotwords` 放固定的词，`hotwords_file` 指向另一个文件（一行一个词，`#` 开头是注释）。每次识别前都会重新读，所以别的程序可以随时维护它。
+`[recognition] hotwords` 放固定的词，更多的词写进配置文件旁边的 `hotwords.txt`（默认 `~/.config/anya/hotwords.txt`，一行一个词，`#` 开头是注释）。没有这个文件就只用配置里的词。每次识别前都会重新读，所以别的程序可以随时维护它。持续转写不开静音门时只有一个长会话，词变了它会重连一次来用上新词，两次重连至少隔 30 秒。
 
 [`skills/anya-hotwords`](skills/anya-hotwords/SKILL.md) 是一个给本地 coding agent 用的技能：在循环里运行它，它会对照 Anya 粘贴出去的听写和你随后发给 agent 的那条消息，找出你手改过的词，再结合当前的工作，把热词文件刷新成最可能说出口、又最容易听错的那一小撮词。
 

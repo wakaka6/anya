@@ -17,6 +17,7 @@ User-visible changes, newest first.
 - The settings window's Plugins page shows what each plugin provides, whether it runs inline only, and what each part receives (audio, the app in front, everything dictated) before you install or enable it; it lists the dictation hooks in their order, lets you reorder them, and draws each plugin's settings.
 - The registry index lists what a release provides (`provides`) and whether it runs in Bun (`host`) instead of `kind`; Anya downloads Bun only for a plugin that runs in it.
 - A plugin package names its Bun entry `anya.host` instead of `anya.engine`, since the entry will provide more than engines (docs/decisions/0015). Rename the field in your plugin's `package.json`; one with `anya.engine` no longer loads.
+- The hotwords file has one place: `hotwords.txt` next to the config file, by default `~/.config/anya/hotwords.txt`. `[recognition] hotwords_file` is gone, along with the file chooser on the Engine page, which now shows the path with a copy button. Without the file, or when it cannot be read, the config's own hotwords are used alone; a file that is there but cannot be read is also noted in the activity log. Move a list you kept elsewhere to that path, and remove `hotwords_file` from your config, which no longer loads with it.
 - The settings window shows the app icon and name at the top of the sidebar, and the Route page's map draws Anya as the app icon.
 
 - New Route page in the settings window, right under Activity: a live map of where each open session's sound comes from (your microphone, system sound, a paired app by name), the engine it goes to, and where its text goes (pasted, the clipboard, the overlay, back to the paired app, subscribed apps that were sent it). Only what is in use right now is drawn, with audio and text moving along the lines; hovering a source lights its route alone. Under it, the latest 200 messages (start, audio per second, partial and final text, failures), kept in memory only, with filters; a final of your own dictation links to its line on the Activity page. The Activity page no longer has a live card, and each dictation line names the engine that recognized it.
@@ -37,7 +38,7 @@ User-visible changes, newest first.
 - The recording time in the statistics counts each dictation's audio; it stayed at zero.
 - The overlay preview also works from the settings page in a browser (`--web`).
 
-- Changing the hotwords (in the settings, in the config file or in the `hotwords_file`) now reconnects a continuous session that stays open, once, so it takes them; Anya checks every 2 seconds. Before, only the next session saw the change.
+- Changing the hotwords (in the settings, in the config file or in `hotwords.txt`) now reconnects a continuous session that stays open, once, so it takes them. Before, only the next session saw the change. Anya checks every 2 seconds and reconnects once a change has held for a check, at most once every 30 seconds, so a burst of edits or a file caught half saved makes one reconnect.
 - The average and latest speed, and the minutes in the usage totals, count the audio of each dictation; they stayed at zero.
 
 - On macOS the overlay's text (the notch and the capsule) is drawn with font smoothing, as solid as the system's own text; it used to look thin and faint.

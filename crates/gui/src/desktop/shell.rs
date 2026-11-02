@@ -1,7 +1,6 @@
-//! The tray app as the page's [`Shell`]: the system opener, the native file
-//! dialog, and requests to the event loop for the windows.
+//! The tray app as the page's [`Shell`]: the system opener and requests to
+//! the event loop for the windows.
 
-use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, PoisonError};
 
@@ -34,56 +33,21 @@ pub(crate) fn same_origin(url: &str, origin: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
 }
 
-/// Where the picker starts for the value `start`: its directory when it
-/// names a file, itself when it names a directory, nothing when it is empty.
-pub(crate) fn picker_directory(start: Option<&Path>) -> Option<PathBuf> {
-    let start = start?.to_str()?.trim();
-    if start.is_empty() {
-        return None;
-    }
-    let path = anya_config::expand_home(start);
-    if path.is_dir() {
-        Some(path)
-    } else {
-        path.parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(Path::to_owned)
-    }
-}
-
 pub(crate) struct AppShell {
     proxy: Mutex<EventLoopProxy<UserEvent>>,
-    pick_title: Mutex<String>,
 }
 
 impl AppShell {
-    pub(crate) fn new(proxy: EventLoopProxy<UserEvent>, pick_title: String) -> AppShell {
+    pub(crate) fn new(proxy: EventLoopProxy<UserEvent>) -> AppShell {
         AppShell {
             proxy: Mutex::new(proxy),
-            pick_title: Mutex::new(pick_title),
         }
-    }
-
-    /// The file dialog's title, after the language changed.
-    pub(crate) fn set_pick_title(&self, title: &str) {
-        let mut current = self
-            .pick_title
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        title.clone_into(&mut current);
     }
 
     /// Whether the event loop took `event`; it is gone once the app ends.
     pub(super) fn send(&self, event: UserEvent) -> bool {
         let proxy = self.proxy.lock().unwrap_or_else(PoisonError::into_inner);
         proxy.send_event(event).is_ok()
-    }
-
-    fn pick_title(&self) -> String {
-        self.pick_title
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
     }
 }
 
@@ -117,35 +81,6 @@ impl Shell for AppShell {
             Ok(_) => {}
         });
         Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn pick_file(&self, start: Option<&Path>) -> Result<Option<PathBuf>, String> {
-        let dialog = rfd::FileDialog::new().set_title(self.pick_title());
-        let dialog = match picker_directory(start) {
-            Some(dir) => dialog.set_directory(dir),
-            None => dialog,
-        };
-        // Runs the panel modally on the main thread and waits for it here.
-        Ok(dialog.pick_file())
-    }
-
-    #[cfg(target_os = "linux")]
-    fn pick_file(&self, start: Option<&Path>) -> Result<Option<PathBuf>, String> {
-        // GTK lives on the event loop's thread: the dialog opens there and
-        // answers here.
-        let (reply, answer) = std::sync::mpsc::channel();
-        let asked = self.send(UserEvent::PickFile {
-            title: self.pick_title(),
-            directory: picker_directory(start),
-            reply,
-        });
-        if !asked {
-            return Err("the app is closing".to_owned());
-        }
-        answer
-            .recv()
-            .map_err(|_| "the file dialog closed without an answer".to_owned())
     }
 
     fn show_settings(&self) {
@@ -208,27 +143,5 @@ mod tests {
         ] {
             assert!(!same_origin(refused, origin), "{refused}");
         }
-    }
-
-    #[test]
-    fn the_picker_starts_beside_the_current_file() {
-        let dir = std::env::temp_dir();
-        let file = dir.join("hotwords.txt");
-        assert_eq!(picker_directory(Some(&file)), Some(dir.clone()));
-        assert_eq!(picker_directory(Some(&dir)), Some(dir));
-        assert_eq!(picker_directory(Some(Path::new("  "))), None);
-        assert_eq!(picker_directory(Some(Path::new("hotwords.txt"))), None);
-        assert_eq!(picker_directory(None), None);
-    }
-
-    #[test]
-    fn the_picker_expands_home() {
-        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-            return;
-        };
-        assert_eq!(
-            picker_directory(Some(Path::new("~/Documents/hotwords.txt"))),
-            Some(home.join("Documents"))
-        );
     }
 }
