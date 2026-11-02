@@ -1625,6 +1625,9 @@ async fn run_app(run: Run, catalog: Catalog) -> Result<(), String> {
     {
         return Ok(());
     }
+    // Only now: a start that handed over to a running app must not rewrite
+    // that app's log.
+    init_logs(run.verbose, run.mode == Mode::Daemon);
     let app = App::start(
         path.clone(),
         cfg,
@@ -1799,6 +1802,30 @@ async fn main() {
     if let Err(error) = run_command(command, catalog).await {
         eprintln!("anya: {error}");
         std::process::exit(1);
+    }
+}
+
+/// Sends the log where the mode wants it: stderr with `--daemon`, else
+/// `anya.log` in the state directory, rewritten at each start. Info level,
+/// debug for Anya's crates with `--verbose`; `RUST_LOG` overrides both.
+fn init_logs(verbose: bool, daemon: bool) {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(if verbose { "info,anya=debug" } else { "info" }));
+    let logs = tracing_subscriber::fmt().with_env_filter(filter);
+    if daemon {
+        let _ = logs.with_writer(std::io::stderr).try_init();
+        return;
+    }
+    let file = anya_config::state_dir().ok().and_then(|dir| {
+        std::fs::create_dir_all(&dir).ok()?;
+        std::fs::File::create(dir.join("anya.log")).ok()
+    });
+    if let Some(file) = file {
+        let _ = logs
+            .with_ansi(false)
+            .with_writer(Mutex::new(file))
+            .try_init();
     }
 }
 
