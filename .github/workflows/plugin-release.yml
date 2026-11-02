@@ -4,6 +4,8 @@
 # (docs/decisions/0013).
 # Anya reads both from raw.githubusercontent.com. Nothing installs on a user's
 # machine from here; Anya reads the index when the user opens the marketplace.
+# A package marked `"private": true` is built into Anya (docs/decisions/0017)
+# and is not released here.
 name: plugin-release
 on:
   push:
@@ -37,6 +39,7 @@ jobs:
         run: |
           cd "plugins/$PLUGIN"
           test "$(jq -r .version package.json)" = "$VERSION" || { echo "tag and package.json version differ"; exit 1; }
+          test "$(jq -r .private package.json)" != true || { echo "$PLUGIN is built into Anya and ships with it, not through the registry"; exit 1; }
           mkdir "$RUNNER_TEMP/pack" "$RUNNER_TEMP/unpacked"
           npm pack --pack-destination "$RUNNER_TEMP/pack"
           mv "$RUNNER_TEMP"/pack/*.tgz "$RUNNER_TEMP/$PLUGIN-$VERSION.tgz"

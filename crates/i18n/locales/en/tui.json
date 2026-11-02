@@ -145,6 +145,7 @@
   "tui.notice.hotwords_unreadable": "Cannot read the hotwords file",
   "tui.notice.delivery_failed": "Could not deliver the text; it may still be on the clipboard",
   "tui.notice.plugins_unavailable": "Plugins are enabled but Bun is missing, so they are not running",
+  "tui.notice.plugins_updated": "Official plugins were updated with Anya",
   "tui.notice.overlay_unavailable": "The recording overlay could not start",
   "tui.field.update_check": "Check for updates",
   "tui.help.update_check": "Once a day Anya asks the Homebrew tap's host whether a newer version exists. The request carries only Anya's version number, nothing else. Off, Anya makes no such request.",

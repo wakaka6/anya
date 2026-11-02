@@ -8,5 +8,6 @@ pub mod community;
 pub mod doctor;
 pub mod indicator;
 pub mod install;
+pub mod official;
 pub mod plugins;
 pub mod store;

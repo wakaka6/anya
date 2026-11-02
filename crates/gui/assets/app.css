@@ -893,6 +893,7 @@ select:active { background-color: var(--field-hover); }
 .svc small.state-missing { color: var(--error); }
 .svc small.state-setup { color: var(--warn); }
 .chip.tag.plug { color: var(--warn); background: var(--warn-soft); }
+.chip.tag.official { color: var(--accent); background: var(--accent-soft); }
 .status-ok, .status-no { font-size: 12px; white-space: nowrap; }
 .status-ok { color: var(--ok); }
 .status-no { color: var(--muted); }

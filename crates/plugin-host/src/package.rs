@@ -12,6 +12,8 @@ use crate::PluginError;
 pub struct Package {
     /// `anya.id`, else the package name.
     pub id: String,
+    /// The package version; empty when it has none.
+    pub version: String,
     /// Where the package is unpacked.
     pub dir: PathBuf,
     /// `anya.name`, else the package name.
@@ -28,12 +30,26 @@ pub struct Package {
 /// the file.
 pub fn read_package(dir: &Path) -> Result<Package, PluginError> {
     let path = dir.join("package.json");
+    let bytes = std::fs::read(&path).map_err(|e| PluginError::io(&path, &e))?;
+    parse(&bytes, &path.display().to_string(), dir, |entry| {
+        dir.join(entry).is_file()
+    })
+}
+
+/// Reads `bytes` as the `package.json` of a package in `dir`, the checks of
+/// [`read_package`] with `has_file` saying whether an entry is a file in the
+/// package. `what` names the file in errors.
+pub(crate) fn parse(
+    bytes: &[u8],
+    what: &str,
+    dir: &Path,
+    has_file: impl Fn(&Path) -> bool,
+) -> Result<Package, PluginError> {
     let invalid = |reason: String| PluginError::Io {
-        path: path.display().to_string(),
+        path: what.to_owned(),
         reason,
     };
-    let bytes = std::fs::read(&path).map_err(|e| PluginError::io(&path, &e))?;
-    let json: Value = serde_json::from_slice(&bytes)
+    let json: Value = serde_json::from_slice(bytes)
         .map_err(|e| invalid(format!("it is not valid JSON ({e})")))?;
     let anya = json
         .get("anya")
@@ -58,7 +74,11 @@ pub fn read_package(dir: &Path) -> Result<Package, PluginError> {
         let inside = Path::new(entry)
             .components()
             .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
-        if !inside || !dir.join(entry).is_file() {
+        let file: PathBuf = Path::new(entry)
+            .components()
+            .filter(|c| *c != Component::CurDir)
+            .collect();
+        if !inside || !has_file(&file) {
             return Err(invalid(format!(
                 "\"anya.{key}\" ({entry}) is not a file in the package"
             )));
@@ -81,6 +101,7 @@ pub fn read_package(dir: &Path) -> Result<Package, PluginError> {
         .unwrap_or_else(|| Text::Plain(text("description").unwrap_or_default()));
     Ok(Package {
         id,
+        version: text("version").unwrap_or_default(),
         dir: dir.to_owned(),
         name,
         description,

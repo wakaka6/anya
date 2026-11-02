@@ -19,9 +19,9 @@ use anya_protocol::{
 };
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
-    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, Notice, PairError, PairedClient,
-    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats,
-    Status, Subscription, UpdateIssue, UpdateState,
+    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market, MarketPlugin, Notice, PairError,
+    PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError,
+    Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
 };
 
 /// A running Anya that exists only in memory.
@@ -37,7 +37,7 @@ pub(crate) struct FakeControl {
     pub(crate) clients_write_error: Mutex<Option<String>>,
     /// Installed plugins; installing from `market` adds one, disabled.
     pub(crate) plugins: Mutex<Vec<InstalledPlugin>>,
-    pub(crate) market: Mutex<Result<Vec<MarketPlugin>, PluginIssue>>,
+    pub(crate) market: Mutex<Market>,
     pub(crate) devices: Mutex<Result<Vec<Device>, String>>,
     pub(crate) engines: Vec<Manifest>,
     /// Answers every valid save with this error.
@@ -138,73 +138,81 @@ impl FakeControl {
             clients: Mutex::new(Vec::new()),
             clients_write_error: Mutex::new(None),
             plugins: Mutex::new(Vec::new()),
-            market: Mutex::new(Ok(vec![
-                MarketPlugin {
-                    id: "echo".to_owned(),
-                    name: Text::localized([("en", "Echo"), ("zh-CN", "回声")]),
-                    description: Text::localized([
-                        ("en", "Answers with byte counts"),
-                        ("zh-CN", "回报字节数"),
-                    ]),
-                    version: "1.0.0".to_owned(),
-                    streaming: true,
-                    provides: vec![Provide::Engine],
-                    host: true,
-                    permissions: vec!["network:example.com".to_owned()],
-                },
-                MarketPlugin {
-                    id: "whisper-local".to_owned(),
-                    name: Text::localized([("en", "Local Whisper"), ("zh-CN", "本地 Whisper")]),
-                    description: Text::localized([
-                        ("en", "Recognizes on this computer; audio never leaves it"),
-                        ("zh-CN", "在本机识别，音频不会离开这台电脑"),
-                    ]),
-                    version: "0.4.2".to_owned(),
-                    streaming: false,
-                    provides: vec![Provide::Engine],
-                    host: true,
-                    permissions: Vec::new(),
-                },
-                MarketPlugin {
-                    id: "deepgram".to_owned(),
-                    name: "Deepgram".into(),
-                    description: Text::localized([
-                        ("en", "Streaming recognition in English and more"),
-                        ("zh-CN", "流式识别，支持英语等多种语言"),
-                    ]),
-                    version: "2.1.0".to_owned(),
-                    streaming: true,
-                    provides: vec![Provide::Engine],
-                    host: true,
-                    permissions: vec!["network:api.deepgram.com".to_owned()],
-                },
-                MarketPlugin {
-                    id: "polish".to_owned(),
-                    name: "Polish".into(),
-                    description: Text::localized([
-                        ("en", "Tidies punctuation and casing with a language model"),
-                        ("zh-CN", "用语言模型整理标点和大小写"),
-                    ]),
-                    version: "0.3.0".to_owned(),
-                    streaming: false,
-                    provides: vec![Provide::Transform],
-                    host: true,
-                    permissions: vec!["network:api.openai.com".to_owned()],
-                },
-                MarketPlugin {
-                    id: "swap".to_owned(),
-                    name: "Swap".into(),
-                    description: Text::localized([
-                        ("en", "Rewrites a few spoken phrases into symbols"),
-                        ("zh-CN", "把几个口述短语改写成符号"),
-                    ]),
-                    version: "1.2.0".to_owned(),
-                    streaming: false,
-                    provides: vec![Provide::Context, Provide::Transform],
-                    host: false,
-                    permissions: Vec::new(),
-                },
-            ])),
+            market: Mutex::new(Market {
+                plugins: vec![
+                    MarketPlugin {
+                        id: "echo".to_owned(),
+                        name: Text::localized([("en", "Echo"), ("zh-CN", "回声")]),
+                        description: Text::localized([
+                            ("en", "Answers with byte counts"),
+                            ("zh-CN", "回报字节数"),
+                        ]),
+                        version: "1.0.0".to_owned(),
+                        official: false,
+                        streaming: true,
+                        provides: vec![Provide::Engine],
+                        host: true,
+                        permissions: vec!["network:example.com".to_owned()],
+                    },
+                    MarketPlugin {
+                        id: "whisper-local".to_owned(),
+                        name: Text::localized([("en", "Local Whisper"), ("zh-CN", "本地 Whisper")]),
+                        description: Text::localized([
+                            ("en", "Recognizes on this computer; audio never leaves it"),
+                            ("zh-CN", "在本机识别，音频不会离开这台电脑"),
+                        ]),
+                        version: "0.4.2".to_owned(),
+                        official: false,
+                        streaming: false,
+                        provides: vec![Provide::Engine],
+                        host: true,
+                        permissions: Vec::new(),
+                    },
+                    MarketPlugin {
+                        id: "deepgram".to_owned(),
+                        name: "Deepgram".into(),
+                        description: Text::localized([
+                            ("en", "Streaming recognition in English and more"),
+                            ("zh-CN", "流式识别，支持英语等多种语言"),
+                        ]),
+                        version: "2.1.0".to_owned(),
+                        official: false,
+                        streaming: true,
+                        provides: vec![Provide::Engine],
+                        host: true,
+                        permissions: vec!["network:api.deepgram.com".to_owned()],
+                    },
+                    MarketPlugin {
+                        id: "polish".to_owned(),
+                        name: "Polish".into(),
+                        description: Text::localized([
+                            ("en", "Tidies punctuation and casing with a language model"),
+                            ("zh-CN", "用语言模型整理标点和大小写"),
+                        ]),
+                        version: "0.3.0".to_owned(),
+                        official: false,
+                        streaming: false,
+                        provides: vec![Provide::Transform],
+                        host: true,
+                        permissions: vec!["network:api.openai.com".to_owned()],
+                    },
+                    MarketPlugin {
+                        id: "swap".to_owned(),
+                        name: "Swap".into(),
+                        description: Text::localized([
+                            ("en", "Rewrites a few spoken phrases into symbols"),
+                            ("zh-CN", "把几个口述短语改写成符号"),
+                        ]),
+                        version: "1.2.0".to_owned(),
+                        official: true,
+                        streaming: false,
+                        provides: vec![Provide::Context, Provide::Transform],
+                        host: false,
+                        permissions: Vec::new(),
+                    },
+                ],
+                unreachable: None,
+            }),
             devices: Mutex::new(Ok(vec![Device {
                 id: "BuiltInMic".to_owned(),
                 name: "MacBook Pro Microphone".to_owned(),
@@ -448,7 +456,7 @@ impl Control for FakeControl {
         ]
     }
 
-    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
+    fn plugin_market(&self) -> Market {
         self.call("plugin_market".to_owned());
         lock(&self.market).clone()
     }
@@ -456,7 +464,8 @@ impl Control for FakeControl {
     fn install_plugin(&self, id: &str) -> Result<(), PluginIssue> {
         self.call(format!("install_plugin {id}"));
         let release = lock(&self.market)
-            .clone()?
+            .plugins
+            .clone()
             .into_iter()
             .find(|p| p.id == id)
             .ok_or_else(|| PluginIssue::NotInIndex {

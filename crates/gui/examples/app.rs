@@ -14,8 +14,8 @@ use anya_i18n::Catalog;
 use anya_protocol::{Manifest, Scope, Source, Text};
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
-    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient,
-    Pairing, PluginIssue, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
+    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market, PairError, PairedClient, Pairing,
+    PluginIssue, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status, Subscription,
 };
 
 struct Fake {
@@ -166,10 +166,13 @@ impl Control for Fake {
         Vec::new()
     }
 
-    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
-        Err(PluginIssue::Bun {
-            reason: "no registry".to_owned(),
-        })
+    fn plugin_market(&self) -> Market {
+        Market {
+            plugins: Vec::new(),
+            unreachable: Some(PluginIssue::Bun {
+                reason: "no registry".to_owned(),
+            }),
+        }
     }
 
     fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {

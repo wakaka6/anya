@@ -33,6 +33,7 @@
   "cli.plugin.runs.host": "runs in Bun",
   "cli.plugin.runs.inline": "inline only, no Bun",
   "cli.plugin.search.none": "No plugin matches",
+  "cli.plugin.search.official": "{name} (official)",
   "cli.plugin.bun_download": "Downloading the Bun runtime that runs plugins…",
   "cli.plugin.installed": "Installed {id} {version}. It is disabled.",
   "cli.plugin.declared": "Declared permissions: {permissions}",

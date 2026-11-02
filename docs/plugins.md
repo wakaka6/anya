@@ -198,7 +198,7 @@ Hooks are plain functions: call `transform.transform("text", { settings: {} })` 
 
 `sdk/plugin/examples/` has complete packages to copy from: `echo-engine` (a streaming engine), `hooks` (a host transform and action) and `inline` (an inline transform and context).
 
-`plugins/` holds the plugins this repository releases, each with its tests: `spoken-punctuation` (an inline context and transform in one package), `app-hotwords` (an inline context with a setting) and `daily-notes` (a host action). `bun test` in `plugins/` runs them, with `@wakaka6/anya-plugin` served from this repository's SDK as the host serves it (`plugins/bunfig.toml`); `cargo xtask ci` runs it too.
+`plugins/` holds the official plugins, each with its tests: `spoken-punctuation` (an inline context and transform in one package), `app-hotwords` (an inline context with a setting) and `daily-notes` (a host action). They are built into the `anya` binary rather than released to the registry (docs/decisions/0017): the market lists them with or without the network, and installing one unpacks it from the binary with the checks of a download. Each is marked `"private": true`; the files it ships are its `package.json` and those its `files` field lists. `bun test` in `plugins/` runs them, with `@wakaka6/anya-plugin` served from this repository's SDK as the host serves it (`plugins/bunfig.toml`); `cargo xtask ci` runs it too.
 
 To try the real thing, serve a local registry index. Pack the plugin and let the registry's own script describe it:
 
@@ -233,15 +233,15 @@ Unknown fields are ignored. Anya installs a release only when it provides someth
 
 ## What Anya does with a release
 
-1. **Install** (a user action): downloads the artifact, checks `integrity`, refuses archives with links or paths that leave the package, unpacks into `plugins/<id>/<version>/` and records `{id, version, integrity, enabled: false}` in `plugins/plugins.json`.
+1. **Install** (a user action): downloads the artifact, checks `integrity`, refuses archives with links or paths that leave the package, unpacks into `plugins/<id>/<version>/` and records `{id, version, integrity, enabled: false}` in `plugins/plugins.json`. An official plugin is not downloaded: its tarball is built from the files in the binary, then checked and unpacked the same way.
 2. **Enable** (a separate user action): the plugin is loaded the next time Anya starts or reloads its plugins: its inline entry into QuickJS, its host entry into a Bun process of its own.
-3. **Update**: a newer version is installed explicitly, replaces the pinned version and starts disabled. Nothing installs or updates by itself, and Anya runs no Git tag listener.
+3. **Update**: a newer version is installed explicitly, replaces the pinned version and starts disabled. Nothing installs or updates by itself, and Anya runs no Git tag listener. The one exception is an official plugin: when Anya starts, an installed one is brought to the version built into this Anya, enabled or disabled as it was, and the activity list says so.
 
 Bun comes from `PATH` if it is version 1.2.0 or newer; otherwise Anya downloads its pinned Bun release (SHA-256 checked) when the first plugin with a host entry is installed. Without such plugins nothing is downloaded.
 
 ## The plugin release flow
 
-The Anya repository holds one directory per community plugin under `plugins/<id>/` and the workflow `.github/workflows/plugin-release.yml`. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. Releasing:
+The Anya repository holds one directory per plugin under `plugins/<id>/` and the workflow `.github/workflows/plugin-release.yml`. Plugin authors open a pull request to add or change a plugin; a maintainer reviews code and the declared permissions. The official plugins are built into Anya instead (docs/decisions/0017): their packages are `"private": true`, and the workflow refuses to release them. Releasing:
 
 1. A maintainer tags the merged commit `<plugin-id>-v<version>` (for example `echo-v1.2.0`). The tag version must equal `package.json`'s.
 2. The workflow packs the plugin (`npm pack`) and runs `scripts/validate-plugin.mjs` against the SDK in the same commit, which checks: id and version format; at least one of `anya.host` and `anya.inline`; `anya.compat` (not unbounded), `anya.protocol`, `anya.permissions`, `anya.fields` and `anya.limits` are well formed; an inline entry is one file without `import` or `require`; each entry loads and exports at least one hook, at most one of each kind; an engine's `manifest.id` equals the plugin id and its `streaming` is a boolean; the version is not already in the index. It writes `provides` and `host` from what the entries export.

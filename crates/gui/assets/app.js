@@ -1804,6 +1804,7 @@ function marketCard(p) {
       }, t(have ? "gui.plugins.installed" : busy ? "gui.plugins.installing" : "gui.plugins.install"))),
     el("p", { class: "desc" }, p.description),
     el("div", { class: "tags" },
+      p.official ? el("span", { class: "chip tag static official" }, t("gui.market.official")) : null,
       p.provides.includes("engine")
         ? el("span", { class: "chip tag static" }, t(p.streaming ? "gui.engine.streaming" : "gui.engine.batch"))
         : null,
@@ -1816,7 +1817,8 @@ async function loadMarket() {
   marketState = { status: "loading", list: [], reason: "" };
   pluginViews?.market();
   try {
-    marketState = { status: "ready", list: (await api("/api/plugins/market", {})).plugins, reason: "" };
+    const market = await api("/api/plugins/market", {});
+    marketState = { status: market.unreachable ? "partial" : "ready", list: market.plugins, reason: market.unreachable ?? "" };
   } catch (err) {
     marketState = { status: "failed", list: [], reason: err.message };
   }
@@ -1908,21 +1910,24 @@ function buildPlugins() {
     const key = JSON.stringify([marketState, plugins.map((p) => p.id), installing, query, LOCALE]);
     if (key === marketKey) return;
     marketKey = key;
-    setHidden(search, marketState.status !== "ready");
+    setHidden(search, marketState.list.length === 0);
     if (marketState.status === "loading") {
       marketBox.replaceChildren(el("div", { class: "market", "aria-busy": "true" },
         ...[0, 1, 2, 3].map(() => el("div", { class: "skeleton" }))));
-    } else if (marketState.status === "failed") {
-      marketBox.replaceChildren(el("div", { class: "calm" },
+    } else {
+      // The official plugins come with Anya; only the registry's can be out of reach.
+      const unreachable = marketState.status === "ready" ? null : el("div", { class: "calm" },
         el("b", {}, t("gui.market.unreachable")),
         el("p", { title: marketState.reason }, t("gui.market.unreachable_help")),
-        el("button", { type: "button", class: "ghost", onclick: loadMarket }, t("gui.market.retry"))));
-    } else {
+        el("button", { type: "button", class: "ghost", onclick: loadMarket }, t("gui.market.retry")));
       const shown = marketState.list.filter((p) => !query
         || `${p.name} ${p.description} ${p.id}`.toLowerCase().includes(query));
-      marketBox.replaceChildren(shown.length
+      const cards = shown.length
         ? el("div", { class: "market" }, ...shown.map(marketCard))
-        : el("div", { class: "calm" }, el("p", {}, t(marketState.list.length ? "gui.market.no_match" : "gui.plugins.market_empty"))));
+        : marketState.list.length || !unreachable
+          ? el("div", { class: "calm" }, el("p", {}, t(marketState.list.length ? "gui.market.no_match" : "gui.plugins.market_empty")))
+          : null;
+      marketBox.replaceChildren(...[cards, unreachable].filter(Boolean));
     }
   };
   const hooks = hooksSection();

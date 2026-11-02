@@ -1,6 +1,7 @@
 {
   "name": "app-hotwords",
   "version": "1.0.0",
+  "private": true,
   "description": "Hotwords for the app in front: the editor gets your project's names, the terminal its commands.",
   "type": "module",
   "main": "inline.js",

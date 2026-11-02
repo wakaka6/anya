@@ -51,7 +51,7 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | `crates/anya` | `anya` | app | the `anya` binary: daemon, `subscribe`, `replay`, `plugin`; the route page's view of the hub (`route.rs`), in memory only | in place |
 | `host/` | — | — | `host.js`, the Bun side of a host plugin's process, embedded in the binary | in place |
 | `sdk/plugin/` | `@wakaka6/anya-plugin` | - | what plugin authors build on (docs/plugins.md) | in place |
-| `plugins/` | - | - | the plugins this repository releases, one directory each, tested with `bun test` | in place |
+| `plugins/` | - | - | the official plugins, one directory each, built into the `anya` binary (docs/decisions/0017) and tested with `bun test` | in place |
 | `sdk/client/` | `@wakaka6/anya-client` | — | a thin subscriber for apps, tested against the fixtures | planned |
 | `xtask` | `xtask` | tooling | `cargo xtask check`, `cargo xtask ci` | in place |
 

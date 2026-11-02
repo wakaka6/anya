@@ -33,6 +33,7 @@
   "cli.plugin.runs.host": "在 Bun 中运行",
   "cli.plugin.runs.inline": "仅内联运行，无需 Bun",
   "cli.plugin.search.none": "没有匹配的插件",
+  "cli.plugin.search.official": "{name}（官方）",
   "cli.plugin.bun_download": "正在下载运行插件用的 Bun…",
   "cli.plugin.installed": "已安装 {id} {version}，目前处于停用状态。",
   "cli.plugin.declared": "声明的权限：{permissions}",

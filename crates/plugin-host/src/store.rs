@@ -5,10 +5,11 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use anya_protocol::{Index, PLUGIN_PROTOCOL, Provide};
+use anya_protocol::{Index, IndexVersion, PLUGIN_PROTOCOL, Provide};
 use serde::{Deserialize, Serialize};
 
 use crate::PluginError;
+use crate::bundled::Bundled;
 use crate::package::{Package, read_package};
 use crate::registry::{
     MAX_ARTIFACT_BYTES, download, find_release, unpack_tarball, verify_integrity,
@@ -218,53 +219,12 @@ impl Store {
         anya_version: &str,
     ) -> Result<Installed, PluginError> {
         check_id(id)?;
-        let parsed = semver::Version::parse(version).map_err(|_| PluginError::Invalid {
-            what: "version",
-            value: version.to_owned(),
-        })?;
         let release = find_release(index, id, version)?;
-        let incompatible = |reason: String| PluginError::Incompatible {
-            id: id.to_owned(),
-            version: version.to_owned(),
-            reason,
-        };
-        if release.provides.is_empty() || release.provides.contains(&Provide::Unknown) {
-            return Err(incompatible(
-                "it provides nothing, or something this Anya does not know".to_owned(),
-            ));
-        }
-        if release.protocol != PLUGIN_PROTOCOL {
-            return Err(incompatible(format!(
-                "it was built for plugin protocol {}, Anya speaks {PLUGIN_PROTOCOL}",
-                release.protocol
-            )));
-        }
-        let range = semver::VersionReq::parse(&release.anya).map_err(|e| {
-            incompatible(format!("its Anya range {:?} is invalid: {e}", release.anya))
-        })?;
-        let anya = semver::Version::parse(anya_version).map_err(|_| PluginError::Invalid {
-            what: "Anya version",
-            value: anya_version.to_owned(),
-        })?;
-        if !range.matches(&anya) {
-            return Err(incompatible(format!(
-                "it needs Anya {}, this is {anya_version}",
-                release.anya
-            )));
-        }
-
+        let installed = installable(id, release, anya_version)?;
         let bytes = download(&release.artifact, MAX_ARTIFACT_BYTES).await?;
         verify_integrity(&release.artifact, &bytes, &release.integrity)?;
 
         let store = self.clone();
-        let installed = Installed {
-            id: id.to_owned(),
-            version: parsed.to_string(),
-            integrity: release.integrity.clone(),
-            enabled: false,
-            provides: release.provides.clone(),
-            host: release.host,
-        };
         let artifact = release.artifact.clone();
         tokio::task::spawn_blocking(move || store.place(installed, &artifact, &bytes))
             .await
@@ -272,6 +232,55 @@ impl Store {
                 path: "install".to_owned(),
                 reason: e.to_string(),
             })?
+    }
+
+    /// Installs a plugin built into Anya from its files, with the checks of
+    /// [`Store::install`] and nothing downloaded. Recorded disabled, like any
+    /// install.
+    pub fn install_bundled(
+        &self,
+        bundled: &Bundled,
+        anya_version: &str,
+    ) -> Result<Installed, PluginError> {
+        let (entry, tgz) = bundled.release()?;
+        let release = entry
+            .versions
+            .first()
+            .ok_or_else(|| PluginError::NotInIndex {
+                id: entry.id.clone(),
+                version: "latest".to_owned(),
+            })?;
+        let installed = installable(&entry.id, release, anya_version)?;
+        self.place(installed, &release.artifact, &tgz)
+    }
+
+    /// Brings an installed plugin built into Anya to the files in the
+    /// binary, keeping whether it is enabled: it changes with Anya. The
+    /// version it had and its new record, or `None` when it is not installed
+    /// or already is those files.
+    pub fn update_bundled(
+        &self,
+        bundled: &Bundled,
+        anya_version: &str,
+    ) -> Result<Option<(String, Installed)>, PluginError> {
+        let (entry, tgz) = bundled.release()?;
+        let release = entry
+            .versions
+            .first()
+            .ok_or_else(|| PluginError::NotInIndex {
+                id: entry.id.clone(),
+                version: "latest".to_owned(),
+            })?;
+        let Some(old) = self.installed()?.into_iter().find(|p| p.id == entry.id) else {
+            return Ok(None);
+        };
+        if old.version == release.version && old.integrity == release.integrity {
+            return Ok(None);
+        }
+        let mut installed = installable(&entry.id, release, anya_version)?;
+        installed.enabled = old.enabled;
+        let installed = self.place(installed, &release.artifact, &tgz)?;
+        Ok(Some((old.version, installed)))
     }
 
     /// Unpacks `tgz` as `installed`'s id and version and records it.
@@ -361,6 +370,58 @@ fn check_id(id: &str) -> Result<(), PluginError> {
             value: id.to_owned(),
         })
     }
+}
+
+/// The record of `release` of plugin `id`, disabled, once it is known to
+/// provide something this Anya knows, for this plugin protocol and for
+/// `anya_version`.
+fn installable(
+    id: &str,
+    release: &IndexVersion,
+    anya_version: &str,
+) -> Result<Installed, PluginError> {
+    check_id(id)?;
+    let version = &release.version;
+    let parsed = semver::Version::parse(version).map_err(|_| PluginError::Invalid {
+        what: "version",
+        value: version.clone(),
+    })?;
+    let incompatible = |reason: String| PluginError::Incompatible {
+        id: id.to_owned(),
+        version: version.clone(),
+        reason,
+    };
+    if release.provides.is_empty() || release.provides.contains(&Provide::Unknown) {
+        return Err(incompatible(
+            "it provides nothing, or something this Anya does not know".to_owned(),
+        ));
+    }
+    if release.protocol != PLUGIN_PROTOCOL {
+        return Err(incompatible(format!(
+            "it was built for plugin protocol {}, Anya speaks {PLUGIN_PROTOCOL}",
+            release.protocol
+        )));
+    }
+    let range = semver::VersionReq::parse(&release.anya)
+        .map_err(|e| incompatible(format!("its Anya range {:?} is invalid: {e}", release.anya)))?;
+    let anya = semver::Version::parse(anya_version).map_err(|_| PluginError::Invalid {
+        what: "Anya version",
+        value: anya_version.to_owned(),
+    })?;
+    if !range.matches(&anya) {
+        return Err(incompatible(format!(
+            "it needs Anya {}, this is {anya_version}",
+            release.anya
+        )));
+    }
+    Ok(Installed {
+        id: id.to_owned(),
+        version: parsed.to_string(),
+        integrity: release.integrity.clone(),
+        enabled: false,
+        provides: release.provides.clone(),
+        host: release.host,
+    })
 }
 
 fn remove_dir(dir: &Path) -> Result<(), PluginError> {

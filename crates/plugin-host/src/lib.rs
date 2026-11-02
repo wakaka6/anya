@@ -7,6 +7,7 @@
 //!   (docs/decisions/0010-anya-plugins-registry.md).
 //! - [`Store`] installs a release into the plugins directory after checking
 //!   its integrity hash, and records which plugins the user enabled.
+//! - [`Bundled`] is a plugin built into Anya, which installs from the binary.
 //! - [`read_package`] reads a package's `package.json`.
 //! - [`BunPath`] finds or downloads the runtime.
 //! - [`PluginHost`] runs the enabled plugins, watches them, and hands out
@@ -16,6 +17,7 @@
 //! crate never installs or updates by itself.
 
 mod bun;
+mod bundled;
 mod engine;
 mod error;
 mod hooks;
@@ -26,6 +28,7 @@ mod registry;
 mod store;
 
 pub use bun::{BunPath, BunRelease, MIN_BUN_VERSION, PINNED_BUN_VERSION};
+pub use bundled::Bundled;
 pub use engine::PluginEngine;
 pub use error::PluginError;
 pub use hooks::HostHook;

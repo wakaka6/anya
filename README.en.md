@@ -107,7 +107,7 @@ Install and enable are separate steps, on the settings window's Plugins page too
 
 Built-in engines can be turned off too, except the one you have chosen. Two more built-in pieces: `replace` applies `replacements.txt` next to the config file (one `spoken => written` a line), and `community-hooks` runs every community plugin's context, transform and action hooks; turned off, none of them runs. These changes are written to `[plugins.builtin]` in the config file, and a running Anya reads them and applies them at once. The transform order, plugin settings and time budgets live in `[plugins] order`, `[plugins.settings.<id>]` and `[plugins.limits]`.
 
-The plugins this repository ships are in [`plugins/`](plugins/):
+The official plugins are in [`plugins/`](plugins/) and are built into Anya: the plugin market lists them, tagged “Official”, even without a network, and Install unpacks one from Anya itself with nothing downloaded. Like any plugin, an installed one runs only once you enable it. When you upgrade Anya, installed official plugins are updated with it at the next start, staying on or off as they were.
 
 | Plugin | Provides | What it does |
 | --- | --- | --- |

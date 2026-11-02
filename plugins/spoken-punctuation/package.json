@@ -1,6 +1,7 @@
 {
   "name": "spoken-punctuation",
   "version": "1.0.0",
+  "private": true,
   "description": "Say \"逗号\", \"句号\" or \"换行\" while dictating and get the mark.",
   "type": "module",
   "main": "inline.js",

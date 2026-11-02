@@ -12,8 +12,8 @@ use anya_i18n::Catalog;
 use anya_protocol::{Field as EngineField, FieldKind, Manifest, Provide, Scope, Source, Text};
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
-    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin, PairError, PairedClient,
-    Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status,
+    HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market, PairError, PairedClient, Pairing,
+    PluginIssue, PluginLoad, PreviewIssue, PreviewView, SaveError, Saved, Stats, Status,
     Subscription, UpdateIssue, UpdateState, UpdateVia,
 };
 use ratatui::Terminal;
@@ -231,10 +231,13 @@ impl Control for Fake {
         self.plugins.lock().expect("lock").clone()
     }
 
-    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
-        Err(PluginIssue::Bun {
-            reason: "no registry".to_owned(),
-        })
+    fn plugin_market(&self) -> Market {
+        Market {
+            plugins: Vec::new(),
+            unreachable: Some(PluginIssue::Bun {
+                reason: "no registry".to_owned(),
+            }),
+        }
     }
 
     fn install_plugin(&self, _id: &str) -> Result<(), PluginIssue> {

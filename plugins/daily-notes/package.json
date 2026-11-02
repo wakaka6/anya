@@ -1,6 +1,7 @@
 {
   "name": "daily-notes",
   "version": "1.0.0",
+  "private": true,
   "description": "Keeps every dictation in a Markdown note per day.",
   "type": "module",
   "main": "host.js",

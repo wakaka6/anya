@@ -633,16 +633,15 @@ async fn plugin_market(page: &Page, catalog: &Catalog) -> Reply {
     let control = page.control.clone();
     let fetched = tokio::task::spawn_blocking(move || control.plugin_market()).await;
     match fetched {
-        Ok(Ok(list)) => reply::json(
+        Ok(market) => reply::json(
             StatusCode::OK,
-            &json!({ "plugins": view::market(&list, catalog) }),
-        ),
-        Ok(Err(issue)) => reply::error(
-            StatusCode::BAD_GATEWAY,
-            &catalog.tf(
-                "gui.plugins.market_failed",
-                &[("detail", &coded(PluginIssue::message(&issue), catalog))],
-            ),
+            &json!({
+                "plugins": view::market(&market.plugins, catalog),
+                "unreachable": market.unreachable.map(|issue| catalog.tf(
+                    "gui.plugins.market_failed",
+                    &[("detail", &coded(PluginIssue::message(&issue), catalog))],
+                )),
+            }),
         ),
         Err(e) => reply::error(
             StatusCode::INTERNAL_SERVER_ERROR,

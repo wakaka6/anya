@@ -190,6 +190,7 @@ pub(super) fn market(list: &[MarketPlugin], catalog: &Catalog) -> Vec<Value> {
                 "name": match p.name.get(catalog.locale()) { "" => p.id.as_str(), n => n },
                 "description": p.description.get(catalog.locale()),
                 "version": p.version,
+                "official": p.official,
                 "streaming": p.streaming,
                 "provides": provides(&p.provides),
                 "host": p.host,
@@ -933,6 +934,7 @@ fn entry(entry: &Entry, engines: &[EngineInfo], catalog: &Catalog) -> Value {
                 Notice::HotwordsUnreadable => ("gui.notice.hotwords_unreadable", "warn"),
                 Notice::DeliveryFailed => ("gui.notice.delivery_failed", "error"),
                 Notice::PluginsUnavailable => ("gui.notice.plugins_unavailable", "warn"),
+                Notice::PluginsUpdated => ("gui.notice.plugins_updated", "info"),
                 Notice::OverlayUnavailable => ("gui.notice.overlay_unavailable", "warn"),
             };
             let text = match detail.as_deref().map(str::trim).filter(|d| !d.is_empty()) {

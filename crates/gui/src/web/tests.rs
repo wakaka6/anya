@@ -1467,26 +1467,34 @@ async fn removing_a_client_unpairs_it() {
 }
 
 #[tokio::test]
-async fn the_registry_is_read_when_asked_and_its_failure_is_told() {
+async fn the_registry_is_read_when_asked_and_its_failure_is_told_beside_what_is_listed() {
     let h = harness(ShellKind::Web).await;
     assert_eq!(h.get("/api/status").await.json()["plugins"], json!([]));
     let res = h.post("/api/plugins/market", &json!({})).await;
     assert_eq!(res.status, 200, "{}", res.body);
+    assert_eq!(res.json()["unreachable"], json!(null));
     let p = &res.json()["plugins"][0];
     assert_eq!(p["name"], "Echo");
     assert_eq!(p["streaming"], true);
     assert_eq!(p["permissions"], json!(["network:example.com"]));
 
-    *lock(&h.control.market) = Err(anya_runtime::PluginIssue::Fetch {
-        url: "https://r.example/index.json".to_owned(),
-        reason: "no route to host".to_owned(),
-    });
+    {
+        let mut market = lock(&h.control.market);
+        market.plugins.retain(|p| p.official);
+        market.unreachable = Some(anya_runtime::PluginIssue::Fetch {
+            url: "https://r.example/index.json".to_owned(),
+            reason: "no route to host".to_owned(),
+        });
+    }
     let res = h.post("/api/plugins/market", &json!({})).await;
-    assert_eq!(res.status, 502);
+    assert_eq!(res.status, 200, "{}", res.body);
     assert_eq!(
-        res.json()["error"],
+        res.json()["unreachable"],
         "Cannot read the plugin registry: Cannot fetch https://r.example/index.json: no route to host"
     );
+    let listed = res.json()["plugins"].clone();
+    assert_eq!(listed[0]["id"], "swap", "the official plugins stay");
+    assert_eq!(listed[0]["official"], true);
 }
 
 #[tokio::test]
@@ -1544,13 +1552,12 @@ async fn plugin_and_pairing_refusals_read_in_the_users_language() {
         res.json()["error"],
         "插件操作失败：仓库里没有插件 nope latest"
     );
-    *lock(&h.control.market) = Err(anya_runtime::PluginIssue::Integrity {
+    lock(&h.control.market).unreachable = Some(anya_runtime::PluginIssue::Integrity {
         what: "echo".to_owned(),
     });
     let res = h.post("/api/plugins/market", &json!({})).await;
-    assert_eq!(res.status, 502);
     assert_eq!(
-        res.json()["error"],
+        res.json()["unreachable"],
         "无法读取插件仓库：echo 的下载内容与完整性哈希不符，未安装任何内容"
     );
     let res = h.post("/api/pairing", &json!({})).await;

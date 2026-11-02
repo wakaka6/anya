@@ -36,9 +36,10 @@ use anya_protocol::Provide;
 use anya_protocol::{ErrorCode, PairingOffer, Scope, Source};
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation,
-    EngineInfo, Entry, HookInfo, HotkeyRole, Info, InstalledPlugin, Invalid, Lan, MarketPlugin,
-    Notice, PairError, PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView,
-    Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState, UpdateVia,
+    EngineInfo, Entry, HookInfo, HotkeyRole, Info, InstalledPlugin, Invalid, Lan, Market,
+    MarketPlugin, Notice, PairError, PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue,
+    PreviewView, Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
+    UpdateVia,
 };
 use anya_server::{
     Address, Audience, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address,
@@ -54,6 +55,7 @@ mod hooks;
 mod hotwords;
 mod indicator;
 mod install;
+mod official;
 mod plugins;
 mod route;
 mod store;
@@ -450,6 +452,14 @@ impl App {
                 detail,
             });
         };
+        let updated = plugins::update_official(&app.plugin_store);
+        if !updated.is_empty() {
+            app.activity.push(Entry::Notice {
+                at: now_ms(),
+                notice: Notice::PluginsUpdated,
+                detail: Some(updated.join(", ")),
+            });
+        }
         match app.plugin_store.needs_bun() {
             Ok(false) => {}
             Ok(true) => {
@@ -1357,29 +1367,35 @@ impl Control for App {
             .collect()
     }
 
-    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue> {
+    fn plugin_market(&self) -> Market {
         let url = plugins::index_url(&lock(&self.config));
-        let index = self
-            .runtime
-            .block_on(Registry::fetch(&url))
-            .map_err(|e| plugins::issue(&e))?;
-        Ok(index
-            .plugins
+        let (listed, unreachable) = self.runtime.block_on(plugins::market(&url));
+        let plugins = listed
             .into_iter()
-            .filter_map(|p| {
-                let release = p.versions.last()?;
-                Some(MarketPlugin {
-                    version: release.version.clone(),
-                    streaming: release.streaming,
-                    provides: release.provides.clone(),
-                    host: release.host,
-                    permissions: release.permissions.clone(),
-                    id: p.id,
-                    name: p.name,
-                    description: p.description,
-                })
-            })
-            .collect())
+            .filter_map(
+                |plugins::Listed {
+                     plugin: p,
+                     official,
+                 }| {
+                    let release = p.versions.last()?;
+                    Some(MarketPlugin {
+                        version: release.version.clone(),
+                        official,
+                        streaming: release.streaming,
+                        provides: release.provides.clone(),
+                        host: release.host,
+                        permissions: release.permissions.clone(),
+                        id: p.id,
+                        name: p.name,
+                        description: p.description,
+                    })
+                },
+            )
+            .collect();
+        Market {
+            plugins,
+            unreachable: unreachable.map(|e| plugins::issue(&e)),
+        }
     }
 
     fn install_plugin(&self, id: &str) -> Result<(), PluginIssue> {

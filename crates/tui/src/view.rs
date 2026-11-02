@@ -845,6 +845,7 @@ fn notice_key(notice: Notice) -> &'static str {
         Notice::HotwordsUnreadable => "tui.notice.hotwords_unreadable",
         Notice::DeliveryFailed => "tui.notice.delivery_failed",
         Notice::PluginsUnavailable => "tui.notice.plugins_unavailable",
+        Notice::PluginsUpdated => "tui.notice.plugins_updated",
         Notice::OverlayUnavailable => "tui.notice.overlay_unavailable",
     }
 }

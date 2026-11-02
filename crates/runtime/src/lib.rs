@@ -196,7 +196,17 @@ pub struct InstalledPlugin {
     pub missing: Vec<String>,
 }
 
-/// A plugin the registry offers, at its newest release.
+/// What the plugin market offers: the official plugins, which are built into
+/// Anya, then the registry's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Market {
+    /// The plugins, official ones first.
+    pub plugins: Vec<MarketPlugin>,
+    /// Why the registry's plugins are missing, when it could not be read.
+    pub unreachable: Option<PluginIssue>,
+}
+
+/// A plugin the market offers, at its newest release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MarketPlugin {
     /// The plugin id.
@@ -207,6 +217,9 @@ pub struct MarketPlugin {
     pub description: Text,
     /// The newest release.
     pub version: String,
+    /// Written by the Anya project and built into it: it installs without
+    /// the registry.
+    pub official: bool,
     /// The engine streams partial results.
     pub streaming: bool,
     /// What the release provides.
@@ -328,6 +341,9 @@ pub enum Notice {
     /// Plugins are enabled but there is no Bun to run them; the detail says
     /// what was missing.
     PluginsUnavailable,
+    /// Official plugins were brought to the versions this Anya ships; the
+    /// detail lists them.
+    PluginsUpdated,
     /// The recording overlay could not start; the detail says why.
     OverlayUnavailable,
 }
@@ -1021,14 +1037,15 @@ pub trait Control: Send + Sync {
     /// Installed plugins with their load state, in install order.
     fn plugins(&self) -> Vec<InstalledPlugin>;
 
-    /// The registry's plugins at their newest release. Fetches the index,
-    /// so it blocks on the network: call it off the UI thread. The error is
-    /// translated by the UI.
-    fn plugin_market(&self) -> Result<Vec<MarketPlugin>, PluginIssue>;
+    /// The official plugins and the registry's, at their newest release.
+    /// Fetches the index, so it blocks on the network: call it off the UI
+    /// thread. The official plugins are there without it; the UI translates
+    /// why the registry was unreachable.
+    fn plugin_market(&self) -> Market;
 
-    /// Installs the newest release of plugin `id` from the registry,
-    /// disabled. Blocks while downloading (the Bun runtime too, the first
-    /// time).
+    /// Installs plugin `id`, disabled: an official plugin from Anya itself,
+    /// any other at its newest release from the registry. Blocks while
+    /// downloading (the Bun runtime too, the first time).
     fn install_plugin(&self, id: &str) -> Result<(), PluginIssue>;
 
     /// Turns plugin `id` on or off and reloads the plugin host.

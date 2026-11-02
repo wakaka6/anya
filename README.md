@@ -107,7 +107,7 @@ anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 
 内置引擎也可以关闭，当前选用的引擎除外。另外两个内置部件：`replace` 按配置文件旁的 `replacements.txt` 替换词（每行 `说的 => 写的`），`community-hooks` 运行所有社区插件的 context、transform 和 action，关掉它这些都不再执行。这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。改写的顺序、插件设置和时间上限分别在 `[plugins] order`、`[plugins.settings.<id>]` 和 `[plugins.limits]`。
 
-仓库自带的插件在 [`plugins/`](plugins/)：
+官方插件在 [`plugins/`](plugins/)，随 Anya 一起编进程序：插件市场不联网也会列出它们，标着“官方”，点“安装”直接从 Anya 里解包，不用下载。装好后同样要启用才会运行。升级 Anya 后，已装的官方插件会在启动时一起更新，开关状态保持不变。
 
 | 插件 | 提供 | 做什么 |
 | --- | --- | --- |

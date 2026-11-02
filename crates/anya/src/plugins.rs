@@ -13,6 +13,7 @@ use anya_protocol::{Index, IndexPlugin, IndexVersion, Provide};
 use anya_runtime::PluginIssue;
 
 use crate::builtin;
+use crate::official;
 
 /// What `anya plugin` was asked to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,9 +120,64 @@ pub fn latest<'a>(index: &'a Index, id: &str) -> Option<&'a IndexVersion> {
         .and_then(|p| p.versions.last())
 }
 
-/// Installs `id` (at `version`, else its newest release) from the index at
-/// `url`, disabled. Provisions Bun first when the release has a host entry
-/// and none is usable; `bun_download` is called just before a download starts.
+/// One plugin the market lists.
+pub struct Listed {
+    /// The plugin and its releases.
+    pub plugin: IndexPlugin,
+    /// Built into Anya.
+    pub official: bool,
+}
+
+/// What the market lists: the official plugins, then the registry's at `url`
+/// except those with an id already listed, and why the registry could not be
+/// read when it could not.
+pub async fn market(url: &str) -> (Vec<Listed>, Option<PluginError>) {
+    let mut listed: Vec<Listed> = official::entries()
+        .into_iter()
+        .map(|plugin| Listed {
+            plugin,
+            official: true,
+        })
+        .collect();
+    match Registry::fetch(url).await {
+        Ok(index) => {
+            for plugin in index.plugins {
+                if !listed.iter().any(|l| l.plugin.id == plugin.id) {
+                    listed.push(Listed {
+                        plugin,
+                        official: false,
+                    });
+                }
+            }
+            (listed, None)
+        }
+        Err(e) => (listed, Some(e)),
+    }
+}
+
+/// Brings each installed official plugin to the version this Anya ships,
+/// keeping whether it is enabled, so the official plugins change with Anya
+/// (docs/decisions/0017). Says what changed, one `id from → to` each; one
+/// that cannot be brought along is logged and stays as it was.
+pub fn update_official(store: &Store) -> Vec<String> {
+    let mut changed = Vec::new();
+    for bundled in official::PLUGINS {
+        match store.update_bundled(bundled, env!("CARGO_PKG_VERSION")) {
+            Ok(None) => {}
+            Ok(Some((from, now))) => {
+                tracing::info!(plugin = %now.id, %from, to = %now.version, "official plugin updated with Anya");
+                changed.push(format!("{} {from} → {}", now.id, now.version));
+            }
+            Err(e) => tracing::warn!("an official plugin was not updated: {e}"),
+        }
+    }
+    changed
+}
+
+/// Installs `id` (at `version`, else its newest release), disabled: an
+/// official plugin from Anya itself, any other from the index at `url`.
+/// Provisions Bun first when the release has a host entry and none is
+/// usable; `bun_download` is called just before a download starts.
 pub async fn install(
     dirs: &PluginDirs,
     url: &str,
@@ -129,6 +185,18 @@ pub async fn install(
     version: Option<&str>,
     bun_download: impl FnOnce(),
 ) -> Result<(Installed, IndexVersion), PluginError> {
+    if let Some((bundled, entry)) = official::find(id)
+        && let Some(release) = entry.versions.last()
+        && version.is_none_or(|v| v == release.version)
+    {
+        if release.host && BunPath::detect(&dirs.runtime).await.is_none() {
+            bun_download();
+            BunPath::provision(&dirs.runtime).await?;
+        }
+        let installed =
+            Store::new(dirs.clone()).install_bundled(bundled, env!("CARGO_PKG_VERSION"))?;
+        return Ok((installed, release.clone()));
+    }
     let index = Registry::fetch(url).await?;
     let release = match version {
         Some(v) => anya_plugin_host::find_release(&index, id, v)?,
@@ -268,9 +336,9 @@ pub async fn run(
     let io = |e: std::io::Error| e.to_string();
     match action {
         Action::Search(query) => {
-            let index = Registry::fetch(&index_url(config)).await.map_err(failed)?;
+            let (listed, unreachable) = market(&index_url(config)).await;
             let mut shown = 0;
-            for plugin in &index.plugins {
+            for Listed { plugin, official } in &listed {
                 let Some(release) = plugin.versions.last() else {
                     continue;
                 };
@@ -285,6 +353,11 @@ pub async fn run(
                     "" => plugin.id.as_str(),
                     n => n,
                 };
+                let name = if *official {
+                    c.tf("cli.plugin.search.official", &[("name", name)])
+                } else {
+                    name.to_owned()
+                };
                 writeln!(
                     out,
                     "{}",
@@ -293,7 +366,7 @@ pub async fn run(
                         &[
                             ("id", &plugin.id),
                             ("version", &release.version),
-                            ("name", name),
+                            ("name", &name),
                             (
                                 "provides",
                                 &provided(&release.provides, Some(release.streaming), c)
@@ -308,6 +381,9 @@ pub async fn run(
                 if !description.is_empty() {
                     writeln!(out, "    {description}").map_err(io)?;
                 }
+            }
+            if let Some(e) = unreachable {
+                return Err(failed(e));
             }
             if shown == 0 {
                 writeln!(out, "{}", c.t("cli.plugin.search.none")).map_err(io)?;
@@ -559,6 +635,64 @@ mod tests {
             out.contains("[context, transform]  inline only, no Bun"),
             "{out}"
         );
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[tokio::test]
+    async fn search_lists_the_official_plugins_and_says_when_the_registry_is_out_of_reach() {
+        let mut config = Config::default();
+        config.plugins.index = "file:///nonexistent/anya-index.json".to_owned();
+        let mut out = Vec::new();
+        let error = run(
+            Action::Search(None),
+            &config,
+            std::path::Path::new("/unused/config.toml"),
+            &std::env::temp_dir().join("anya-search-unused"),
+            &Catalog::new("en"),
+            &mut out,
+        )
+        .await
+        .expect_err("the registry is unreachable");
+        assert!(error.contains("anya-index.json"), "{error}");
+        let out = String::from_utf8(out).expect("utf8");
+        for entry in official::entries() {
+            let name = entry.name.get("en");
+            assert!(out.contains(&format!("{name} (official)")), "{out}");
+        }
+    }
+
+    // An official plugin installed by an older Anya is this Anya's after
+    // the start, on or off as the user left it.
+    #[test]
+    fn official_plugins_follow_the_running_anya() {
+        let data = std::env::temp_dir().join(format!("anya-follow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let store = Store::new(PluginDirs::under(&data));
+        let ships = official::entries();
+        let first = &ships[0];
+        let bundled = official::find(&first.id).expect("official").0;
+        store
+            .install_bundled(bundled, env!("CARGO_PKG_VERSION"))
+            .expect("install");
+        store.enable(&first.id).expect("enable");
+        assert!(update_official(&store).is_empty(), "already this Anya's");
+
+        let record = data.join("plugins/plugins.json");
+        let text = std::fs::read_to_string(&record).expect("record");
+        let mut json: serde_json::Value = serde_json::from_str(&text).expect("json");
+        json["installed"][0]["version"] = "0.9.0".into();
+        json["installed"][0]["integrity"] = "sha512-older".into();
+        std::fs::write(&record, json.to_string()).expect("older record");
+
+        let shipped = &first.versions[0].version;
+        assert_eq!(
+            update_official(&store),
+            [format!("{} 0.9.0 → {shipped}", first.id)]
+        );
+        let now = &store.installed().expect("record")[0];
+        assert_eq!((&now.version, now.enabled), (shipped, true));
+        assert!(read_package(&store.package_dir(now)).is_ok());
+        assert!(update_official(&store).is_empty());
         let _ = std::fs::remove_dir_all(&data);
     }
 
