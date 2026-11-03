@@ -41,7 +41,9 @@ impl Layer {
             "anya-audio" | "anya-hotkey" | "anya-output" | "anya-overlay" | "anya-focus" => {
                 Layer::Adapter
             }
-            "anya-server" | "anya-plugin-host" | "anya-script" | "anya-update" => Layer::Service,
+            "anya-server" | "anya-plugin-host" | "anya-script" | "anya-update" | "anya-whisper" => {
+                Layer::Service
+            }
             "anya" | "anya-config" | "anya-i18n" | "anya-runtime" | "anya-tui" | "anya-gui" => {
                 Layer::App
             }

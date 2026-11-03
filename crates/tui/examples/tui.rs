@@ -166,6 +166,7 @@ impl Control for Pretend {
                 ready: self.engine_ready(&m.id, &config.recognition.settings(&m.id)),
                 enabled: None,
                 icon: None,
+                local: false,
                 manifest: m,
             })
             .collect()

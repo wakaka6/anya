@@ -11,6 +11,7 @@ license.workspace = true
 anya-config.workspace = true
 anya-core.workspace = true
 anya-protocol.workspace = true
+anya-whisper.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

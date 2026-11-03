@@ -36,6 +36,29 @@ pub struct Points {
     pub actions: Point<dyn ActionHook>,
 }
 
+/// The models and the whisper-server Anya runs for the whisper.cpp engine
+/// (docs/decisions/0018), kept under the data directory.
+static LOCAL: LazyLock<Arc<anya_whisper::Local>> = LazyLock::new(|| {
+    // Without a home directory the config cannot load either, so Anya
+    // never runs a session on this fallback.
+    let data = anya_config::data_dir().unwrap_or_else(|_| std::env::temp_dir().join("anya"));
+    anya_whisper::Local::new(data.join("models"))
+});
+
+/// The whisper.cpp engine, wrapped with the server Anya can run for it.
+static WHISPER: LazyLock<Arc<dyn Engine>> =
+    LazyLock::new(|| LOCAL.wrap(anya_engine_whisper_cpp::engine()));
+
+/// The server Anya runs for the whisper.cpp engine, and its models.
+pub fn local() -> &'static Arc<anya_whisper::Local> {
+    &LOCAL
+}
+
+/// The id of the engine [`local`] runs a server for.
+pub fn local_engine() -> &'static str {
+    &WHISPER.manifest().id
+}
+
 /// The engines Anya ships, one crate each.
 pub fn engines() -> Vec<Arc<dyn Engine>> {
     static ENGINES: LazyLock<Vec<Arc<dyn Engine>>> = LazyLock::new(|| {
@@ -43,7 +66,7 @@ pub fn engines() -> Vec<Arc<dyn Engine>> {
             anya_engine_doubao::engine(),
             anya_engine_dashscope::engine(),
             anya_engine_openai::engine(),
-            anya_engine_whisper_cpp::engine(),
+            Arc::clone(&WHISPER),
             anya_engine_auralwise::engine(),
             anya_engine_mimo::engine(),
         ]

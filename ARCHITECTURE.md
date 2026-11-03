@@ -10,7 +10,7 @@ flowchart TB
   Trigger["Triggers: dictation · continuous"]
   Adapter["Adapters: audio (microphone and built-in system sound) · hotkey · output · overlay · focus"]
   Engine["Engines: anya-engine-&lt;id&gt;"]
-  Service["Services: server · plugin-host · script · update"]
+  Service["Services: server · plugin-host · script · update · whisper"]
   Core["anya-core: seams, session controller, hook runner"]
   Protocol["anya-protocol: wire formats"]
   App --> Trigger & Adapter & Engine & Service
@@ -38,11 +38,12 @@ An arrow is an allowed dependency (the app may also use core and protocol direct
 | `crates/output` | `anya-output` | adapter | paste and clipboard sinks | in place |
 | `crates/overlay` | `anya-overlay` | adapter | recording overlay: layer-shell, X11, NSPanel with the notch | in place |
 | `crates/focus` | `anya-focus` | adapter | which app has the keyboard focus, for context hooks: the frontmost bundle id on macOS, the active window's class on X11, none on Wayland | in place |
-| `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, auralwise, mimo | in place |
+| `crates/engines/<id>` | `anya-engine-<id>` | engine | one engine each; built in: doubao, dashscope, openai, whisper-cpp, auralwise, mimo | in place |
 | `crates/server` | `anya-server` | service | WebSocket subscription, authenticated remote dictation, pairing and paired clients, the TLS LAN listener; each server's `Audience`: who opened a session and how many subscribers were sent it | in place |
 | `crates/plugin-host` | `anya-plugin-host` | service | host plugins, one Bun process each with a watchdog, restarted with backoff; their engines as `Engine`s and their hooks as hook adapters; the anya-plugins index, installs checked against their sha512 integrity, `plugins.json`; finding or downloading a pinned Bun | in place |
 | `crates/script` | `anya-script` | service | inline plugins: each a QuickJS runtime on a thread of its own with no I/O, every call within a time and memory budget; their hooks as hook adapters | in place |
 | `crates/update` | `anya-update` | service | whether the Homebrew tap's formula names a newer version, whether this install is under a Cellar, and running `brew upgrade anya` (docs/decisions/0014) | in place |
+| `crates/whisper` | `anya-whisper` | service | the whisper-server Anya runs for the whisper.cpp engine: the model catalog pinned to SHA-1s, resumable checked downloads into `<data dir>/models`, the server started per session on a free loopback port and stopped when idle; it wraps the engine it is handed and names none (docs/decisions/0018) | in place |
 | `crates/config` | `anya-config` | app | the config file: shape, defaults, validation, atomic save | in place |
 | `crates/i18n` | `anya-i18n` | app | every user-facing string, locale detection (docs/decisions/0008) | in place |
 | `crates/runtime` | `anya-runtime` | app | `Control`, what the UIs may ask of a running Anya, and its data | in place |

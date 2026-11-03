@@ -91,6 +91,7 @@ impl Control for Fake {
             ready: true,
             enabled: None,
             icon: None,
+            local: false,
         }]
     }
 

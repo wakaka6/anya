@@ -69,6 +69,15 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 /loop 10m /anya-hotwords ~/.config/anya/config.toml
 ```
 
+## 在本机识别：whisper.cpp
+
+内置引擎 whisper.cpp 在这台电脑上识别，音频不离开它。在设置的“引擎”页展开 whisper.cpp，“运行方式”有两种：
+
+- **我自己运行**：你启动 `whisper-server`，在“服务地址”里填它的地址（留空为 `http://127.0.0.1:8080`）。
+- **由 Anya 启动**：在模型列表里点一个模型下载，下好后自动选中；也可以选“自己的模型文件”填一个 ggml 模型的路径。听写时 Anya 在本机启动 `whisper-server`，只监听 `127.0.0.1`，空闲 10 分钟后退出，退出后释放模型占的内存。`whisper-server` 本身要自己装：`brew install whisper-cpp`。
+
+推荐的模型是 `large-v3-turbo-q5_0`（547 MB），内存少于 8 GB 的电脑推荐 `small`。模型只在你点下载时才下载，默认从 Hugging Face，“高级”里可以换成镜像；每个模型的哈希写死在 Anya 里，下载完校验通过才算下好，所以镜像不需要被信任。下载中断后从断开的地方接着下。模型存放在数据目录的 `models` 下（Linux 和 macOS 都是 `~/.local/share/anya/models`）。配置写在 `[recognition.engines.whisper-cpp]`：`mode`、`model`、`program`、`idle_timeout_minutes`、`download_source`。
+
 ## 局域网共享与配对
 
 <p align="center">
@@ -129,7 +138,7 @@ flowchart TB
   Trigger["触发器：听写 · 持续转写"]
   Adapter["适配器：音频 · 热键 · 输出 · 浮层 · 前台应用"]
   Engine["引擎：anya-engine-&lt;id&gt;"]
-  Service["服务：server · plugin-host · script"]
+  Service["服务：server · plugin-host · script · update · whisper"]
   Core["anya-core：接口、会话控制与钩子"]
   Protocol["anya-protocol：线上格式"]
   App --> Trigger & Adapter & Engine & Service

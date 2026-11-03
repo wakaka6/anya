@@ -22,6 +22,7 @@ members = [
     "crates/plugin-host",
     "crates/script",
     "crates/update",
+    "crates/whisper",
     "crates/config",
     "crates/i18n",
     "crates/runtime",
@@ -60,6 +61,7 @@ anya-server = { path = "crates/server" }
 anya-plugin-host = { path = "crates/plugin-host" }
 anya-script = { path = "crates/script" }
 anya-update = { path = "crates/update" }
+anya-whisper = { path = "crates/whisper" }
 anya-config = { path = "crates/config" }
 anya-i18n = { path = "crates/i18n" }
 anya-runtime = { path = "crates/runtime" }

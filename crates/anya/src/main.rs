@@ -36,10 +36,10 @@ use anya_protocol::Provide;
 use anya_protocol::{ErrorCode, PairingOffer, Scope, Source};
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, DebugEvent, Delivered, Dictation as UiDictation,
-    EngineInfo, Entry, HookInfo, HotkeyRole, Icon, Info, InstalledPlugin, Invalid, Lan, Market,
-    MarketPlugin, Notice, PairError, PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue,
-    PreviewView, Route, SaveError, Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
-    UpdateVia,
+    EngineInfo, Entry, HookInfo, HotkeyRole, Icon, Info, InstalledPlugin, Invalid, Lan,
+    LocalStatus, Market, MarketPlugin, ModelIssue, Notice, PairError, PairedClient, Pairing,
+    PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, Stats, Status,
+    Subscription, UpdateIssue, UpdateState, UpdateVia,
 };
 use anya_server::{
     Address, Audience, Clients, ClientsError, Gateway, Server, TlsIdentity, parse_address,
@@ -1257,6 +1257,7 @@ impl Control for App {
             .map(|(engine, enabled)| EngineInfo {
                 icon: self.engine_icon(&engine.manifest().id, enabled.is_none()),
                 enabled: *enabled,
+                local: engine.manifest().id == builtin::local_engine(),
                 manifest: engine.manifest().clone(),
                 ready: engine
                     .check(
@@ -1614,6 +1615,39 @@ impl Control for App {
         }
     }
 
+    fn local_server(&self) -> Option<LocalStatus> {
+        let settings = lock(&self.config)
+            .recognition
+            .settings(builtin::local_engine());
+        Some(builtin::local().status(&settings))
+    }
+
+    fn download_model(&self, id: &str) -> Result<(), ModelIssue> {
+        let settings = lock(&self.config)
+            .recognition
+            .settings(builtin::local_engine());
+        let _runtime = self.runtime.enter();
+        builtin::local()
+            .download(id, &settings)
+            .map_err(|e| ModelIssue::Unknown { id: e.0 })
+    }
+
+    fn cancel_download(&self, id: &str) {
+        builtin::local().cancel(id);
+    }
+
+    fn delete_model(&self, id: &str) -> Result<(), ModelIssue> {
+        self.runtime
+            .block_on(builtin::local().delete(id))
+            .map_err(|e| ModelIssue::Io {
+                detail: e.to_string(),
+            })
+    }
+
+    fn stop_local_server(&self) {
+        self.runtime.spawn(builtin::local().stop());
+    }
+
     fn dismiss_dictation(&self) {
         self.dictation.input(DictationInput::Cancel);
     }
@@ -1742,6 +1776,7 @@ async fn run_app(run: Run, catalog: Catalog) -> Result<(), String> {
         }
     }
     app.shutdown_plugins().await;
+    builtin::local().stop().await;
     Ok(())
 }
 

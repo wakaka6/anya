@@ -19,9 +19,10 @@ use anya_protocol::{
 };
 use anya_runtime::{
     BuiltinHooks, ClientIssue, Control, Delivered, Dictation, EngineInfo, Entry, HookInfo,
-    HotkeyRole, Icon, Info, InstalledPlugin, Invalid, Lan, Market, MarketPlugin, Notice, PairError,
-    PairedClient, Pairing, PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError,
-    Saved, Stats, Status, Subscription, UpdateIssue, UpdateState,
+    HotkeyRole, Icon, Info, InstalledPlugin, Invalid, LOCAL_MODELS, Lan, LocalStatus, Market,
+    MarketPlugin, ModelIssue, ModelState, ModelStatus, Notice, PairError, PairedClient, Pairing,
+    PluginIssue, PluginLoad, PreviewIssue, PreviewView, Route, SaveError, Saved, ServerState,
+    Stats, Status, Subscription, UpdateIssue, UpdateState,
 };
 
 /// The name the `echo` plugin's and the `cloud` engine's icon goes by, and
@@ -66,6 +67,8 @@ pub(crate) struct FakeControl {
     pub(crate) saved: Mutex<Vec<Config>>,
     pub(crate) copied: Mutex<Vec<String>>,
     pub(crate) quit: AtomicBool,
+    /// The models and server of `whisper`, the engine with a local server.
+    pub(crate) local: Mutex<LocalStatus>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -241,6 +244,34 @@ impl FakeControl {
             saved: Mutex::new(Vec::new()),
             copied: Mutex::new(Vec::new()),
             quit: AtomicBool::new(false),
+            local: Mutex::new(LocalStatus {
+                models: LOCAL_MODELS
+                    .iter()
+                    .map(|m| ModelStatus {
+                        model: *m,
+                        state: match m.id {
+                            "large-v3-turbo-q5_0" => ModelState::Ready { bytes: m.bytes },
+                            "small" => ModelState::Downloading {
+                                have: m.bytes * 42 / 100,
+                                total: Some(m.bytes),
+                            },
+                            _ => ModelState::Absent,
+                        },
+                    })
+                    .collect(),
+                recommended: "large-v3-turbo-q5_0",
+                dir: PathBuf::from("/home/me/.local/share/anya/models"),
+                used: 547 << 20,
+                program: Some(PathBuf::from("/opt/homebrew/bin/whisper-server")),
+                server: ServerState::Running {
+                    model: PathBuf::from(
+                        "/home/me/.local/share/anya/models/ggml-large-v3-turbo-q5_0.bin",
+                    ),
+                    port: 52817,
+                    sessions: 0,
+                    idle: Duration::from_secs(180),
+                },
+            }),
         }
     }
 
@@ -371,6 +402,7 @@ impl Control for FakeControl {
                 enabled: (m.id != "sherpa")
                     .then(|| config.plugins.builtin.get(&m.id) != Some(&false)),
                 icon: (m.id == "cloud").then(|| ECHO_ICON.to_owned()),
+                local: m.id == "whisper",
             })
             .collect()
     }
@@ -670,6 +702,57 @@ impl Control for FakeControl {
         }
     }
 
+    fn local_server(&self) -> Option<LocalStatus> {
+        Some(lock(&self.local).clone())
+    }
+
+    fn download_model(&self, id: &str) -> Result<(), ModelIssue> {
+        self.call(format!("download {id}"));
+        let mut local = lock(&self.local);
+        let model = local
+            .models
+            .iter_mut()
+            .find(|m| m.model.id == id)
+            .ok_or_else(|| ModelIssue::Unknown { id: id.to_owned() })?;
+        if !matches!(model.state, ModelState::Ready { .. }) {
+            model.state = ModelState::Downloading {
+                have: 0,
+                total: Some(model.model.bytes),
+            };
+        }
+        Ok(())
+    }
+
+    fn cancel_download(&self, id: &str) {
+        self.call(format!("cancel {id}"));
+        for m in lock(&self.local)
+            .models
+            .iter_mut()
+            .filter(|m| m.model.id == id)
+        {
+            if let ModelState::Downloading { have, .. } = m.state {
+                m.state = ModelState::Partial { have };
+            }
+        }
+    }
+
+    fn delete_model(&self, id: &str) -> Result<(), ModelIssue> {
+        self.call(format!("delete {id}"));
+        for m in lock(&self.local)
+            .models
+            .iter_mut()
+            .filter(|m| m.model.id == id)
+        {
+            m.state = ModelState::Absent;
+        }
+        Ok(())
+    }
+
+    fn stop_local_server(&self) {
+        self.call("stop local server".to_owned());
+        lock(&self.local).server = ServerState::Stopped;
+    }
+
     fn copy(&self, text: &str) -> Result<(), String> {
         if let Some(e) = lock(&self.copy_error).clone() {
             return Err(e);
@@ -776,14 +859,61 @@ fn whisper() -> Manifest {
         ]),
         docs: None,
         streaming: false,
-        fields: vec![field(
-            "model",
-            Text::localized([("en", "Model"), ("zh-CN", "模型")]),
-            Text::default(),
-            FieldKind::Text,
-            false,
-            true,
-        )],
+        fields: vec![
+            field(
+                "mode",
+                Text::localized([("en", "Who runs the server"), ("zh-CN", "运行方式")]),
+                Text::default(),
+                FieldKind::Choice {
+                    options: vec!["external".to_owned(), "managed".to_owned()],
+                },
+                false,
+                false,
+            ),
+            field(
+                "url",
+                Text::localized([("en", "Server address"), ("zh-CN", "服务地址")]),
+                Text::default(),
+                FieldKind::Text,
+                false,
+                false,
+            ),
+            field(
+                "model",
+                Text::localized([("en", "Model"), ("zh-CN", "模型")]),
+                Text::default(),
+                FieldKind::Text,
+                false,
+                false,
+            ),
+            field(
+                "program",
+                Text::localized([("en", "Program"), ("zh-CN", "程序")]),
+                Text::default(),
+                FieldKind::Text,
+                false,
+                true,
+            ),
+            field(
+                "idle_timeout_minutes",
+                Text::localized([
+                    ("en", "Stop when idle (minutes)"),
+                    ("zh-CN", "空闲后退出（分钟）"),
+                ]),
+                Text::default(),
+                FieldKind::Text,
+                false,
+                true,
+            ),
+            field(
+                "download_source",
+                Text::localized([("en", "Download source"), ("zh-CN", "下载源")]),
+                Text::default(),
+                FieldKind::Text,
+                false,
+                true,
+            ),
+        ],
     }
 }
 

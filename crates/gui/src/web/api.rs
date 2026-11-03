@@ -72,6 +72,16 @@ pub(super) async fn handle(page: &Arc<Page>, req: Request<Incoming>) -> Reply {
         (false, "/api/plugins/remove") => Some(remove_plugin(page, &catalog, req).await),
         (false, "/api/update/check") => Some(check_update(page, &catalog)),
         (false, "/api/update/upgrade") => Some(upgrade(page, &catalog).await),
+        (true, "/api/local") => Some(local_now(page, &catalog)),
+        (false, "/api/local/download") => {
+            Some(model(page, &catalog, req, ModelAction::Download).await)
+        }
+        (false, "/api/local/cancel") => Some(model(page, &catalog, req, ModelAction::Cancel).await),
+        (false, "/api/local/delete") => Some(model(page, &catalog, req, ModelAction::Delete).await),
+        (false, "/api/local/stop") => {
+            page.control.stop_local_server();
+            Some(local_now(page, &catalog))
+        }
         (false, "/api/engine/ready") => Some(engine_ready(page, &catalog, req).await),
         (false, "/api/hotkey/check") => Some(check_hotkey(page, &catalog, req).await),
         (false, "/api/hotkey/record") => Some(record_hotkey(page, &catalog).await),
@@ -712,6 +722,53 @@ async fn remove_plugin(page: &Page, catalog: &Catalog, req: Request<Incoming>) -
         Ok(Ok(())) => installed(page, catalog),
         Ok(Err(issue)) => plugin_failed(catalog, &coded(issue.message(), catalog)),
         Err(e) => plugin_failed(catalog, &e.to_string()),
+    }
+}
+
+/// The local server and its models as the page shows them right now.
+fn local_now(page: &Page, catalog: &Catalog) -> Reply {
+    reply::json(
+        StatusCode::OK,
+        &json!({ "local": view::local(page, catalog) }),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ModelAction {
+    Download,
+    Cancel,
+    Delete,
+}
+
+/// Starts, stops or deletes a model's download; deleting waits for the
+/// server to stop, so it runs off the server's threads.
+async fn model(
+    page: &Page,
+    catalog: &Catalog,
+    req: Request<Incoming>,
+    action: ModelAction,
+) -> Reply {
+    let ClientId { id } = match body(req, SMALL, catalog).await {
+        Ok(b) => b,
+        Err(refusal) => return refusal,
+    };
+    let control = page.control.clone();
+    let done = tokio::task::spawn_blocking(move || match action {
+        ModelAction::Download => control.download_model(&id),
+        ModelAction::Cancel => {
+            control.cancel_download(&id);
+            Ok(())
+        }
+        ModelAction::Delete => control.delete_model(&id),
+    })
+    .await;
+    match done {
+        Ok(Ok(())) => local_now(page, catalog),
+        Ok(Err(issue)) => reply::error(StatusCode::CONFLICT, &view::model_issue(&issue, catalog)),
+        Err(e) => reply::error(
+            StatusCode::CONFLICT,
+            &catalog.tf("gui.local.delete_failed", &[("detail", &e.to_string())]),
+        ),
     }
 }
 

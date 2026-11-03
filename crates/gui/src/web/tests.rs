@@ -2298,3 +2298,65 @@ async fn failed_hooks_and_stalled_plugins_show_in_the_activity_without_text() {
         assert_eq!(activity[1]["text"], stalled);
     }
 }
+
+#[tokio::test]
+async fn the_local_server_lists_its_models_and_a_download_shows_its_progress() {
+    let h = harness(ShellKind::Web).await;
+    let state = h.get("/api/state").await.json();
+    let whisper = state["engines"]
+        .as_array()
+        .expect("engines")
+        .iter()
+        .find(|e| e["id"] == "whisper")
+        .expect("whisper")
+        .clone();
+    assert_eq!(whisper["local"], true);
+    assert_eq!(state["engines"][0]["local"], false);
+
+    let local = h.get("/api/local").await.json()["local"].clone();
+    let models = local["models"].as_array().expect("models");
+    assert_eq!(models[0]["id"], "base");
+    let turbo = models
+        .iter()
+        .find(|m| m["id"] == "large-v3-turbo-q5_0")
+        .expect("turbo");
+    assert_eq!(
+        (turbo["state"].as_str(), turbo["recommended"].clone()),
+        (Some("ready"), json!(true))
+    );
+    assert_eq!(turbo["note"], "Accurate and fast; suits most computers");
+    let small = models.iter().find(|m| m["id"] == "small").expect("small");
+    assert_eq!(small["state"], "downloading");
+    assert_eq!(small["have"], json!((466u64 << 20) * 42 / 100));
+    assert_eq!(local["server"], "running");
+    assert_eq!(
+        local["server_line"],
+        "Running · ggml-large-v3-turbo-q5_0.bin · port 52817 · idle for 3 min"
+    );
+
+    let res = h.post("/api/local/download", &json!({"id": "base"})).await;
+    assert_eq!(res.status, 200, "{}", res.body);
+    assert_eq!(res.json()["local"]["models"][0]["state"], "downloading");
+    let res = h.post("/api/local/download", &json!({"id": "huge"})).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["error"], "There is no model called huge");
+
+    let res = h.post("/api/local/cancel", &json!({"id": "small"})).await;
+    let small = res.json()["local"]["models"][1].clone();
+    assert_eq!(small["state"], "partial");
+
+    let res = h.post("/api/local/stop", &json!({})).await;
+    assert_eq!(
+        res.json()["local"]["server_line"],
+        "Not running · starts with your next dictation"
+    );
+    assert_eq!(
+        h.control.calls(),
+        [
+            "download base",
+            "download huge",
+            "cancel small",
+            "stop local server"
+        ]
+    );
+}

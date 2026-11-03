@@ -53,6 +53,7 @@ fn engine(id: &str, title: &str, streaming: bool, fields: Vec<EngineField>) -> E
         ready: false,
         enabled: None,
         icon: None,
+        local: false,
     }
 }
 

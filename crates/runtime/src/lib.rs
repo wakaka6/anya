@@ -17,6 +17,11 @@ use anya_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use anya_whisper::{
+    DownloadError, MODELS as LOCAL_MODELS, ModelState, ModelStatus, ServerState,
+    Status as LocalStatus,
+};
+
 /// Facts about this instance that do not change while it runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Info {
@@ -47,6 +52,10 @@ pub struct EngineInfo {
     /// The name its logo is asked for by ([`Control::icon`]): a built-in
     /// engine's from its crate, a plugin's from its package; `None` without.
     pub icon: Option<String>,
+    /// Anya can run this engine's server (docs/decisions/0018): its
+    /// settings have `mode` (`external` or `managed`) and `model`, and
+    /// [`Control::local_server`] tells about its models and server.
+    pub local: bool,
 }
 
 /// What dictation is doing.
@@ -766,6 +775,27 @@ pub enum UpdateState {
     },
 }
 
+/// Why a model could not be downloaded or deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(tag = "issue", rename_all = "snake_case")]
+pub enum ModelIssue {
+    /// This Anya runs no local server.
+    #[error("this Anya runs no local server")]
+    Unsupported,
+    /// The catalog has no such model.
+    #[error("no model is called {id:?}")]
+    Unknown {
+        /// The id asked for.
+        id: String,
+    },
+    /// Deleting its files failed.
+    #[error("cannot delete the model: {detail}")]
+    Io {
+        /// What the system said.
+        detail: String,
+    },
+}
+
 /// Why an upgrade did not happen, as a code with its specifics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
 #[serde(tag = "issue", rename_all = "snake_case")]
@@ -1130,6 +1160,34 @@ pub trait Control: Send + Sync {
     fn upgrade(&self) -> Result<(), UpdateIssue> {
         Err(UpdateIssue::NotHomebrew)
     }
+
+    /// The models and the server of the engine Anya can run a server for
+    /// ([`EngineInfo::local`]); `None` when there is none.
+    fn local_server(&self) -> Option<LocalStatus> {
+        None
+    }
+
+    /// Starts downloading model `id` from the source the engine's settings
+    /// name and returns at once; the progress shows in [`Control::local_server`].
+    fn download_model(&self, id: &str) -> Result<(), ModelIssue> {
+        let _ = id;
+        Err(ModelIssue::Unsupported)
+    }
+
+    /// Stops downloading model `id`; the next download resumes.
+    fn cancel_download(&self, id: &str) {
+        let _ = id;
+    }
+
+    /// Deletes model `id`, stopping the server first if it runs it. Blocks
+    /// while the server stops, so call it off the UI thread.
+    fn delete_model(&self, id: &str) -> Result<(), ModelIssue> {
+        let _ = id;
+        Err(ModelIssue::Unsupported)
+    }
+
+    /// Stops the local server; the next session that needs it starts it again.
+    fn stop_local_server(&self) {}
 
     /// Dismisses the failure being shown (Esc on the overlay).
     fn dismiss_dictation(&self);

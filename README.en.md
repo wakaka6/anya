@@ -69,6 +69,15 @@ The config file is `~/.config/anya/config.toml`, saved atomically and readable o
 /loop 10m /anya-hotwords ~/.config/anya/config.toml
 ```
 
+## Recognition on this computer: whisper.cpp
+
+The built-in whisper.cpp engine recognizes on this computer, so the audio stays on it. Unfold whisper.cpp on the settings window's Engine page; "Who runs the server" has two answers:
+
+- **I run it**: you start `whisper-server` and enter its address under "Server address" (empty is `http://127.0.0.1:8080`).
+- **Anya runs it**: click a model in the list to download it; it is chosen once it is down. "My own model file" takes the path of any ggml model instead. When you dictate, Anya starts `whisper-server` on this computer, listening on `127.0.0.1` only, and stops it after 10 idle minutes, which frees the model's memory. Install `whisper-server` yourself: `brew install whisper-cpp`.
+
+The suggested model is `large-v3-turbo-q5_0` (547 MB), or `small` on a computer with less than 8 GB of memory. A model downloads only when you click it, from Hugging Face by default or from a mirror you set under Advanced. Each model's hash is pinned in Anya and a download counts only once it matches, so a mirror needs no trust. A broken download resumes where it stopped. Models are kept under `models` in the data directory (`~/.local/share/anya/models` on Linux and macOS). The settings live in `[recognition.engines.whisper-cpp]`: `mode`, `model`, `program`, `idle_timeout_minutes`, `download_source`.
+
 ## LAN sharing and pairing
 
 <p align="center">
@@ -129,7 +138,7 @@ flowchart TB
   Trigger["Triggers: dictation · continuous"]
   Adapter["Adapters: audio · hotkey · output · overlay · focus"]
   Engine["Engines: anya-engine-&lt;id&gt;"]
-  Service["Services: server · plugin-host · script"]
+  Service["Services: server · plugin-host · script · update · whisper"]
   Core["anya-core: seams, session controller, hooks"]
   Protocol["anya-protocol: wire formats"]
   App --> Trigger & Adapter & Engine & Service

@@ -7,9 +7,10 @@ use anya_core::hooks::{HookFailure, Runs};
 use anya_i18n::{Catalog, LOCALES};
 use anya_protocol::{EndReason, Field, FieldKind, Manifest, Provide};
 use anya_runtime::{
-    BuiltinHooks, DebugEvent, Delivered, Dictation, EngineInfo, Entry, HookInfo, HotkeyRole,
-    InstalledPlugin, Lan, MarketPlugin, Notice, Origin, PluginLoad, RouteEvent, Sink, Step,
-    Subscription, UpdateIssue, UpdateState, UpdateVia,
+    BuiltinHooks, DebugEvent, Delivered, Dictation, DownloadError, EngineInfo, Entry, HookInfo,
+    HotkeyRole, InstalledPlugin, Lan, MarketPlugin, ModelIssue, ModelState, Notice, Origin,
+    PluginLoad, RouteEvent, ServerState, Sink, Step, Subscription, UpdateIssue, UpdateState,
+    UpdateVia,
 };
 use serde_json::{Value, json};
 
@@ -248,7 +249,11 @@ fn engines(page: &Page, config: &Config, catalog: &Catalog) -> Vec<Value> {
         .control
         .engines()
         .into_iter()
-        .map(|e| engine(&e.manifest, e.ready, e.enabled, e.icon.as_deref(), locale))
+        .map(|e| {
+            let mut out = engine(&e.manifest, e.ready, e.enabled, e.icon.as_deref(), locale);
+            out["local"] = json!(e.local);
+            out
+        })
         .collect();
     // An engine the config names for a role but Anya lacks stays visible, so
     // the user sees what is chosen; saving it is refused with the reason.
@@ -267,6 +272,7 @@ fn engines(page: &Page, config: &Config, catalog: &Catalog) -> Vec<Value> {
             "plugin": false,
             "icon": null,
             "enabled": null,
+            "local": false,
             "fields": [],
         }));
     }
@@ -298,6 +304,115 @@ fn engine(
         "icon": icon_url(icon),
         "fields": fields,
     })
+}
+
+/// The models and server Anya runs for the engine with a local server, or
+/// `null` when there is none (docs/decisions/0018).
+pub(super) fn local(page: &Page, catalog: &Catalog) -> Value {
+    let Some(status) = page.control.local_server() else {
+        return Value::Null;
+    };
+    let locale = catalog.locale();
+    let name = |path: &std::path::Path| {
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let models: Vec<Value> = status
+        .models
+        .iter()
+        .map(|m| {
+            let (state, have, total, line) = match &m.state {
+                ModelState::Absent => ("absent", 0, None, None),
+                ModelState::Partial { have } => ("partial", *have, None, None),
+                ModelState::Downloading { have, total } => ("downloading", *have, *total, None),
+                ModelState::Verifying => ("verifying", 0, None, None),
+                ModelState::Ready { bytes } => ("ready", *bytes, Some(*bytes), None),
+                ModelState::Failed { error, have } => {
+                    ("failed", *have, None, Some(download_failed(error, catalog)))
+                }
+            };
+            json!({
+                "id": m.model.id,
+                "bytes": m.model.bytes,
+                "note": m.model.note().get(locale),
+                "recommended": m.model.id == status.recommended,
+                "state": state,
+                "have": have,
+                "total": total,
+                "line": line,
+            })
+        })
+        .collect();
+    let (server, line) = match &status.server {
+        ServerState::Stopped => ("stopped", catalog.t("gui.local.server_stopped").to_owned()),
+        ServerState::Starting { model } => (
+            "starting",
+            catalog.tf("gui.local.server_starting", &[("model", &name(model))]),
+        ),
+        ServerState::Running {
+            model,
+            port,
+            sessions,
+            idle,
+        } => (
+            "running",
+            if *sessions > 0 {
+                catalog.tf(
+                    "gui.local.server_busy",
+                    &[("model", &name(model)), ("port", &port.to_string())],
+                )
+            } else {
+                catalog.tf(
+                    "gui.local.server_idle",
+                    &[
+                        ("model", &name(model)),
+                        ("port", &port.to_string()),
+                        ("minutes", &(idle.as_secs() / 60).to_string()),
+                    ],
+                )
+            },
+        ),
+        ServerState::Failed { detail } => (
+            "failed",
+            catalog.tf("gui.local.server_failed", &[("detail", detail)]),
+        ),
+    };
+    json!({
+        "models": models,
+        "dir": status.dir,
+        "used": status.used,
+        "program": status.program,
+        "server": server,
+        "server_line": line,
+    })
+}
+
+/// Why a download failed, in the user's words.
+fn download_failed(error: &DownloadError, catalog: &Catalog) -> String {
+    match error {
+        DownloadError::InvalidSource(source) => {
+            catalog.tf("gui.local.failed_source", &[("source", source)])
+        }
+        DownloadError::Connect { host, .. } => {
+            catalog.tf("gui.local.failed_connect", &[("host", host)])
+        }
+        DownloadError::Http(status) => {
+            catalog.tf("gui.local.failed_http", &[("status", &status.to_string())])
+        }
+        DownloadError::DiskFull => catalog.t("gui.local.failed_disk_full").to_owned(),
+        DownloadError::Write(detail) => catalog.tf("gui.local.failed_write", &[("detail", detail)]),
+        DownloadError::Mismatch => catalog.t("gui.local.failed_mismatch").to_owned(),
+    }
+}
+
+/// Why a model could not be downloaded or deleted, in the user's words.
+pub(super) fn model_issue(issue: &ModelIssue, catalog: &Catalog) -> String {
+    match issue {
+        ModelIssue::Unsupported => catalog.t("gui.local.unsupported").to_owned(),
+        ModelIssue::Unknown { id } => catalog.tf("gui.local.unknown", &[("id", id)]),
+        ModelIssue::Io { detail } => catalog.tf("gui.local.delete_failed", &[("detail", detail)]),
+    }
 }
 
 /// Settings fields as the page's form draws them.

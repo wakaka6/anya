@@ -1,0 +1,29 @@
+[package]
+name = "anya-whisper"
+description = "The whisper.cpp models Anya downloads and the whisper-server it runs for them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+anya-core.workspace = true
+anya-protocol.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "time"] }
+
+[[test]]
+name = "server"
+# The test binary is also the fake whisper-server the tests start.
+harness = false
+
+[lints]
+workspace = true

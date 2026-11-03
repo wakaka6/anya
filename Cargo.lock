@@ -96,6 +96,7 @@ dependencies = [
  "anya-server",
  "anya-tui",
  "anya-update",
+ "anya-whisper",
  "clap",
  "futures-util",
  "serde",
@@ -399,6 +400,7 @@ dependencies = [
  "anya-core",
  "anya-i18n",
  "anya-protocol",
+ "anya-whisper",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -460,6 +462,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "anya-whisper"
+version = "0.0.0"
+dependencies = [
+ "anya-core",
+ "anya-protocol",
+ "reqwest",
+ "ring",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

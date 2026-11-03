@@ -1565,16 +1565,17 @@ function engineForm(engine, repaint, paints) {
   const line = (label, control, help) => el("div", { class: "field" },
     el("span", { class: "fl" }, label),
     el("span", { class: "fv" }, control, help ? el("small", {}, help) : null));
+  const save = (key, v) => {
+    values[key] = v;
+    const next = settings();
+    return commit((c) => {
+      if (Object.keys(next).length || c.recognition.engines[engine.id]) c.recognition.engines[engine.id] = next;
+      else delete c.recognition.engines[engine.id];
+    }, { field: "recognition.engines" }).then((ok) => { recheck(); return ok; });
+  };
   const fieldRow = (f) => line(
     el("span", {}, f.label, f.required && !f.advanced ? el("span", { class: "req" }, "*") : null),
-    fieldInput(f, values[f.key], (v) => { values[f.key] = v; recheck(); }, (v) => {
-      values[f.key] = v;
-      const next = settings();
-      commit((c) => {
-        if (Object.keys(next).length || c.recognition.engines[engine.id]) c.recognition.engines[engine.id] = next;
-        else delete c.recognition.engines[engine.id];
-      }, { field: "recognition.engines" }).then(() => { recheck(); });
-    }),
+    fieldInput(f, values[f.key], (v) => { values[f.key] = v; recheck(); }, (v) => save(f.key, v)),
     f.help || null);
 
   const rows = [];
@@ -1597,15 +1598,20 @@ function engineForm(engine, repaint, paints) {
     paints.push(sync);
     rows.push(line(t("gui.engine.enabled"), sw, t("gui.engine.enabled_help")));
   }
-  const main = engine.fields.filter((f) => !f.advanced);
-  const advanced = engine.fields.filter((f) => f.advanced);
-  rows.push(...main.map(fieldRow));
-  if (advanced.length) {
-    // Open when it holds something, so a saved value is never folded away.
-    rows.push(el("details", { class: "advanced", open: main.length === 0 || advanced.some((f) => String(values[f.key]).trim()) },
-      el("summary", {}, tf("gui.engine.advanced", { count: advanced.length })),
-      el("div", { class: "adv-fields" }, ...advanced.map(fieldRow))));
-  }
+  const fieldRows = (fields) => {
+    const main = fields.filter((f) => !f.advanced);
+    const advanced = fields.filter((f) => f.advanced);
+    const out = main.map(fieldRow);
+    if (advanced.length) {
+      // Open when it holds something, so a saved value is never folded away.
+      out.push(el("details", { class: "advanced", open: main.length === 0 || advanced.some((f) => String(values[f.key]).trim()) },
+        el("summary", {}, tf("gui.engine.advanced", { count: advanced.length })),
+        el("div", { class: "adv-fields" }, ...advanced.map(fieldRow))));
+    }
+    return out;
+  };
+  if (engine.local) rows.push(localSection(engine, values, { line, fieldRows, save, recheck }));
+  else rows.push(...fieldRows(engine.fields));
   if (!engine.fields.length && !rows.length) rows.push(el("p", { class: "note" }, t("gui.engine.no_fields")));
   rows.push(errorSlot("recognition.engines"));
   if (engine.docs) {
@@ -1613,6 +1619,180 @@ function engineForm(engine, repaint, paints) {
       el("button", { type: "button", class: "ghost", onclick: () => openDoc(engine.docs) }, t("gui.engine.docs"))));
   }
   return el("div", { class: "inner" }, ...rows);
+}
+
+// The settings of a server Anya runs (docs/decisions/0018); the engine's own
+// fields (its server address) are shown when the user runs it.
+const LOCAL_KEYS = ["mode", "model", "program", "idle_timeout_minutes", "download_source"];
+
+function sizeText(bytes) {
+  const mib = bytes / 2 ** 20;
+  return mib >= 1024
+    ? tf("gui.local.size_gb", { size: (mib / 1024).toFixed(1) })
+    : tf("gui.local.size_mb", { size: String(Math.round(mib)) });
+}
+
+// The engine Anya can run a server for: who runs it, and when Anya does, the
+// models to download or a file of the user's, the program and the server.
+// It asks for `/api/local` while it is on the page.
+function localSection(engine, values, { line, fieldRows, save, recheck }) {
+  const field = (key) => engine.fields.find((f) => f.key === key);
+  const own = engine.fields.filter((f) => !LOCAL_KEYS.includes(f.key));
+  const box = el("div", { class: "local" });
+  const mode = () => values.mode === "managed" ? "managed" : "external";
+  let local = null;
+  // A model the user asked for while it downloads: chosen once it is whole.
+  let wanted = null;
+  let armed = null;
+
+  const modeHelp = el("small", {});
+  const modeSwitch = segmented([["external", t("gui.local.mode_external")], ["managed", t("gui.local.mode_managed")]], mode(),
+    async (v) => {
+      if (!(await save("mode", v))) modeSwitch.set(mode());
+      draw();
+    }, t("gui.local.mode_label"));
+  const modeRow = line(t("gui.local.mode_label"), el("span", { class: "local-mode" }, modeSwitch), null);
+  modeRow.querySelector(".fv").append(modeHelp);
+
+  const external = el("div", { class: "local-part" }, ...fieldRows(own));
+  const program = field("program");
+  const programInput = program ? fieldInput(program, values.program ?? "", (v) => { values.program = v; },
+    (v) => save("program", v).then(() => act("/api/local"))) : null;
+  const programStatus = el("div", {});
+  const programLine = el("div", { class: "local-program" }, programInput, programStatus);
+  const models = el("div", { class: "models", role: "radiogroup", "aria-label": t("gui.local.models_label") });
+  const stored = el("small", {});
+  const serverLine = el("span", {});
+  const stop = el("button", { type: "button", class: "ghost", onclick: () => act("/api/local/stop") }, t("gui.local.stop"));
+  const custom = el("input", {
+    type: "text", spellcheck: "false", autocomplete: "off",
+    placeholder: t("gui.local.custom_placeholder"), "aria-label": t("gui.local.custom"),
+  });
+  custom.addEventListener("change", () => { if (custom.value.trim()) save("model", custom.value.trim()).then(draw); });
+  const managed = el("div", { class: "local-part" },
+    line(program?.label ?? t("gui.local.program"), programLine, null),
+    line(t("gui.local.models_label"), el("div", { class: "models-box" }, models, stored), t("gui.local.models_help")),
+    line(t("gui.local.server_label"), el("span", { class: "local-server" }, serverLine, stop), null),
+    ...fieldRows(["idle_timeout_minutes", "download_source"].map(field).filter(Boolean)));
+
+  async function act(path, body) {
+    try {
+      local = (await api(path, body)).local;
+    } catch (err) {
+      notify(err.message, "error");
+      return;
+    }
+    draw();
+  }
+
+  const choose = (id) => {
+    if (values.model === id) return;
+    save("model", id).then(draw);
+  };
+  const modelRow = (m) => {
+    const chosen = values.model === m.id;
+    const percent = m.total ? Math.floor((m.have / m.total) * 100) : null;
+    const button = (key, onclick, cls = "ghost") => el("button", { type: "button", class: cls, onclick: (ev) => { ev.stopPropagation(); onclick(); } }, t(key));
+    const download = () => { wanted = m.id; act("/api/local/download", { id: m.id }); };
+    let side;
+    let below = null;
+    switch (m.state) {
+      case "ready": {
+        const sure = armed === m.id;
+        side = [el("small", { class: "ok" }, t(chosen ? "gui.local.in_use" : "gui.local.downloaded")),
+          button(sure ? "gui.local.delete_sure" : "gui.local.delete", () => {
+            if (!sure) {
+              // A second press deletes; the first says what it means.
+              armed = m.id;
+              draw();
+              setTimeout(() => { if (armed === m.id) { armed = null; draw(); } }, 4000);
+              return;
+            }
+            armed = null;
+            act("/api/local/delete", { id: m.id });
+          }, sure ? "danger" : "ghost")];
+        break;
+      }
+      case "downloading":
+        // The bar sits under the note, so a long note keeps its width.
+        below = el("div", { class: "downloading" },
+          el("span", { class: "progress" }, el("span", { style: `width:${percent ?? 0}%` })),
+          el("small", {}, percent == null
+            ? sizeText(m.have)
+            : tf("gui.local.progress", { percent: String(percent), have: sizeText(m.have), total: sizeText(m.total) })));
+        side = [button("gui.local.cancel", () => act("/api/local/cancel", { id: m.id }))];
+        break;
+      case "verifying":
+        side = [el("small", {}, t("gui.local.verifying"))];
+        break;
+      case "partial":
+        side = [el("small", {}, tf("gui.local.partial", { have: sizeText(m.have) })), button("gui.local.resume", download)];
+        break;
+      case "failed":
+        side = [el("small", { class: "error" }, m.line), button("gui.local.retry", download)];
+        break;
+      default:
+        side = [button("gui.local.download", download)];
+    }
+    const row = el("div", { class: chosen ? "model on" : "model", role: "radio", "aria-checked": String(chosen) },
+      el("span", { class: "dot", "aria-hidden": "true" }),
+      el("div", { class: "svc" },
+        el("b", {}, m.id, m.recommended ? el("span", { class: "chip tag static official" }, t("gui.local.recommended")) : null),
+        el("small", {}, `${m.note} · ${sizeText(m.bytes)}`),
+        below),
+      el("div", { class: "model-side" }, ...side));
+    // A whole model is chosen at once; any other starts downloading.
+    return pressable(row, () => (m.state === "ready" ? choose(m.id) : m.state === "absent" || m.state === "partial" || m.state === "failed" ? download() : null));
+  };
+
+  let key = null;
+  function draw() {
+    modeSwitch.set(mode());
+    modeHelp.textContent = t(mode() === "managed" ? "gui.local.mode_managed_help" : "gui.local.mode_external_help");
+    setHidden(external, mode() !== "external");
+    setHidden(managed, mode() !== "managed");
+    if (!local) return;
+    const next = JSON.stringify([local, values.model, armed, LOCALE]);
+    if (next === key) return;
+    key = next;
+    const catalog = local.models.map((m) => m.id);
+    if (wanted && local.models.some((m) => m.id === wanted && m.state === "ready")) {
+      const id = wanted;
+      wanted = null;
+      choose(id);
+    }
+    programStatus.replaceChildren(local.program
+      ? el("small", { class: "ok" }, tf("gui.local.program_found", { path: local.program }))
+      : el("div", { class: "local-missing" },
+        el("small", { class: "warn" }, t("gui.local.program_missing")),
+        el("div", { class: "paths" }, el("code", {}, "brew install whisper-cpp"), copyButton("brew install whisper-cpp")),
+        el("small", {}, t("gui.local.program_other"))));
+    const own = values.model && !catalog.includes(values.model);
+    if (document.activeElement !== custom) custom.value = own ? values.model : "";
+    models.replaceChildren(...local.models.map(modelRow),
+      el("div", { class: own ? "model on" : "model", role: "radio", "aria-checked": String(!!own) },
+        el("span", { class: "dot", "aria-hidden": "true" }),
+        el("div", { class: "svc" }, el("b", {}, t("gui.local.custom")), el("small", {}, t("gui.local.custom_help"))),
+        el("div", { class: "model-side wide" }, custom)));
+    stored.replaceChildren(tf("gui.local.stored", { used: sizeText(local.used) }), el("div", { class: "paths" }, el("code", { title: local.dir }, local.dir), copyButton(local.dir)));
+    serverLine.textContent = local.server_line;
+    serverLine.className = local.server === "failed" ? "error" : local.server === "running" ? "ok" : "";
+    setHidden(stop, local.server !== "running" && local.server !== "starting");
+    recheck();
+  }
+
+  box.append(modeRow, external, managed);
+  draw();
+  const poll = async () => {
+    if (!box.isConnected && local) return;
+    try {
+      local = (await api("/api/local")).local;
+      draw();
+    } catch {}
+    setTimeout(poll, local?.models.some((m) => m.state === "downloading" || m.state === "verifying") ? 500 : 2000);
+  };
+  poll();
+  return box;
 }
 
 function hotwordsField() {
