@@ -1820,7 +1820,11 @@ function marketCard(p) {
 }
 
 async function loadMarket() {
-  marketState = { status: "loading", list: [], reason: "" };
+  // A retry keeps what is listed and only says it is trying; the first load
+  // shows placeholders.
+  marketState = marketState.list.length
+    ? { ...marketState, retrying: true }
+    : { status: "loading", list: [], reason: "" };
   pluginViews?.market();
   try {
     const market = await api("/api/plugins/market", {});
@@ -1912,6 +1916,7 @@ function buildPlugins() {
       ? plugins.map(installedItem)
       : [el("div", { class: "empty-line" }, t("gui.plugins.empty"))]));
   };
+  let listed = new Set();
   const drawMarket = () => {
     const key = JSON.stringify([marketState, plugins.map((p) => p.id), installing, query, LOCALE]);
     if (key === marketKey) return;
@@ -1920,20 +1925,32 @@ function buildPlugins() {
     if (marketState.status === "loading") {
       marketBox.replaceChildren(el("div", { class: "market", "aria-busy": "true" },
         ...[0, 1, 2, 3].map(() => el("div", { class: "skeleton" }))));
-    } else {
-      // The official plugins come with Anya; only the registry's can be out of reach.
-      const unreachable = marketState.status === "ready" ? null : el("div", { class: "calm" },
+    } else if (marketState.status === "failed") {
+      marketBox.replaceChildren(el("div", { class: "calm" },
         el("b", {}, t("gui.market.unreachable")),
         el("p", { title: marketState.reason }, t("gui.market.unreachable_help")),
-        el("button", { type: "button", class: "ghost", onclick: loadMarket }, t("gui.market.retry")));
+        el("button", { type: "button", class: "ghost", onclick: loadMarket }, t("gui.market.retry"))));
+    } else {
+      // The official plugins come with Anya; only the registry's can be out
+      // of reach, which one quiet line under the cards says.
+      const partial = marketState.status === "partial" ? el("p", { class: "market-note", role: "status" },
+        el("span", { title: marketState.reason }, t("gui.market.partial")),
+        el("button", { type: "button", disabled: marketState.retrying, onclick: loadMarket },
+          t(marketState.retrying ? "gui.market.retrying" : "gui.market.retry"))) : null;
       const shown = marketState.list.filter((p) => !query
         || `${p.name} ${p.description} ${p.id}`.toLowerCase().includes(query));
+      // Plugins the market did not list a moment ago (a retry that reached
+      // the registry) fade in; the rest stay as they were.
+      const before = listed;
+      listed = new Set(marketState.list.map((p) => p.id));
       const cards = shown.length
-        ? el("div", { class: "market" }, ...shown.map(marketCard))
-        : marketState.list.length || !unreachable
-          ? el("div", { class: "calm" }, el("p", {}, t(marketState.list.length ? "gui.market.no_match" : "gui.plugins.market_empty")))
-          : null;
-      marketBox.replaceChildren(...[cards, unreachable].filter(Boolean));
+        ? el("div", { class: "market" }, ...shown.map((p) => {
+          const card = marketCard(p);
+          if (before.size && !before.has(p.id)) card.classList.add("arrived");
+          return card;
+        }))
+        : el("div", { class: "calm" }, el("p", {}, t(marketState.list.length ? "gui.market.no_match" : "gui.plugins.market_empty")));
+      marketBox.replaceChildren(...[cards, partial].filter(Boolean));
     }
   };
   const hooks = hooksSection();

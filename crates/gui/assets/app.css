@@ -933,6 +933,13 @@ select:active { background-color: var(--field-hover); }
 .section > h2 { align-items: center; }
 .section > h2 input[type="text"] { width: 190px; padding: 3px 9px; font-weight: 400; }
 .market { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.market-note { display: flex; align-items: baseline; gap: 8px; margin: 10px 12px 14px; font-size: 12px; color: var(--muted); }
+.market-note > span { min-width: 0; }
+.market-note button { flex: none; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
+.market-note button:hover:not(:disabled) { text-decoration: underline; }
+.market-note button:disabled { color: var(--muted); opacity: 1; }
+.plugin-card.arrived { animation: card-in .25s ease-out; }
+@keyframes card-in { from { opacity: 0; transform: translateY(4px); } }
 .plugin-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px 14px; background: var(--group); border: 1px solid var(--group-border); border-radius: var(--radius); }
 .plugin-card .top { display: flex; align-items: center; gap: 10px; }
 .plugin-card .desc { min-height: 2.8em; color: var(--muted); font-size: 12px; }
