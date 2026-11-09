@@ -359,7 +359,6 @@ impl Control for FakeControl {
             version: "0.0.0".to_owned(),
             config_path: PathBuf::from("/home/me/.config/anya/config.toml"),
             hotwords_path: PathBuf::from("/home/me/.config/anya/hotwords.txt"),
-            replacements_path: PathBuf::from("/home/me/.config/anya/replacements.txt"),
         }
     }
 
@@ -447,13 +446,6 @@ impl Control for FakeControl {
         let on = |id: &str| config.plugins.builtin.get(id).copied().unwrap_or(true);
         let plugins = lock(&self.plugins).clone();
         let mut movable: Vec<HookInfo> = Vec::new();
-        if on("replace") {
-            movable.push(HookInfo {
-                plugin: "replace".to_owned(),
-                hook: Provide::Transform,
-                runs: Runs::Builtin,
-            });
-        }
         let mut actions = Vec::new();
         if on("community-hooks") {
             for p in plugins.iter().filter(|p| p.enabled) {
@@ -485,18 +477,11 @@ impl Control for FakeControl {
     fn builtin_hooks(&self) -> Vec<BuiltinHooks> {
         let config = lock(&self.config).clone();
         let on = |id: &str| config.plugins.builtin.get(id).copied().unwrap_or(true);
-        vec![
-            BuiltinHooks {
-                id: "replace".to_owned(),
-                provides: vec![Provide::Transform],
-                on: on("replace"),
-            },
-            BuiltinHooks {
-                id: "community-hooks".to_owned(),
-                provides: vec![Provide::Context, Provide::Transform, Provide::Action],
-                on: on("community-hooks"),
-            },
-        ]
+        vec![BuiltinHooks {
+            id: "community-hooks".to_owned(),
+            provides: vec![Provide::Context, Provide::Transform, Provide::Action],
+            on: on("community-hooks"),
+        }]
     }
 
     fn plugin_market(&self) -> Market {

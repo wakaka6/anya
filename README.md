@@ -114,7 +114,7 @@ anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 
 安装和启用是两步，设置窗口的“插件”页里也一样，启用前会列出插件提供什么、各自会拿到什么。**引擎插件会收到凭它的引擎开的每一次识别的音频（局域网应用的听写也算）；context 插件会知道当前在用哪个应用；transform 和 action 插件会收到你听写的全部文字。host 插件以你的权限运行，没有沙箱，请只启用你信得过的插件。** 命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。开发插件见 [docs/plugins.md](docs/plugins.md)。
 
-内置引擎也可以关闭，当前选用的引擎除外。另外两个内置部件：`replace` 按配置文件旁的 `replacements.txt` 替换词（每行 `说的 => 写的`），`community-hooks` 运行所有社区插件的 context、transform 和 action，关掉它这些都不再执行。这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。改写的顺序、插件设置和时间上限分别在 `[plugins] order`、`[plugins.settings.<id>]` 和 `[plugins.limits]`。
+内置引擎也可以关闭，当前选用的引擎除外。另一个内置部件 `community-hooks` 运行所有社区插件的 context、transform 和 action，关掉它这些都不再执行。这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。改写的顺序、插件设置和时间上限分别在 `[plugins] order`、`[plugins.settings.<id>]` 和 `[plugins.limits]`。
 
 官方插件在 [`plugins/`](plugins/)，随 Anya 一起编进程序：插件市场不联网也会列出它们，标着“官方”，点“安装”直接从 Anya 里解包，不用下载。装好后同样要启用才会运行。升级 Anya 后，已装的官方插件会在启动时一起更新，开关状态保持不变。
 

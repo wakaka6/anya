@@ -1871,7 +1871,6 @@ const PROVIDE_GETS = {
   action: "gui.plugins.gets_action",
 };
 const HOOK_RUNS = {
-  builtin: "gui.hooks.runs_builtin",
   inline: "gui.hooks.runs_inline",
   host: "gui.hooks.runs_host",
 };
@@ -2065,7 +2064,7 @@ function hooksSection() {
         draw();
       });
       return row(b.name, b.help, sw);
-    }), row(t("gui.hooks.replacements_file"), t("gui.hooks.replacements_file_help"), pathLine(state.info.replacements_path), { stack: true }));
+    }));
   };
   draw();
   return {

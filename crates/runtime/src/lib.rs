@@ -35,8 +35,6 @@ pub struct Info {
     pub config_path: PathBuf,
     /// The hotwords file, next to the config file.
     pub hotwords_path: PathBuf,
-    /// The built-in replacement list, next to the config file.
-    pub replacements_path: PathBuf,
 }
 
 /// One engine as the settings show it.
@@ -273,8 +271,7 @@ pub struct HookInfo {
 /// (`[plugins.builtin]`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BuiltinHooks {
-    /// Its id: `replace` (the replacement list) or `community-hooks` (every
-    /// community plugin's hooks).
+    /// Its id: `community-hooks`, which serves every community plugin's hooks.
     pub id: String,
     /// What it serves.
     pub provides: Vec<Provide>,

@@ -23,8 +23,6 @@ pub type HookFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, HookError>> +
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Runs {
-    /// Compiled into Anya.
-    Builtin,
     /// In QuickJS inside Anya: no network, no disk.
     Inline,
     /// In the plugin's own Bun process.

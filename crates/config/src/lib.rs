@@ -19,13 +19,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 mod hotwords;
-mod replacements;
 
 pub use hotwords::{HOTWORDS_FILE, HotwordsFile, hotwords_path, read_hotwords};
-pub use replacements::{
-    REPLACEMENTS_FILE, Replacement, ReplacementsFile, parse_replacements, read_replacements,
-    replacements_path,
-};
 
 /// The engine used when the config names none.
 pub const DEFAULT_ENGINE: &str = "doubao";
@@ -849,10 +844,10 @@ mod tests {
 
     #[test]
     fn plugin_hook_tables_parse_save_and_refuse_misspelt_keys() {
-        let text = "[plugins]\norder = [\"replace\", \"polish\"]\n\n[plugins.limits]\ninline_ms = 30\nchain_ms = 3000\n\n[plugins.limits.polish]\ntransform_ms = 4000\n\n[plugins.settings.polish]\napi_key = \"k\"\n";
+        let text = "[plugins]\norder = [\"swap\", \"polish\"]\n\n[plugins.limits]\ninline_ms = 30\nchain_ms = 3000\n\n[plugins.limits.polish]\ntransform_ms = 4000\n\n[plugins.settings.polish]\napi_key = \"k\"\n";
         let cfg = parse(Path::new("c.toml"), text).expect("parses");
         let p = &cfg.plugins;
-        assert_eq!(p.order, ["replace", "polish"]);
+        assert_eq!(p.order, ["swap", "polish"]);
         assert_eq!(p.limits.every.inline_ms, Some(30));
         assert_eq!(p.limits.chain_ms, Some(3000));
         assert_eq!(p.limits.of("polish").transform_ms, Some(4000));

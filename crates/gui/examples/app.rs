@@ -53,7 +53,6 @@ impl Control for Fake {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             config_path: PathBuf::from("~/.config/anya/config.toml"),
             hotwords_path: PathBuf::from("~/.config/anya/hotwords.txt"),
-            replacements_path: PathBuf::from("~/.config/anya/replacements.txt"),
         }
     }
 

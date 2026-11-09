@@ -197,7 +197,7 @@ mod tests {
             &[
                 ("zeta", Runs::Host),
                 ("alpha", Runs::Inline),
-                ("replace", Runs::Builtin),
+                ("beta", Runs::Inline),
                 ("mid", Runs::Host),
             ],
         );
@@ -205,12 +205,12 @@ mod tests {
         let none = BTreeMap::new();
         assert_eq!(
             ids(&plan(&cfg, &points, &none)),
-            ["alpha", "mid", "replace", "zeta"]
+            ["alpha", "beta", "mid", "zeta"]
         );
 
-        cfg.plugins.order = vec!["zeta".into(), "replace".into(), "gone".into()];
+        cfg.plugins.order = vec!["zeta".into(), "beta".into(), "gone".into()];
         let p = plan(&cfg, &points, &none);
-        assert_eq!(ids(&p), ["zeta", "replace", "alpha", "mid"]);
+        assert_eq!(ids(&p), ["zeta", "beta", "alpha", "mid"]);
         assert_eq!(
             p.infos()
                 .iter()
@@ -218,7 +218,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ("zeta", Provide::Transform, Runs::Host),
-                ("replace", Provide::Transform, Runs::Builtin),
+                ("beta", Provide::Transform, Runs::Inline),
                 ("alpha", Provide::Transform, Runs::Inline),
                 ("mid", Provide::Transform, Runs::Host),
             ]

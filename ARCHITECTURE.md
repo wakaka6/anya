@@ -76,7 +76,7 @@ A local dictation also runs hooks (docs/decisions/0016). Before step 2 the app w
 | `Engine` | `anya_core::engine` | built-in engine crates; the plugin host's adapter for Bun engines |
 | `AudioSource` | `anya_core::audio` | platform capture in `anya-audio`; a file-replaying fake for tests |
 | `ContextHook` | `anya_core::hooks` | inline plugins (`anya-script`); host plugins (`anya-plugin-host`) |
-| `TransformHook` | `anya_core::hooks` | the built-in replacement list; inline plugins; host plugins |
+| `TransformHook` | `anya_core::hooks` | inline plugins (`anya-script`); host plugins (`anya-plugin-host`) |
 | `ActionHook` | `anya_core::hooks` | host plugins. Paste is the built-in action (docs/decisions/0016): the app runs it beside them on the chain's text, on by default, and `[dictation] output` switches it to the clipboard or off |
 | frames | `anya-protocol` | every sink, in process and over the WebSocket |
 
@@ -92,7 +92,7 @@ Triggers and sinks get a trait once two adapters need the same one. Until then t
 
 Built-in pieces are crates in the binary that the user switches on or off. A community plugin is a package with up to two entries (docs/decisions/0015). Its inline entry runs in QuickJS inside Anya (`anya-script`), with no network or disk and every call stopped at its budget. Its host entry runs in a Bun process of its own that talks to Anya in JSON lines over stdin/stdout; a watchdog pings it every second and kills and restarts it after 3 seconds of silence, so one stuck plugin stalls no other. The `anya-plugins` registry discovers and distributes reviewed packages; a tag or release updates the registry index, while installation and enabling remain explicit user actions (docs/decisions/0010). An engine plugin sends a `Manifest` and `Recognition`s, the shapes built-in engines use, so the plugin host's engine adapter is one more `Engine`; its hooks are one more `ContextHook`, `TransformHook` or `ActionHook`.
 
-Built-in pieces run on `anya-plugin-rt` (docs/decisions/0012): the app lists them, the runtime applies the ones the user has not turned off, and each serves what it provides into a `Point`: `engines`, `contexts`, `transforms` or `actions`. The four are peers (docs/decisions/0016). The plugin host serves its engines into `engines`; the built-in `community-hooks` serves every community plugin's hooks into the other three, so turning it off stops them all, and the built-in `replace` serves the replacement list into `transforms`.
+Built-in pieces run on `anya-plugin-rt` (docs/decisions/0012): the app lists them, the runtime applies the ones the user has not turned off, and each serves what it provides into a `Point`: `engines`, `contexts`, `transforms` or `actions`. The four are peers (docs/decisions/0016). The plugin host serves its engines into `engines`; the built-in `community-hooks` serves every community plugin's hooks into the other three, so turning it off stops them all. No built-in piece serves a transform (docs/decisions/0019).
 
 ## Downstream apps
 

@@ -151,7 +151,6 @@ fn hooks(
                 "name": name(&h.plugin),
                 "hook": hook,
                 "runs": match h.runs {
-                    Runs::Builtin => "builtin",
                     Runs::Inline => "inline",
                     Runs::Host => "host",
                 },
@@ -177,7 +176,6 @@ fn hooks(
 /// The catalog keys of a built-in hook piece's name and help.
 fn builtin_keys(id: &str) -> Option<(&'static str, &'static str)> {
     match id {
-        "replace" => Some(("gui.hooks.replace", "gui.hooks.replace_help")),
         "community-hooks" => Some(("gui.hooks.community", "gui.hooks.community_help")),
         _ => None,
     }

@@ -2156,10 +2156,6 @@ async fn dictation_hooks_list_in_run_order_and_the_order_is_saved() {
     ]);
     let h = harness_with(control, ShellKind::Web).await;
     let state = h.get("/api/state").await.json();
-    assert_eq!(
-        state["info"]["replacements_path"],
-        "/home/me/.config/anya/replacements.txt"
-    );
     let run = |state: &serde_json::Value| -> Vec<String> {
         state["hooks"]["run"]
             .as_array()
@@ -2176,34 +2172,24 @@ async fn dictation_hooks_list_in_run_order_and_the_order_is_saved() {
     };
     assert_eq!(
         run(&state),
-        [
-            "polish:transform",
-            "replace:transform",
-            "swap:transform",
-            "polish:action"
-        ],
+        ["polish:transform", "swap:transform", "polish:action"],
         "unlisted plugins run by id, actions last"
     );
     assert_eq!(state["hooks"]["run"][0]["movable"], true);
-    assert_eq!(state["hooks"]["run"][1]["runs"], "builtin");
-    assert_eq!(state["hooks"]["run"][2]["runs"], "inline");
-    assert_eq!(state["hooks"]["run"][3]["movable"], false);
-    assert_eq!(state["hooks"]["run"][3]["runs"], "host");
+    assert_eq!(state["hooks"]["run"][0]["runs"], "host");
+    assert_eq!(state["hooks"]["run"][1]["runs"], "inline");
+    assert_eq!(state["hooks"]["run"][2]["movable"], false);
+    assert_eq!(state["hooks"]["run"][2]["runs"], "host");
 
     let mut c = edited(&h);
-    c["plugins"]["order"] = json!(["swap", "replace"]);
+    c["plugins"]["order"] = json!(["swap"]);
     let res = h.post("/api/settings", &c).await;
     assert_eq!(res.status, 200, "{}", res.body);
     let saved = lock(&h.control.saved).last().cloned().expect("a save");
-    assert_eq!(saved.plugins.order, ["swap", "replace"]);
+    assert_eq!(saved.plugins.order, ["swap"]);
     assert_eq!(
         run(&res.json()["state"]),
-        [
-            "swap:transform",
-            "replace:transform",
-            "polish:transform",
-            "polish:action"
-        ]
+        ["swap:transform", "polish:transform", "polish:action"]
     );
 }
 
@@ -2215,20 +2201,19 @@ async fn the_built_in_hook_switches_are_saved_and_turn_hooks_off() {
     let h = harness_with(control, ShellKind::Web).await;
     let state = h.get("/api/state").await.json();
     let builtin = state["hooks"]["builtin"].as_array().expect("builtin");
-    assert_eq!(builtin[0]["id"], "replace");
-    assert_eq!(builtin[0]["name"], "Replacement list");
+    assert_eq!(builtin.len(), 1);
+    assert_eq!(builtin[0]["id"], "community-hooks");
     assert_eq!(builtin[0]["on"], true);
-    assert_eq!(builtin[1]["id"], "community-hooks");
+    assert_eq!(state["hooks"]["run"][0]["plugin"], "swap");
 
     let mut c = edited(&h);
-    c["plugins"]["builtin"] = json!({"replace": false, "community-hooks": false});
+    c["plugins"]["builtin"] = json!({"community-hooks": false});
     let res = h.post("/api/settings", &c).await;
     assert_eq!(res.status, 200, "{}", res.body);
     let saved = lock(&h.control.saved).last().cloned().expect("a save");
-    assert_eq!(saved.plugins.builtin.get("replace"), Some(&false));
     assert_eq!(saved.plugins.builtin.get("community-hooks"), Some(&false));
     assert_eq!(res.json()["state"]["hooks"]["run"], json!([]));
-    assert_eq!(res.json()["state"]["hooks"]["builtin"][1]["on"], false);
+    assert_eq!(res.json()["state"]["hooks"]["builtin"][0]["on"], false);
 }
 
 #[tokio::test]

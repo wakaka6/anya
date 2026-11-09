@@ -309,11 +309,8 @@ impl App {
         let config = Arc::new(Mutex::new(cfg.clone()));
         let points = Points::default();
         let community = Community::new();
-        let mut builtin_rt = Runtime::new(
-            points.clone(),
-            builtin::plugins(anya_config::replacements_path(&path), community.clone()),
-        )
-        .map_err(|e| e.to_string())?;
+        let mut builtin_rt = Runtime::new(points.clone(), builtin::plugins(community.clone()))
+            .map_err(|e| e.to_string())?;
         builtin::reconcile(&mut builtin_rt, &cfg);
         let hub = Hub::new(HubInfo {
             version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -1183,7 +1180,6 @@ impl Control for App {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             config_path: self.config_path.clone(),
             hotwords_path: anya_config::hotwords_path(&self.config_path),
-            replacements_path: anya_config::replacements_path(&self.config_path),
         }
     }
 
@@ -1237,18 +1233,11 @@ impl Control for App {
         let cfg = lock(&self.config).clone();
         let wanted = builtin::composed(&cfg, &builtin::ids());
         let on = |id: &str| wanted.iter().any(|c| c.id == id && c.on);
-        vec![
-            BuiltinHooks {
-                id: builtin::REPLACE.to_owned(),
-                provides: vec![Provide::Transform],
-                on: on(builtin::REPLACE),
-            },
-            BuiltinHooks {
-                id: builtin::COMMUNITY_HOOKS.to_owned(),
-                provides: vec![Provide::Context, Provide::Transform, Provide::Action],
-                on: on(builtin::COMMUNITY_HOOKS),
-            },
-        ]
+        vec![BuiltinHooks {
+            id: builtin::COMMUNITY_HOOKS.to_owned(),
+            provides: vec![Provide::Context, Provide::Transform, Provide::Action],
+            on: on(builtin::COMMUNITY_HOOKS),
+        }]
     }
 
     fn engines(&self) -> Vec<EngineInfo> {
