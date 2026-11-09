@@ -2023,36 +2023,72 @@ async function loadMarket() {
   pluginViews?.market();
 }
 
-// The hooks a dictation runs, in order, with the built-in pieces that serve
-// them. Context and transform hooks move; the order is `[plugins] order`.
+// The hooks a dictation runs, drawn on its main line: recording, the engine,
+// the paste. Each kind branches off where it runs, in run order: context
+// before the engine, transforms before the paste, actions beside it. Context
+// and transform hooks move; the order is `[plugins] order`.
+const OUTPUT_STOP = {
+  paste: "gui.hooks.flow_paste",
+  clipboard: "gui.hooks.flow_copy",
+  none: "gui.hooks.flow_keep",
+};
+
 function hooksSection() {
-  const box = el("div", { class: "group" });
+  const line = el("div", { class: "hookline", role: "group", "aria-label": t("gui.hooks.flow_label") });
   const switches = el("div", { class: "group" });
   const draw = () => {
     const { run, builtin } = state.hooks;
     const ids = [...new Set(run.filter((h) => h.movable).map((h) => h.plugin))];
-    const move = (id, by) => {
+    // Swaps two plugins in the order; the others keep their places.
+    const swap = (a, b) => {
       const next = [...ids];
-      const at = next.indexOf(id);
-      [next[at], next[at + by]] = [next[at + by], next[at]];
+      const i = next.indexOf(a);
+      const j = next.indexOf(b);
+      [next[i], next[j]] = [next[j], next[i]];
       commit((c) => { c.plugins.order = next; }, { field: "plugins.order" }).then(() => { draw(); });
     };
-    box.replaceChildren(...(run.length ? run.map((h) => {
-      const at = ids.indexOf(h.plugin);
-      const arrow = (by, glyph, key) => el("button", {
+    const svc = (h) => el("div", { class: "svc" }, el("b", {}, h.name), el("small", {}, t(HOOK_RUNS[h.runs])));
+    const branch = (kind, help, beside) => {
+      const list = run.filter((h) => h.hook === kind);
+      const rows = list.map((h, i) => {
+        if (kind === "action") return el("div", { class: "row hook fixed" }, svc(h));
+        // Up and down move past the neighbour in this branch.
+        const arrow = (by, glyph, key) => {
+          const other = list[i + by];
+          return el("button", {
+            type: "button",
+            class: "ghost",
+            disabled: !h.movable || !other?.movable || other.plugin === h.plugin,
+            title: tf(key, { name: h.name }),
+            "aria-label": tf(key, { name: h.name }),
+            onclick: () => swap(h.plugin, other.plugin),
+          }, glyph);
+        };
+        return el("div", { class: "row hook" }, svc(h), arrow(-1, "↑", "gui.hooks.up"), arrow(1, "↓", "gui.hooks.down"));
+      });
+      const browse = list.length ? null : el("button", {
         type: "button",
-        class: "ghost",
-        disabled: !h.movable || at + by < 0 || at + by >= ids.length,
-        title: tf(key, { name: h.name }),
-        "aria-label": tf(key, { name: h.name }),
-        onclick: () => move(h.plugin, by),
-      }, glyph);
-      return el("div", { class: "row hook" },
-        el("div", { class: "svc" }, el("b", {}, h.name),
-          el("small", {}, t(PROVIDE_NAME[h.hook]), " · ", t(HOOK_RUNS[h.runs]))),
-        arrow(-1, "↑", "gui.hooks.up"),
-        arrow(1, "↓", "gui.hooks.down"));
-    }) : [el("div", { class: "empty-line" }, t("gui.hooks.empty"))]));
+        onclick: () => $("market")?.scrollIntoView({ block: "start" }),
+      }, t("gui.hooks.browse"));
+      const cls = ["branch", beside ? "beside" : null, list.length ? null : "empty"].filter(Boolean).join(" ");
+      return el("div", { class: cls },
+        el("div", { class: "group" },
+          el("div", { class: "hook-head" }, el("b", {}, t(PROVIDE_NAME[kind])), el("small", {}, t(help)), browse),
+          ...rows));
+    };
+    const stop = (name, sub, beside) => el("div", { class: beside ? "stop paste" : "stop" },
+      el("div", { class: "stop-name" }, el("b", {}, t(name)), sub == null ? null : el("small", {}, sub)),
+      beside ?? null);
+    const hotkeys = splitHotkeys(cfg().dictation.hotkeys);
+    const chosen = state.engines.find((e) => e.id === cfg().recognition.dictation);
+    line.replaceChildren(
+      stop("gui.hooks.flow_record", hotkeys.length
+        ? hotkeys.map((h) => comboLabel(h, platform())).join(" / ")
+        : t("gui.hotkey.unset")),
+      branch("context", "gui.hooks.flow_context_help"),
+      stop("gui.hooks.flow_engine", chosen?.title ?? cfg().recognition.dictation),
+      branch("transform", "gui.hooks.flow_transform_help"),
+      stop(OUTPUT_STOP[cfg().dictation.output], null, branch("action", "gui.hooks.flow_action_help", true)));
     switches.replaceChildren(...builtin.map((b) => {
       const sw = el("input", { type: "checkbox", class: "switch", checked: b.on, "aria-label": tf("gui.hooks.switch", { name: b.name }) });
       sw.addEventListener("change", async () => {
@@ -2072,9 +2108,9 @@ function hooksSection() {
     nodes: [
       el("section", { class: "section" },
         el("h2", {}, t("gui.hooks.title")),
-        box,
+        line,
         errorSlot("plugins.order"),
-        el("p", { class: "foot-note" }, t("gui.hooks.intro"))),
+        el("p", { class: "foot-note" }, t("gui.hooks.flow_scope"))),
       el("section", { class: "section" },
         el("h2", {}, t("gui.hooks.builtin_group")),
         switches),
@@ -2156,7 +2192,7 @@ function buildPlugins() {
       installedBox,
       errorLine),
     ...hooks.nodes,
-    el("section", { class: "section" },
+    el("section", { class: "section", id: "market" },
       el("h2", {}, t("gui.plugins.market"), el("span", { class: "spacer" }), search),
       marketBox,
       el("p", { class: "foot-note" }, t("gui.plugins.intro"))),

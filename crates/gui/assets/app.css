@@ -953,6 +953,40 @@ select:active { background-color: var(--field-hover); }
 .plugin-settings > summary { padding: 2px 0; color: var(--muted); cursor: pointer; }
 .row.hook { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; }
 
+/* The hooks on a dictation's main line: stations for recording, the engine
+   and the paste; each kind of hook branches off to its card. */
+.hookline { position: relative; margin: 2px 0 0 4px; }
+.hookline > * { position: relative; }
+.hookline > *::before { content: ""; position: absolute; left: 11px; top: 0; bottom: 0; width: 3px; background: var(--muted); }
+.hookline > :first-child::before { top: 13px; }
+.stop { display: flex; align-items: flex-start; gap: 12px; padding-left: 34px; }
+.stop::after { content: ""; position: absolute; left: 5px; top: 6px; width: 9px; height: 9px; border: 3px solid var(--fg); border-radius: 50%; background: var(--window); }
+.stop-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; line-height: 28px; }
+.stop-name b { font-weight: 600; }
+.stop-name small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stop.paste { gap: 0; }
+.stop.paste::before { bottom: auto; height: 13px; }
+.stop.paste .stop-name { flex: none; width: 120px; }
+.stop.paste .stop-name::after { content: ""; flex: 1; align-self: center; margin-left: 10px; border-top: 2px solid var(--muted); }
+.branch { padding: 4px 0 12px 52px; }
+.branch::after { content: ""; position: absolute; left: 12px; top: 0; width: 26px; height: 24px; border: 0 solid var(--muted); border-left-width: 2px; border-bottom-width: 2px; border-bottom-left-radius: 12px; }
+.branch > .group { position: relative; }
+.branch > .group::after { content: ""; position: absolute; left: -15px; top: 13px; width: 8px; height: 8px; border: 2px solid var(--accent); border-radius: 50%; background: var(--accent); }
+.branch.empty > .group { background: none; border-style: dashed; border-color: var(--muted); }
+.branch.empty > .group::after { border-color: var(--muted); background: var(--window); }
+/* Actions take the text beside the paste: their branch leaves the station
+   itself, level with it. */
+.branch.beside { position: relative; flex: 1; min-width: 0; padding: 0 0 0 28px; }
+.branch.beside::after { left: 0; top: 13px; width: 14px; height: 0; border-width: 2px 0 0; border-radius: 0; }
+.branch.beside > .group::after { top: 8px; }
+.hook-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; padding: 8px 14px; }
+.hook-head b { font-weight: 500; }
+.hook-head small { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
+.hook-head button { flex: none; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; cursor: pointer; }
+.hook-head button::after { content: " ›"; }
+.hook-head button:hover { text-decoration: underline; }
+.row.hook.fixed { grid-template-columns: minmax(0, 1fr); }
+
 .section > h2 { align-items: center; }
 .section > h2 input[type="text"] { width: 190px; padding: 3px 9px; font-weight: 400; }
 .market { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
