@@ -1632,6 +1632,14 @@ function sizeText(bytes) {
     : tf("gui.local.size_mb", { size: String(Math.round(mib)) });
 }
 
+// A progress bar's fill at `percent`. Styles go through the DOM: the page's
+// CSP drops `style` attributes.
+function fill(percent) {
+  const node = el("span", {});
+  node.style.width = `${percent}%`;
+  return node;
+}
+
 // The engine Anya can run a server for: who runs it, and when Anya does, the
 // models to download or a file of the user's, the program and the server.
 // It asks for `/api/local` while it is on the page.
@@ -1716,7 +1724,7 @@ function localSection(engine, values, { line, fieldRows, save, recheck }) {
       case "downloading":
         // The bar sits under the note, so a long note keeps its width.
         below = el("div", { class: "downloading" },
-          el("span", { class: "progress" }, el("span", { style: `width:${percent ?? 0}%` })),
+          el("span", { class: "progress" }, fill(percent ?? 0)),
           el("small", {}, percent == null
             ? sizeText(m.have)
             : tf("gui.local.progress", { percent: String(percent), have: sizeText(m.have), total: sizeText(m.total) })));
