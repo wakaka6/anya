@@ -107,10 +107,12 @@ pub async fn open(hub: &Hub, engine: &FakeEngine, source: Source) -> Running {
 }
 
 impl Running {
-    /// Reports `recognition` and waits until the hub published it.
+    /// Reports `recognition` and waits until the hub published it, and for a
+    /// final one the `session_end` the hub publishes right after it.
     pub async fn push(&self, recognition: Recognition) {
         let mut tap = self.hub.subscribe().frames;
         let text = recognition.text.clone();
+        let is_final = recognition.is_final;
         self.out
             .send(Output::Result(recognition))
             .await
@@ -120,6 +122,13 @@ impl Running {
             matches!(f, Frame::Result { session, recognition } if *session == id && recognition.text == text)
         })
         .await;
+        if is_final {
+            until(
+                &mut tap,
+                |f| matches!(f, Frame::SessionEnd { session, .. } if *session == id),
+            )
+            .await;
+        }
     }
 
     /// Sends one chunk of audio: the hub publishes its `level`.
