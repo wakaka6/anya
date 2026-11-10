@@ -14,6 +14,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # The system libraries the Linux adapters and desktop shell link against,
+      # as in scripts/linux.Dockerfile.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config clang \
+            libasound2-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxtst-dev \
+            libwayland-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
