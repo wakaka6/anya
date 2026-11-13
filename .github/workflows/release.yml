@@ -20,7 +20,7 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { os: macos-14, name: anya_darwin_arm64 }
+          - { os: macos-15, name: anya_darwin_arm64 }
           - { os: macos-15-intel, name: anya_darwin_amd64 }
           - { os: ubuntu-22.04, name: anya_linux_amd64 }
           - { os: ubuntu-22.04-arm, name: anya_linux_arm64 }
