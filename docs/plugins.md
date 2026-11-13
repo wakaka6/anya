@@ -1,5 +1,7 @@
 # Writing plugins
 
+New to plugins? Start with the [plugin guide](plugin-guide.en.md) ([中文](plugin-guide.md)), which walks through a first plugin from writing it to publishing it. This page is the reference.
+
 A plugin adds to Anya without a pull request or a release. It is an npm-style package that provides any of four things (docs/decisions/0016):
 
 | Provides | What it does | What it receives |
@@ -109,7 +111,7 @@ export function context(ctx) {
 
 ## Host entries and the SDK
 
-`import { defineEngine, defineContext, defineTransform, defineAction } from "@wakaka6/anya-plugin"` works in every host entry; the host serves its own copy of the SDK, so the package does not ship one. Install `@wakaka6/anya-plugin` as a dev dependency for the types (`sdk/plugin/index.d.ts`).
+`import { defineEngine, defineContext, defineTransform, defineAction } from "@wakaka6/anya-plugin"` works in every host entry; the host serves its own copy of the SDK, so the package does not ship one. The SDK is not on npm yet: for types, point your editor at `sdk/plugin/index.d.ts` in this repository, and serve the SDK to tests as `plugins/bunfig.toml` does.
 
 A host entry exports what it provides, as the default export or named exports, at most one of each kind:
 

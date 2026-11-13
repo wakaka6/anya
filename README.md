@@ -188,7 +188,10 @@ anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 > [!WARNING]
 > 引擎插件会收到凭它的引擎开的每一次识别的音频（局域网应用的听写也算）；context 插件会知道当前在用哪个应用；transform 和 action 插件会收到你听写的全部文字。host 插件以你的权限运行，没有沙箱，请只启用你信得过的插件。
 
-命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。开发插件见 [docs/plugins.md](docs/plugins.md)。
+命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。
+
+> [!TIP]
+> 想写一个？[插件开发指南](docs/plugin-guide.md)带你 15 分钟写出、测试并装上第一个插件，再发布到插件市场；完整的字段和约定见[插件参考](docs/plugins.md)。
 
 内置引擎也可以关闭，当前选用的引擎除外。另一个内置部件 `community-hooks` 运行所有社区插件的 context、transform 和 action，关掉它这些都不再执行。这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。改写的顺序、插件设置和时间上限分别在 `[plugins] order`、`[plugins.settings.<id>]` 和 `[plugins.limits]`。
 

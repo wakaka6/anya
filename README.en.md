@@ -188,7 +188,10 @@ Install and enable are separate steps, on the settings window's Plugins page too
 > [!WARNING]
 > An engine plugin receives the audio of every session opened on its engine (a LAN app's dictation included); a context plugin learns which app you are using; transform and action plugins receive everything you dictate. Host plugins run with your rights, with no sandbox, so enable only plugins you trust.
 
-Changes made on the command line apply the next time Anya starts; enabling, disabling and removing in the settings window apply at once. Writing a plugin: [docs/plugins.md](docs/plugins.md).
+Changes made on the command line apply the next time Anya starts; enabling, disabling and removing in the settings window apply at once.
+
+> [!TIP]
+> Want to write one? The [plugin guide](docs/plugin-guide.en.md) takes you through your first plugin in 15 minutes, from writing and testing it to installing it and publishing it to the market; every field and rule is in the [plugin reference](docs/plugins.md).
 
 Built-in engines can be turned off too, except the one you have chosen. One more built-in piece, `community-hooks`, runs every community plugin's context, transform and action hooks; turned off, none of them runs. These changes are written to `[plugins.builtin]` in the config file, and a running Anya reads them and applies them at once. The transform order, plugin settings and time budgets live in `[plugins] order`, `[plugins.settings.<id>]` and `[plugins.limits]`.
 
