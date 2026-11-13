@@ -4,6 +4,8 @@ User-visible changes, newest first.
 
 ## Unreleased
 
+## 0.1.1 — 2026-11-13
+
 - On macOS, `brew services start anya` runs Anya in the background and starts it at login; Quit in the tray ends it until the next login, and a crash starts it again. On Linux, the README shows the XDG autostart entry instead.
 
 ## 0.1.0 — 2026-11-13
