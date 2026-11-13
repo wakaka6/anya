@@ -42,15 +42,15 @@ flowchart LR
   Frames --> Apps["Your program<br/>captions · notes · agents"]
 ```
 
-| Feature | What it does |
-| --- | --- |
-| 🎙️ **Dictate into any field** | Tap a hotkey and speak; the result is pasted at the cursor or put on the clipboard. |
-| 🔊 **Transcribe any sound** | The microphone, or what the system is playing: a CoreAudio process tap on macOS, the PulseAudio/PipeWire monitor on Linux, no virtual audio driver. |
-| 🧠 **Your choice of engine** | Six built in, cloud or on this computer; dictation, continuous transcription and LAN apps can each use a different one. |
-| 🧩 **Plugins** | Add engines, add hotwords per app, rewrite text before the paste, send it elsewhere at the same time. |
-| 📱 **An ASR gateway** | A phone, a browser or another computer pairs by QR code and dictates with its own microphone, no engine account needed. |
-| 🛠️ **Build on it** | Meeting notes, live captions, translation, an agent that listens: open a WebSocket and read, no SDK. |
-| 🔒 **Private by default** | Audio goes only to the engine you chose; if it fails you see the error, and Anya never quietly retries on another one. |
+| Feature                       | What it does                                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🎙️ **Dictate into any field** | Tap a hotkey and speak; the result is pasted at the cursor or put on the clipboard.                                                                 |
+| 🔊 **Transcribe any sound**   | The microphone, or what the system is playing: a CoreAudio process tap on macOS, the PulseAudio/PipeWire monitor on Linux, no virtual audio driver. |
+| 🧠 **Your choice of engine**  | Six built in, cloud or on this computer; dictation, continuous transcription and LAN apps can each use a different one.                             |
+| 🧩 **Plugins**                | Add engines, add hotwords per app, rewrite text before the paste, send it elsewhere at the same time.                                               |
+| 📱 **An ASR gateway**         | A phone, a browser or another computer pairs by QR code and dictates with its own microphone, no engine account needed.                             |
+| 🛠️ **Build on it**            | Meeting notes, live captions, translation, an agent that listens: open a WebSocket and read, no SDK.                                                |
+| 🔒 **Private by default**     | Audio goes only to the engine you chose; if it fails you see the error, and Anya never quietly retries on another one.                              |
 
 ## Status
 
@@ -68,7 +68,24 @@ anya             # start the tray app and open the settings
 
 When a new version is out, the tray panel and the settings page say so; press Upgrade or run `brew upgrade anya`.
 
-Or build from source, with Rust 1.95 (picked by `rust-toolchain.toml`):
+### Linux
+
+On Linux, Anya's window and tray use the system's WebKitGTK, GTK and AppIndicator, and pasting needs a clipboard tool; install them with your distribution's package manager first. Anya is built on Ubuntu 22.04 and runs on distributions with glibc 2.35 or newer.
+
+| Distribution | Command |
+| --- | --- |
+| Ubuntu 24.04 and later, Debian 13 | `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 libxtst6 libasound2t64 xclip wl-clipboard wtype` |
+| Ubuntu 22.04, Debian 12 | `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 libxtst6 libasound2 xclip wl-clipboard wtype` |
+| Fedora | `sudo dnf install webkit2gtk4.1 libayatana-appindicator-gtk3 libxdo libXtst alsa-lib xclip wl-clipboard wtype` |
+| Arch | `sudo pacman -S webkit2gtk-4.1 libayatana-appindicator xdotool libxtst alsa-lib xclip wl-clipboard wtype` |
+
+- Clipboard: `xclip` on X11, `wl-clipboard` on Wayland; one desktop needs only its own.
+- Paste keys: X11 needs nothing more; Wayland uses `wtype`, except on KDE Plasma, where `wtype` does not work and Anya needs write access to `/dev/uinput` (`anya --doctor` prints the commands).
+- Global hotkeys on Wayland read `/dev/input`: run `sudo usermod -aG input $USER`, then log out and back in.
+
+Then run `anya --doctor`; it lists anything still missing.
+
+Or build from source, with Rust 1.95 (picked by `rust-toolchain.toml`). On Linux, install the development packages too; on Debian or Ubuntu, `sudo apt install pkg-config clang libasound2-dev libx11-dev libxcb1-dev libxkbcommon-dev libxtst-dev libwayland-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev`:
 
 ```bash
 git clone https://github.com/wakaka6/anya.git && cd anya
@@ -88,14 +105,14 @@ On macOS, dictation needs the microphone and Accessibility (for pasting) permiss
 
 ## Engines
 
-| Engine | Recognizes | Audio goes to |
-| --- | --- | --- |
-| Doubao | Streaming: text while you speak, a second pass to correct it | Volcengine |
-| Qwen Fun-ASR | Streaming | Alibaba Cloud DashScope |
-| OpenAI Whisper | Whole recording | OpenAI, or any compatible endpoint (Groq, your own server) |
-| whisper.cpp | Whole recording | **Nowhere: it stays on this computer** |
-| AuralWise | Whole recording | AuralWise |
-| Xiaomi MiMo | Whole recording | Xiaomi MiMo |
+| Engine         | Recognizes                                                   | Audio goes to                                              |
+| -------------- | ------------------------------------------------------------ | ---------------------------------------------------------- |
+| Doubao         | Streaming: text while you speak, a second pass to correct it | Volcengine                                                 |
+| Qwen Fun-ASR   | Streaming                                                    | Alibaba Cloud DashScope                                    |
+| OpenAI Whisper | Whole recording                                              | OpenAI, or any compatible endpoint (Groq, your own server) |
+| whisper.cpp    | Whole recording                                              | **Nowhere: it stays on this computer**                     |
+| AuralWise      | Whole recording                                              | AuralWise                                                  |
+| Xiaomi MiMo    | Whole recording                                              | Xiaomi MiMo                                                |
 
 Plugins can add more; see [Plugins](#plugins).
 
@@ -171,12 +188,12 @@ By default only this computer can connect to Anya (loopback). To let a phone, a 
 
 A plugin can provide four things:
 
-| Kind | When | For example |
-| --- | --- | --- |
-| **engine** | Recognition | A speech service Anya does not ship |
-| **context** | Before a dictation opens | Hotwords and a language for the app in front |
-| **transform** | Before the paste | Replacements, spoken punctuation, polishing; they run in the order you set and the rewritten text is pasted |
-| **action** | Beside the paste | Keeping the text in your notes or a to-do list; never holds the paste up |
+| Kind          | When                     | For example                                                                                                 |
+| ------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| **engine**    | Recognition              | A speech service Anya does not ship                                                                         |
+| **context**   | Before a dictation opens | Hotwords and a language for the app in front                                                                |
+| **transform** | Before the paste         | Replacements, spoken punctuation, polishing; they run in the order you set and the rewritten text is pasted |
+| **action**    | Beside the paste         | Keeping the text in your notes or a to-do list; never holds the paste up                                    |
 
 The last three apply to your own dictation only, not to continuous transcription or LAN apps.
 
@@ -209,11 +226,11 @@ Built-in engines can be turned off too, except the one you have chosen. One more
 
 The official plugins are in [`plugins/`](plugins/) and are built into Anya: the plugin market lists them, tagged “Official”, even without a network, and Install unpacks one from Anya itself with nothing downloaded. Like any plugin, an installed one runs only once you enable it. When you upgrade Anya, installed official plugins are updated with it at the next start, staying on or off as they were.
 
-| Plugin | Provides | What it does |
-| --- | --- | --- |
+| Plugin               | Provides                    | What it does                                                                                                                                     |
+| -------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `spoken-punctuation` | context, transform (inline) | Say “逗号”, “句号”, “问号”, “换行”, “新段落” and the like to get the mark; the words also go to the engine as hotwords, so it mishears them less |
-| `app-hotwords` | context (inline) | Adds the hotwords you list for the app in front: your project's names in the editor, commands in the terminal |
-| `daily-notes` | action (Bun) | Appends every dictation, with its time and app, to a Markdown note per day (`<folder>/2026-10-31.md`) |
+| `app-hotwords`       | context (inline)            | Adds the hotwords you list for the app in front: your project's names in the editor, commands in the terminal                                    |
+| `daily-notes`        | action (Bun)                | Appends every dictation, with its time and app, to a Markdown note per day (`<folder>/2026-10-31.md`)                                            |
 
 ## Updates
 
@@ -265,4 +282,4 @@ Every string a user sees comes from `anya-i18n`, in every locale; user-facing te
 
 ## Licence
 
-[MIT](LICENSE); see [decision 0006](docs/decisions/0006-mit-licence.md). Contributions are accepted under the same licence; code from another project comes in only when its licence is compatible with MIT or its authors agreed.
+[MIT](LICENSE);

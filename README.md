@@ -42,15 +42,15 @@ flowchart LR
   Frames --> Apps["你的程序<br/>字幕 · 纪要 · agent"]
 ```
 
-| 能力 | 说明 |
-| --- | --- |
-| 🎙️ **听写到任意输入框** | 按一下热键说话，结果粘贴到当前焦点，或放进剪贴板。 |
-| 🔊 **转写任意声音** | 麦克风，或系统正在播放的声音：macOS 用 CoreAudio process tap，Linux 用 PulseAudio/PipeWire monitor，不需要虚拟声卡。 |
-| 🧠 **引擎自己选** | 六个内置引擎，云端或本机；听写、持续转写和局域网应用可以各用各的。 |
-| 🧩 **插件** | 提供新引擎、按应用补热词、粘贴前改写文字、把文字同时送去别处。 |
-| 📱 **识别网关** | 手机、浏览器或另一台电脑扫码配对，用自己的麦克风识别，不需要引擎账号。 |
-| 🛠️ **在它上面做应用** | 会议纪要、实时字幕、翻译、会听的 agent：连上 WebSocket 就能读，不需要 SDK。 |
-| 🔒 **隐私默认值** | 音频只发给你选的那一家引擎；它出错你会看到，Anya 不会悄悄换一家重试。 |
+| 能力                    | 说明                                                                                                                 |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 🎙️ **听写到任意输入框** | 按一下热键说话，结果粘贴到当前焦点，或放进剪贴板。                                                                   |
+| 🔊 **转写任意声音**     | 麦克风，或系统正在播放的声音：macOS 用 CoreAudio process tap，Linux 用 PulseAudio/PipeWire monitor，不需要虚拟声卡。 |
+| 🧠 **引擎自己选**       | 六个内置引擎，云端或本机；听写、持续转写和局域网应用可以各用各的。                                                   |
+| 🧩 **插件**             | 提供新引擎、按应用补热词、粘贴前改写文字、把文字同时送去别处。                                                       |
+| 📱 **识别网关**         | 手机、浏览器或另一台电脑扫码配对，用自己的麦克风识别，不需要引擎账号。                                               |
+| 🛠️ **在它上面做应用**   | 会议纪要、实时字幕、翻译、会听的 agent：连上 WebSocket 就能读，不需要 SDK。                                          |
+| 🔒 **隐私默认值**       | 音频只发给你选的那一家引擎；它出错你会看到，Anya 不会悄悄换一家重试。                                                |
 
 ## 状态
 
@@ -68,7 +68,24 @@ anya             # 启动托盘应用，打开设置窗口
 
 以后有新版本时，托盘面板和设置页会提示，点“升级”或运行 `brew upgrade anya` 即可。
 
-也可以从源码构建，需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）：
+### Linux
+
+Linux 版的窗口和托盘用系统自带的 WebKitGTK、GTK 和 AppIndicator，粘贴要用剪贴板工具，这些要先用系统的包管理器装好。程序在 Ubuntu 22.04 上构建，支持 glibc 2.35 及更新的发行版。
+
+| 发行版 | 命令 |
+| --- | --- |
+| Ubuntu 24.04 及更新、Debian 13 | `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 libxtst6 libasound2t64 xclip wl-clipboard wtype` |
+| Ubuntu 22.04、Debian 12 | `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 libxtst6 libasound2 xclip wl-clipboard wtype` |
+| Fedora | `sudo dnf install webkit2gtk4.1 libayatana-appindicator-gtk3 libxdo libXtst alsa-lib xclip wl-clipboard wtype` |
+| Arch | `sudo pacman -S webkit2gtk-4.1 libayatana-appindicator xdotool libxtst alsa-lib xclip wl-clipboard wtype` |
+
+- 剪贴板：X11 用 `xclip`，Wayland 用 `wl-clipboard`，只用其中一种桌面的话装对应的那个即可。
+- 粘贴按键：X11 不需要别的东西；Wayland 用 `wtype`，KDE Plasma 上 `wtype` 不可用，需要 `/dev/uinput` 的写权限，`anya --doctor` 会给出具体命令。
+- Wayland 上的全局热键要读 `/dev/input`：运行 `sudo usermod -aG input $USER`，然后注销并重新登录。
+
+装好后运行 `anya --doctor`，还缺什么会逐项列出。
+
+也可以从源码构建，需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）。Linux 上还要装开发包，Debian、Ubuntu 上是 `sudo apt install pkg-config clang libasound2-dev libx11-dev libxcb1-dev libxkbcommon-dev libxtst-dev libwayland-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev`：
 
 ```bash
 git clone https://github.com/wakaka6/anya.git && cd anya
@@ -88,14 +105,14 @@ macOS 上听写需要麦克风和辅助功能（用来粘贴）权限；缺了�
 
 ## 引擎
 
-| 引擎 | 识别方式 | 音频去向 |
-| --- | --- | --- |
-| 豆包语音 | 流式：边说边出字，第二遍校正 | 火山引擎 |
-| 千问 Fun-ASR | 流式 | 阿里云 DashScope |
-| OpenAI Whisper | 整段 | OpenAI，或任何兼容接口（Groq、自建服务） |
-| whisper.cpp | 整段 | **不离开这台电脑** |
-| AuralWise | 整段 | AuralWise |
-| 小米 MiMo | 整段 | 小米 MiMo |
+| 引擎           | 识别方式                     | 音频去向                                 |
+| -------------- | ---------------------------- | ---------------------------------------- |
+| 豆包语音       | 流式：边说边出字，第二遍校正 | 火山引擎                                 |
+| 千问 Fun-ASR   | 流式                         | 阿里云 DashScope                         |
+| OpenAI Whisper | 整段                         | OpenAI，或任何兼容接口（Groq、自建服务） |
+| whisper.cpp    | 整段                         | **不离开这台电脑**                       |
+| AuralWise      | 整段                         | AuralWise                                |
+| 小米 MiMo      | 整段                         | 小米 MiMo                                |
 
 插件可以再加引擎，见[插件](#插件)。
 
@@ -171,12 +188,12 @@ Questions?
 
 插件可以提供四样东西：
 
-| 类型 | 时机 | 例子 |
-| --- | --- | --- |
-| **engine** | 识别 | 接入一家新的语音识别服务 |
-| **context** | 听写开始前 | 按前台应用补充热词和语言 |
-| **transform** | 粘贴前 | 替换词、口述标点、润色；按你排的顺序依次执行，粘贴的是改写后的文字 |
-| **action** | 和粘贴同时 | 记进笔记、整理待办；不会拖慢粘贴 |
+| 类型          | 时机       | 例子                                                               |
+| ------------- | ---------- | ------------------------------------------------------------------ |
+| **engine**    | 识别       | 接入一家新的语音识别服务                                           |
+| **context**   | 听写开始前 | 按前台应用补充热词和语言                                           |
+| **transform** | 粘贴前     | 替换词、口述标点、润色；按你排的顺序依次执行，粘贴的是改写后的文字 |
+| **action**    | 和粘贴同时 | 记进笔记、整理待办；不会拖慢粘贴                                   |
 
 后三样只作用于你自己的听写，不作用于持续转写和局域网应用。
 
@@ -209,11 +226,11 @@ anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 
 官方插件在 [`plugins/`](plugins/)，随 Anya 一起编进程序：插件市场不联网也会列出它们，标着“官方”，点“安装”直接从 Anya 里解包，不用下载。装好后同样要启用才会运行。升级 Anya 后，已装的官方插件会在启动时一起更新，开关状态保持不变。
 
-| 插件 | 提供 | 做什么 |
-| --- | --- | --- |
+| 插件                 | 提供                         | 做什么                                                                               |
+| -------------------- | ---------------------------- | ------------------------------------------------------------------------------------ |
 | `spoken-punctuation` | context、transform（inline） | 听写时说“逗号”“句号”“问号”“换行”“新段落”等得到标点；这些词也作为热词交给引擎，少听错 |
-| `app-hotwords` | context（inline） | 按前台应用加上你为它列的热词，比如编辑器里用项目名，终端里用命令名 |
-| `daily-notes` | action（Bun） | 把每次听写连同时间和应用，追加到当天的 Markdown 笔记（`<文件夹>/2026-10-31.md`） |
+| `app-hotwords`       | context（inline）            | 按前台应用加上你为它列的热词，比如编辑器里用项目名，终端里用命令名                   |
+| `daily-notes`        | action（Bun）                | 把每次听写连同时间和应用，追加到当天的 Markdown 笔记（`<文件夹>/2026-10-31.md`）     |
 
 ## 更新
 
@@ -265,4 +282,4 @@ cargo run -p anya-gui --example web   # 不需要麦克风和引擎，用假数�
 
 ## 许可证
 
-[MIT](LICENSE)，见[决策 0006](docs/decisions/0006-mit-licence.md)。提交的贡献按同一许可证接受；并入外部代码要求其许可证与 MIT 兼容，或原作者同意。
+[MIT](LICENSE)

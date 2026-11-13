@@ -65,6 +65,19 @@ class Anya < Formula
     bin.install "anya"
   end
 
+  def caveats
+    on_linux do
+      <<~EOS
+        Anya's window and tray use the system's WebKitGTK, GTK and AppIndicator,
+        and pasting needs a clipboard tool. On Debian or Ubuntu:
+          sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 libxtst6 xclip wl-clipboard wtype
+        Other distributions, and the input group Wayland hotkeys need:
+          https://github.com/${REPO}#linux
+        anya --doctor lists anything still missing.
+      EOS
+    end
+  end
+
   test do
     assert_match "anya", shell_output("#{bin}/anya --help")
   end
