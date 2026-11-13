@@ -66,7 +66,16 @@ anya --doctor    # 检查运行环境：缺什么、怎么补
 anya             # 启动托盘应用，打开设置窗口
 ```
 
-以后有新版本时，托盘面板和设置页会提示，点“升级”或运行 `brew upgrade anya` 即可。
+想让 Anya 在后台运行、登录后自动启动（macOS）：
+
+```bash
+brew services start anya     # 现在启动，以后每次登录自动启动
+brew services stop anya      # 停止，并取消自动启动
+```
+
+托盘里点“退出”只结束这一次，下次登录照常启动；Anya 崩溃时会自动重新拉起。日志在 `$(brew --prefix)/var/log/anya.log`。
+
+以后有新版本时，托盘面板和设置页会提示，点“升级”或运行 `brew upgrade anya` 即可；用 `brew services` 运行的，升级后运行 `brew services restart anya` 换上新版本。
 
 ### Linux
 
@@ -84,6 +93,18 @@ Linux 版的窗口和托盘用系统自带的 WebKitGTK、GTK 和 AppIndicator�
 - Wayland 上的全局热键要读 `/dev/input`：运行 `sudo usermod -aG input $USER`，然后注销并重新登录。
 
 装好后运行 `anya --doctor`，还缺什么会逐项列出。
+
+登录后自动启动：Linux 桌面用 XDG autostart，不用 `brew services`。
+
+```bash
+mkdir -p ~/.config/autostart
+cat > ~/.config/autostart/anya.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=Anya
+Exec=$(brew --prefix)/bin/anya
+EOF
+```
 
 也可以从源码构建，需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）。Linux 上还要装开发包，Debian、Ubuntu 上是 `sudo apt install pkg-config clang libasound2-dev libx11-dev libxcb1-dev libxkbcommon-dev libxtst-dev libwayland-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev`：
 

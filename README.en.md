@@ -66,7 +66,16 @@ anya --doctor    # check the environment: what is missing and how to fix it
 anya             # start the tray app and open the settings
 ```
 
-When a new version is out, the tray panel and the settings page say so; press Upgrade or run `brew upgrade anya`.
+To run Anya in the background and start it at login (macOS):
+
+```bash
+brew services start anya     # start now, and at every login
+brew services stop anya      # stop, and no longer start at login
+```
+
+Quit in the tray ends it until the next login; if Anya crashes, it is started again. It logs to `$(brew --prefix)/var/log/anya.log`.
+
+When a new version is out, the tray panel and the settings page say so; press Upgrade or run `brew upgrade anya`. Under `brew services`, run `brew services restart anya` after the upgrade to switch to the new version.
 
 ### Linux
 
@@ -84,6 +93,18 @@ On Linux, Anya's window and tray use the system's WebKitGTK, GTK and AppIndicato
 - Global hotkeys on Wayland read `/dev/input`: run `sudo usermod -aG input $USER`, then log out and back in.
 
 Then run `anya --doctor`; it lists anything still missing.
+
+To start Anya at login, Linux desktops use XDG autostart rather than `brew services`:
+
+```bash
+mkdir -p ~/.config/autostart
+cat > ~/.config/autostart/anya.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=Anya
+Exec=$(brew --prefix)/bin/anya
+EOF
+```
 
 Or build from source, with Rust 1.95 (picked by `rust-toolchain.toml`). On Linux, install the development packages too; on Debian or Ubuntu, `sudo apt install pkg-config clang libasound2-dev libx11-dev libxcb1-dev libxkbcommon-dev libxtst-dev libwayland-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev`:
 

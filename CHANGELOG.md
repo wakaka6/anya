@@ -4,6 +4,8 @@ User-visible changes, newest first.
 
 ## Unreleased
 
+- On macOS, `brew services start anya` runs Anya in the background and starts it at login; Quit in the tray ends it until the next login, and a crash starts it again. On Linux, the README shows the XDG autostart entry instead.
+
 ## 0.1.0 — 2026-11-13
 
 The first release, installable with Homebrew: `brew install wakaka6/tap/anya`. The Linux build runs on glibc 2.35 or newer (Ubuntu 22.04, Debian 12 and later) and needs the system's WebKitGTK, AppIndicator and a clipboard tool; the README lists the packages, and `brew install` prints them on Linux.
