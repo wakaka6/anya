@@ -54,11 +54,21 @@ flowchart LR
 
 ## Status
 
-Early, with no release yet. It runs end to end on macOS and Linux (Wayland, X11), but the subscriber protocol is still version 0 and may change; every change is in the [CHANGELOG](CHANGELOG.md). Trying it, issues and pull requests are welcome.
+Early: version 0.1. It runs end to end on macOS and Linux (Wayland, X11), but the subscriber protocol is still version 0 and may change; every change is in the [CHANGELOG](CHANGELOG.md). Trying it, issues and pull requests are welcome.
 
 ## Quick start
 
-For now, build from source. Needs Rust 1.95 (picked by `rust-toolchain.toml`).
+Install with Homebrew (macOS, Linux):
+
+```bash
+brew install wakaka6/tap/anya
+anya --doctor    # check the environment: what is missing and how to fix it
+anya             # start the tray app and open the settings
+```
+
+When a new version is out, the tray panel and the settings page say so; press Upgrade or run `brew upgrade anya`.
+
+Or build from source, with Rust 1.95 (picked by `rust-toolchain.toml`):
 
 ```bash
 git clone https://github.com/wakaka6/anya.git && cd anya
@@ -207,7 +217,7 @@ The official plugins are in [`plugins/`](plugins/) and are built into Anya: the 
 
 ## Updates
 
-Once released, Anya ships through a Homebrew tap and never replaces its own binary. Once a day it reads the tap's `Formula/anya.rb` and compares its `version` with the running one; when a newer one exists, the tray panel, the settings page and the terminal UI say so. An install under Homebrew gets an Upgrade button that runs `brew upgrade anya`; the new version runs after Anya is restarted. Any other install (a copied binary, `cargo install`) is only told that a new version is out.
+Anya ships through a Homebrew tap and never replaces its own binary. Once a day it reads the tap's `Formula/anya.rb` and compares its `version` with the running one; when a newer one exists, the tray panel, the settings page and the terminal UI say so. An install under Homebrew gets an Upgrade button that runs `brew upgrade anya`; the new version runs after Anya is restarted. Any other install (a copied binary, `cargo install`) is only told that a new version is out.
 
 The check is one request to the tap's host with `User-Agent: anya/<version>` and nothing else. To stop it, turn off "Check for updates" in the settings or write `[updates] check = false`. `[updates] formula` points the check at another formula (`https://` or `file://`).
 

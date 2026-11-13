@@ -54,11 +54,21 @@ flowchart LR
 
 ## 状态
 
-早期，还没有发布版本。端到端能在 macOS 和 Linux（Wayland、X11）上跑起来，但订阅协议仍是 version 0，可能变化，每次变化都记在 [CHANGELOG.md](CHANGELOG.md)。欢迎试用、提 issue 和 PR。
+早期版本（0.1）。端到端能在 macOS 和 Linux（Wayland、X11）上跑起来，但订阅协议仍是 version 0，可能变化，每次变化都记在 [CHANGELOG.md](CHANGELOG.md)。欢迎试用、提 issue 和 PR。
 
 ## 快速开始
 
-需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）。目前只能从源码构建。
+用 Homebrew 安装（macOS、Linux）：
+
+```bash
+brew install wakaka6/tap/anya
+anya --doctor    # 检查运行环境：缺什么、怎么补
+anya             # 启动托盘应用，打开设置窗口
+```
+
+以后有新版本时，托盘面板和设置页会提示，点“升级”或运行 `brew upgrade anya` 即可。
+
+也可以从源码构建，需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）：
 
 ```bash
 git clone https://github.com/wakaka6/anya.git && cd anya
@@ -207,7 +217,7 @@ anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 
 ## 更新
 
-发布后，Anya 通过 Homebrew tap 分发，不会自己替换自己的程序。它每天读一次 tap 里的 `Formula/anya.rb`，看有没有比当前更新的版本；有的话，托盘面板、设置页和终端界面会提示。通过 Homebrew 安装的，提示里有“升级”按钮，运行 `brew upgrade anya`；升级完成后重启 Anya 才用上新版本。其他方式安装的（复制的程序、`cargo install`）只会被告知有新版本。
+Anya 通过 Homebrew tap 分发，不会自己替换自己的程序。它每天读一次 tap 里的 `Formula/anya.rb`，看有没有比当前更新的版本；有的话，托盘面板、设置页和终端界面会提示。通过 Homebrew 安装的，提示里有“升级”按钮，运行 `brew upgrade anya`；升级完成后重启 Anya 才用上新版本。其他方式安装的（复制的程序、`cargo install`）只会被告知有新版本。
 
 检查时只向 tap 所在的服务器发一个请求，带的只有 `User-Agent: anya/<版本>`，没有别的内容。不想让 Anya 发这个请求，在设置里关掉“检查更新”，或在配置里写 `[updates] check = false`。`[updates] formula` 可以改成别处的 formula（`https://` 或 `file://`）。
 

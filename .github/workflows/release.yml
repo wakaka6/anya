@@ -21,7 +21,7 @@ jobs:
       matrix:
         include:
           - { os: macos-14, name: anya_darwin_arm64 }
-          - { os: macos-13, name: anya_darwin_amd64 }
+          - { os: macos-15-intel, name: anya_darwin_amd64 }
           - { os: ubuntu-24.04, name: anya_linux_amd64 }
           - { os: ubuntu-24.04-arm, name: anya_linux_arm64 }
     runs-on: ${{ matrix.os }}

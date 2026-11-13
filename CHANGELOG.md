@@ -4,6 +4,10 @@ User-visible changes, newest first.
 
 ## Unreleased
 
+## 0.1.0 — 2026-11-13
+
+The first release, installable with Homebrew: `brew install wakaka6/tap/anya`.
+
 - The whisper.cpp engine can run its server itself (docs/decisions/0018). On the Engine page, "Who runs the server" switches between a `whisper-server` you run and one Anya starts on this computer when you dictate, listening on `127.0.0.1` only and stopped after 10 idle minutes. Pick a model from a list (`base`, `small`, `large-v3-turbo-q5_0`, `large-v3-turbo`, `large-v3`, with the one that suits the computer marked) and it downloads with progress, can be cancelled and resumed, and is used once its pinned hash matches; or name a model file of your own. Downloads come from Hugging Face or a mirror you set. Anya says where it found `whisper-server`, or how to install it.
 
 - New built-in engine `whisper-cpp`: recognizes on this computer with a whisper.cpp `whisper-server` (default `http://127.0.0.1:8080`, the one setting), so the audio stays on it; hotwords become whisper's prompt. It is on the Engine page with the other built-in engines and can be turned off like them.
