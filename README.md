@@ -9,47 +9,90 @@
 
 **听见你说的话，交给任何想要它的程序。**
 
+Linux 和 macOS 上的本地语音转文字服务：听写到任意输入框，转写任意声音，再把识别结果交给你写的程序。
+
 [![CI](https://github.com/wakaka6/anya/actions/workflows/ci.yml/badge.svg)](https://github.com/wakaka6/anya/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.95](https://img.shields.io/badge/rust-1.95-orange.svg)](rust-toolchain.toml)
 [![Platform: Linux | macOS](https://img.shields.io/badge/platform-linux%20%7C%20macOS-lightgrey.svg)](docs/decisions/0001-rust-linux-macos.md)
+[![Protocol v0](https://img.shields.io/badge/protocol-v0-8a63d2.svg)](docs/protocol.md)
 
-[English](README.en.md) · [协议](docs/protocol.md) · [插件](docs/plugins.md) · [架构](ARCHITECTURE.md) · [更新日志](CHANGELOG.md)
+[English](README.en.md) · [快速开始](#快速开始) · [协议](docs/protocol.md) · [插件](docs/plugins.md) · [架构](ARCHITECTURE.md) · [更新日志](CHANGELOG.md)
+
+<br>
+
+<a href="docs/assets/demo.mp4">
+  <img src="docs/assets/demo.gif" alt="Anya 演示：热键听写、实时路由、引擎、插件、手机配对和订阅帧" width="880">
+</a>
+
+<sub>54 秒演示，点击观看 <a href="docs/assets/demo.mp4">1080p 视频</a></sub>
 
 </div>
 
-<p align="center">
-  <img src="docs/assets/screenshot-engine.png" alt="Anya 的设置窗口：“引擎”页" width="720">
-</p>
+## 为什么是 Anya
 
-Anya 是 Linux 和 macOS 上的本地语音转文字服务。一个小核心只负责录音和识别，听写、持续转写、上屏、浮层和识别引擎都插在它周围；别的程序订阅的，是内置功能读的同一套识别帧。
+大多数听写工具把“听”和“用”焊在一起：识别结果只能落进输入框。Anya 把它们拆开。一个小核心只负责录音和识别，然后把结果发成一套帧；上屏、浮层、托盘读的是这套帧，你的程序订阅的也是同一套。
 
-- **听写到任意输入框**：按住或按一下热键说话，识别结果粘贴到当前焦点，或放进剪贴板。
-- **转写任意声音**：持续转写麦克风，或系统正在播放的声音（macOS 用 CoreAudio process tap，Linux 用 PulseAudio/PipeWire monitor，不需要虚拟声卡）。
-- **多家引擎，自己选**：内置豆包、DashScope、OpenAI 兼容接口、AuralWise、MiMo，以及本机的 whisper.cpp（音频不离开这台电脑，需要自己运行 `whisper-server`）；听写、持续转写和局域网应用可以各用各的。
-- **插件扩展**：社区插件写成 npm 包，可以提供识别引擎，也可以在听写前补充热词、在粘贴前改写文字、把文字同时送去别处；安装前校验完整性哈希。
-- **识别网关**：手机、浏览器或另一台电脑配对后，把自己的麦克风送来识别，不需要自己的引擎账号。
-- **在它上面做应用**：会议纪要、实时字幕、翻译、会听的 agent，都从同一套帧里读。
-- **隐私默认值**：音频只发给你选的那一家引擎；它出错时你会看到错误，Anya 不会悄悄换另一家重试。
+```mermaid
+flowchart LR
+  Mic["麦克风 / 系统声音 / 配对的手机"] --> Core["Anya 核心<br/>录音 · 识别"]
+  Core --> Frames(("识别帧"))
+  Frames --> Paste["粘贴到光标处"]
+  Frames --> Overlay["浮层 · 托盘"]
+  Frames --> Apps["你的程序<br/>字幕 · 纪要 · agent"]
+```
+
+| 能力 | 说明 |
+| --- | --- |
+| 🎙️ **听写到任意输入框** | 按一下热键说话，结果粘贴到当前焦点，或放进剪贴板。 |
+| 🔊 **转写任意声音** | 麦克风，或系统正在播放的声音：macOS 用 CoreAudio process tap，Linux 用 PulseAudio/PipeWire monitor，不需要虚拟声卡。 |
+| 🧠 **引擎自己选** | 六个内置引擎，云端或本机；听写、持续转写和局域网应用可以各用各的。 |
+| 🧩 **插件** | 提供新引擎、按应用补热词、粘贴前改写文字、把文字同时送去别处。 |
+| 📱 **识别网关** | 手机、浏览器或另一台电脑扫码配对，用自己的麦克风识别，不需要引擎账号。 |
+| 🛠️ **在它上面做应用** | 会议纪要、实时字幕、翻译、会听的 agent：连上 WebSocket 就能读，不需要 SDK。 |
+| 🔒 **隐私默认值** | 音频只发给你选的那一家引擎；它出错你会看到，Anya 不会悄悄换一家重试。 |
 
 ## 状态
 
-早期，还没有发布版本。端到端能在 macOS 和 Linux（Wayland、X11）上跑起来，但订阅协议仍是 version 0，可能随时变化，变化都记在 [CHANGELOG.md](CHANGELOG.md)。
+早期，还没有发布版本。端到端能在 macOS 和 Linux（Wayland、X11）上跑起来，但订阅协议仍是 version 0，可能变化，每次变化都记在 [CHANGELOG.md](CHANGELOG.md)。欢迎试用、提 issue 和 PR。
 
-## 安装
+## 快速开始
 
-目前只能从源码构建。需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）。
+需要 Rust 1.95（`rust-toolchain.toml` 会自动选上）。目前只能从源码构建。
 
 ```bash
+git clone https://github.com/wakaka6/anya.git && cd anya
 cargo build --release -p anya
-target/release/anya --doctor    # 检查运行环境，缺什么、怎么补
+target/release/anya --doctor    # 检查运行环境：缺什么、怎么补
 target/release/anya --install   # 复制到 ~/.local/bin/anya
+anya                            # 启动托盘应用，打开设置窗口
 ```
+
+然后：
+
+1. 在设置的 **引擎** 页选一个引擎填上凭据；不想让音频离开电脑，就选 **whisper.cpp**，让 Anya 下载模型、自己运行它（见[在本机识别](#在本机识别whispercpp)）。
+2. 在任意输入框里按一下热键开始说话，再按一下结束。默认热键 macOS 是 <kbd>⌥</kbd> <kbd>⌘</kbd>，Linux 是 <kbd>Alt</kbd> <kbd>Super</kbd>，可以在 **听写** 页改，也能改成按住说话。
+3. 文字落到光标处。**活动** 页和 **路由** 页里能看到每一句从哪来、去了哪。
+
+macOS 上听写需要麦克风和辅助功能（用来粘贴）权限；缺了什么、怎么补，`anya --doctor` 会逐项告诉你。
+
+## 引擎
+
+| 引擎 | 识别方式 | 音频去向 |
+| --- | --- | --- |
+| 豆包语音 | 流式：边说边出字，第二遍校正 | 火山引擎 |
+| 千问 Fun-ASR | 流式 | 阿里云 DashScope |
+| OpenAI Whisper | 整段 | OpenAI，或任何兼容接口（Groq、自建服务） |
+| whisper.cpp | 整段 | **不离开这台电脑** |
+| AuralWise | 整段 | AuralWise |
+| 小米 MiMo | 整段 | 小米 MiMo |
+
+插件可以再加引擎，见[插件](#插件)。
 
 ## 使用
 
 ```bash
-anya                  # 启动：托盘应用和设置窗口
+anya                  # 托盘应用和设置窗口
 anya --tui            # 用终端界面代替桌面窗口
 anya --web            # 在 127.0.0.1 上用浏览器打开设置页
 anya --daemon         # 不带界面运行，日志输出到 stderr
@@ -71,6 +114,13 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 
 ## 在本机识别：whisper.cpp
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshot-engine-dark.png">
+    <img src="docs/assets/screenshot-engine-light.png" alt="Anya 的设置窗口：“引擎”页" width="760">
+  </picture>
+</p>
+
 内置引擎 whisper.cpp 在这台电脑上识别，音频不离开它。在设置的“引擎”页展开 whisper.cpp，“运行方式”有两种：
 
 - **我自己运行**：你启动 `whisper-server`，在“服务地址”里填它的地址（留空为 `http://127.0.0.1:8080`）。
@@ -78,10 +128,26 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 
 推荐的模型是 `large-v3-turbo-q5_0`（547 MB），内存少于 8 GB 的电脑推荐 `small`。模型只在你点下载时才下载，默认从 Hugging Face，“高级”里可以换成镜像；每个模型的哈希写死在 Anya 里，下载完校验通过才算下好，所以镜像不需要被信任。下载中断后从断开的地方接着下。模型存放在数据目录的 `models` 下（Linux 和 macOS 都是 `~/.local/share/anya/models`）。配置写在 `[recognition.engines.whisper-cpp]`：`mode`、`model`、`program`、`idle_timeout_minutes`、`download_source`。
 
+## 在 Anya 上做应用
+
+Anya 运行时，回环地址 `ws://127.0.0.1:7590/asr` 上就有持续转写的帧流。不需要 SDK，几行 shell 就是一个实时字幕：
+
+```console
+$ anya subscribe | jq -r 'select(.type=="result") | .text'
+Let's start
+Let's start with the roadmap. Anya
+Let's start with the roadmap. Anya ships in May.
+Questions?
+```
+
+开发时不需要麦克风：`anya replay crates/protocol/fixtures/continuous.jsonl` 把录好的帧流按原节奏回放给订阅者（上面的输出就是这样得到的）。
+
+订阅协议、十条顺序承诺、兼容规则和测试用的样例流都在 [docs/protocol.md](docs/protocol.md)。样例流在 [`crates/protocol/fixtures/`](crates/protocol/fixtures/)，其中 `future.jsonl` 是新版本可能多出来的内容，用它检查你的程序不会因此出错。
+
 ## 局域网共享与配对
 
 <p align="center">
-  <img src="docs/assets/screenshot-apps.png" alt="Anya 的设置窗口：“应用接入”页" width="720">
+  <img src="docs/assets/screenshot-apps.png" alt="Anya 的设置窗口：“应用接入”页" width="760">
 </p>
 
 默认只有这台电脑能连 Anya（回环地址）。想让手机、浏览器或别的电脑把自己的麦克风送来识别，在设置的“应用接入”里打开“局域网共享”（配置 `[subscription] lan = true`，端口 `lan_port`，默认 7591）：
@@ -91,15 +157,20 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 - 每个应用单独授权：听写、接收持续转写、查看他人的听写。随时可以改权限或移除，移除后它的连接立刻断开。
 - 应用的听写结果只回给它自己，不会输入到这台电脑上。引擎支持流式时应用能收到中间结果，否则只收到最终结果。
 
-## 在 Anya 上做应用
-
-订阅协议、十条顺序承诺、兼容规则和测试用的样例流都在 [docs/protocol.md](docs/protocol.md)。连上回环地址的 WebSocket 就能收到持续转写，不需要 SDK。样例流在 [`crates/protocol/fixtures/`](crates/protocol/fixtures/)，其中 `future.jsonl` 是新版本可能多出来的内容，用它检查你的程序不会因此出错。
-
 ## 插件
 
-插件可以提供四样东西：识别引擎（engine）；听写开始前按当前应用补充热词和语言（context）；粘贴前改写听写的文字，比如替换词、口述标点、润色（transform）；把听写的文字同时送去别处，比如记进笔记、整理待办（action）。后三样只作用于你自己的听写，不作用于持续转写和局域网应用。改写按你排的顺序依次执行，粘贴的是改写后的文字；action 和粘贴同时进行，不会拖慢粘贴。
+插件可以提供四样东西：
 
-插件有两种运行方式。**inline** 在 Anya 内部的 QuickJS 里运行，不能联网也不能读写文件，每次调用有时间和内存上限，超时会被直接打断。**host** 在插件自己的 Bun 进程里运行（要求 Bun 1.2 或更新；第一次安装这类插件时找不到会自动下载固定版本，并校验 SHA-256），Anya 每秒检查一次，3 秒没有回应就结束并重启这个进程，不影响其他插件。插件从 anyahq-plugins 仓库安装，下载内容会校验完整性哈希。
+| 类型 | 时机 | 例子 |
+| --- | --- | --- |
+| **engine** | 识别 | 接入一家新的语音识别服务 |
+| **context** | 听写开始前 | 按前台应用补充热词和语言 |
+| **transform** | 粘贴前 | 替换词、口述标点、润色；按你排的顺序依次执行，粘贴的是改写后的文字 |
+| **action** | 和粘贴同时 | 记进笔记、整理待办；不会拖慢粘贴 |
+
+后三样只作用于你自己的听写，不作用于持续转写和局域网应用。
+
+插件有两种运行方式。**inline** 在 Anya 内部的 QuickJS 里运行，不能联网也不能读写文件，每次调用有时间和内存上限，超时会被直接打断。**host** 在插件自己的 Bun 进程里运行（要求 Bun 1.2 或更新；第一次安装这类插件时找不到会自动下载固定版本，并校验 SHA-256），Anya 每秒检查一次，3 秒没有回应就结束并重启这个进程，不影响其他插件。社区插件从本仓库 `registry` 分支上的索引安装，下载内容会校验完整性哈希。
 
 ```bash
 anya plugin search [关键字]      # 浏览仓库
@@ -112,9 +183,16 @@ anya plugin builtin              # 内置部件及其状态
 anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 ```
 
-安装和启用是两步，设置窗口的“插件”页里也一样，启用前会列出插件提供什么、各自会拿到什么。**引擎插件会收到凭它的引擎开的每一次识别的音频（局域网应用的听写也算）；context 插件会知道当前在用哪个应用；transform 和 action 插件会收到你听写的全部文字。host 插件以你的权限运行，没有沙箱，请只启用你信得过的插件。** 命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。开发插件见 [docs/plugins.md](docs/plugins.md)。
+安装和启用是两步，设置窗口的“插件”页里也一样，启用前会列出插件提供什么、各自会拿到什么。
+
+> [!WARNING]
+> 引擎插件会收到凭它的引擎开的每一次识别的音频（局域网应用的听写也算）；context 插件会知道当前在用哪个应用；transform 和 action 插件会收到你听写的全部文字。host 插件以你的权限运行，没有沙箱，请只启用你信得过的插件。
+
+命令行改动在 Anya 下次启动时生效；设置窗口里的启用、停用和移除立即生效。开发插件见 [docs/plugins.md](docs/plugins.md)。
 
 内置引擎也可以关闭，当前选用的引擎除外。另一个内置部件 `community-hooks` 运行所有社区插件的 context、transform 和 action，关掉它这些都不再执行。这类改动写入配置文件的 `[plugins.builtin]`，运行中的 Anya 会读取并立即生效。改写的顺序、插件设置和时间上限分别在 `[plugins] order`、`[plugins.settings.<id>]` 和 `[plugins.limits]`。
+
+### 官方插件
 
 官方插件在 [`plugins/`](plugins/)，随 Anya 一起编进程序：插件市场不联网也会列出它们，标着“官方”，点“安装”直接从 Anya 里解包，不用下载。装好后同样要启用才会运行。升级 Anya 后，已装的官方插件会在启动时一起更新，开关状态保持不变。
 
@@ -126,7 +204,7 @@ anya plugin builtin off <id>     # 关闭内置部件（on 重新开启）
 
 ## 更新
 
-Anya 通过 Homebrew tap 分发，不会自己替换自己的程序。它每天读一次 tap 里的 `Formula/anya.rb`，看有没有比当前更新的版本；有的话，托盘面板、设置页和终端界面会提示。通过 Homebrew 安装的，提示里有“升级”按钮，运行 `brew upgrade anya`；升级完成后重启 Anya 才用上新版本。其他方式安装的（复制的程序、`cargo install`）只会被告知有新版本。
+发布后，Anya 通过 Homebrew tap 分发，不会自己替换自己的程序。它每天读一次 tap 里的 `Formula/anya.rb`，看有没有比当前更新的版本；有的话，托盘面板、设置页和终端界面会提示。通过 Homebrew 安装的，提示里有“升级”按钮，运行 `brew upgrade anya`；升级完成后重启 Anya 才用上新版本。其他方式安装的（复制的程序、`cargo install`）只会被告知有新版本。
 
 检查时只向 tap 所在的服务器发一个请求，带的只有 `User-Agent: anya/<版本>`，没有别的内容。不想让 Anya 发这个请求，在设置里关掉“检查更新”，或在配置里写 `[updates] check = false`。`[updates] formula` 可以改成别处的 formula（`https://` 或 `file://`）。
 
@@ -155,6 +233,7 @@ flowchart TB
 cargo xtask ci       # CI 跑的完整检查：fmt、clippy、测试（含分层规则）、cargo-deny、插件测试
 cargo xtask check    # 只查分层规则
 cargo test --workspace
+cargo run -p anya-gui --example web   # 不需要麦克风和引擎，用假数据试设置页
 ```
 
 动手之前请先读：
@@ -166,10 +245,11 @@ cargo test --workspace
 
 用户能看到的字符串都放在 `anya-i18n`，每种语言都要有；面向用户的文字按产品文案来写。提交信息写成 `<范围>: <改了什么>`，范围是 crate 或领域（`protocol`、`core`、`xtask`、`docs`）。
 
+## 致谢
+
+- 引擎 logo 来自 [@lobehub/icons](https://github.com/lobehub/lobe-icons)（MIT），whisper.cpp 的图标是 [ggml-org](https://github.com/ggml-org) 的头像；各标志归其所有者。
+- 本机识别靠 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)，inline 插件跑在 [QuickJS](https://bellard.org/quickjs/) 里，host 插件跑在 [Bun](https://bun.sh) 里。
+
 ## 许可证
 
 [MIT](LICENSE)，见[决策 0006](docs/decisions/0006-mit-licence.md)。提交的贡献按同一许可证接受；并入外部代码要求其许可证与 MIT 兼容，或原作者同意。
-
-## 更新日志
-
-见 [CHANGELOG.md](CHANGELOG.md)。
