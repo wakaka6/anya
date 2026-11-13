@@ -135,6 +135,14 @@ anya replay <文件>    # 把录好的帧流回放给订阅者，开发应用时
 
 [`skills/anya-hotwords`](skills/anya-hotwords/SKILL.md) 是一个给本地 coding agent 用的技能：在循环里运行它，它会对照 Anya 粘贴出去的听写和你随后发给 agent 的那条消息，找出你手改过的词，再结合当前的工作，把热词文件刷新成最可能说出口、又最容易听错的那一小撮词。
 
+用 [`npx skills`](https://github.com/vercel-labs/skills) 安装，它会把技能装进你正在用的 coding agent：
+
+```
+npx skills add wakaka6/anya --skill anya-hotwords
+```
+
+装好后在循环里运行：
+
 ```
 /loop 10m /anya-hotwords ~/.config/anya/config.toml
 ```

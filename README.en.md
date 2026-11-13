@@ -135,6 +135,14 @@ The config file is `~/.config/anya/config.toml`, saved atomically and readable o
 
 [`skills/anya-hotwords`](skills/anya-hotwords/SKILL.md) is a skill for your local coding agent. Run on a loop, it compares what Anya pasted with the message you then sent to the agent, finds the words you fixed by hand, and, with your current work in mind, refreshes the hotwords file into the short list of words you are most likely to say and most likely to be misheard.
 
+Install it with [`npx skills`](https://github.com/vercel-labs/skills), which puts the skill into the coding agent you use:
+
+```
+npx skills add wakaka6/anya --skill anya-hotwords
+```
+
+Then run it on a loop:
+
 ```
 /loop 10m /anya-hotwords ~/.config/anya/config.toml
 ```
